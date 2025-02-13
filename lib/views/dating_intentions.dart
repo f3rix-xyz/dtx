@@ -1,4 +1,4 @@
-import 'package:dtx/views/name.dart';
+import 'package:dtx/views/height.dart';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 
@@ -120,7 +120,7 @@ class _DatingIntentionsScreenState extends State<DatingIntentionsScreen> {
                       ? () {
                           Navigator.push(
                     context,
-                    MaterialPageRoute(builder: (context) => NameInputScreen()),
+                    MaterialPageRoute(builder: (context) => HeightSelectionScreen()),
                   );
                         }
                       : null, // Disable when no option is selected

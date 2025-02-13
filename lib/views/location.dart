@@ -4,6 +4,7 @@ import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:geolocator/geolocator.dart';
+import 'package:app_settings/app_settings.dart'; // Import app_settings package
 
 class LocationInputScreen extends StatefulWidget {
   const LocationInputScreen({super.key});
@@ -43,6 +44,66 @@ class _LocationInputScreenState extends State<LocationInputScreen> {
     }
   }
 
+  // Function to show a dialog prompting user to enable location services
+  Future<void> _showLocationServiceDialog() async {
+    return showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          title: Text(
+            'Location Services Required',
+            style: GoogleFonts.poppins(fontWeight: FontWeight.w600),
+          ),
+          content: SingleChildScrollView(
+            child: ListBody(
+              children: <Widget>[
+                Text(
+                  'To show you relevant places around you, we need access to your location.',
+                  style: GoogleFonts.poppins(),
+                ),
+                const SizedBox(height: 15),
+                Text(
+                  'Please enable location services in your device settings.',
+                  style: GoogleFonts.poppins(),
+                ),
+              ],
+            ),
+          ),
+          actions: <Widget>[
+            TextButton(
+              child: Text(
+                'Open Settings',
+                style: GoogleFonts.poppins(color: const Color(0xFF8B5CF6)),
+              ),
+              onPressed: () async { // Make onPressed async
+                try {
+                  await AppSettings.openAppSettings(type: AppSettingsType.location); // Call the settings function
+                } catch (e) {
+                  // Print any error that occurs during opening settings
+                  debugPrint("Error opening location settings: $e");
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(content: Text("Could not open settings. Please open manually.")),
+                  );
+                }
+              },
+            ),
+            TextButton(
+              child: Text(
+                'Retry',
+                style: GoogleFonts.poppins(color: const Color(0xFF8B5CF6)),
+              ),
+              onPressed: () {
+                Navigator.of(context).pop();
+                _fetchCurrentLocation();
+              },
+            ),
+          ],
+        );
+      },
+    );
+  }
+
   // Fetch the user's current location (only once)
   Future<void> _fetchCurrentLocation() async {
     if (_cachedLocation != null) {
@@ -56,20 +117,21 @@ class _LocationInputScreenState extends State<LocationInputScreen> {
     }
 
     setState(() => _isFetchingLocation = true);
+    setState(() => _isLoading = true); // Start loading when fetching starts
 
     try {
       bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
       if (!serviceEnabled) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text("Please enable location services.")),
-        );
-        return;
+        setState(() => _isLoading = false); // Stop loading if service is disabled
+        await _showLocationServiceDialog(); // Show dialog to enable location
+        return; // Stop further location fetching for now, retry will happen after dialog action
       }
 
       LocationPermission permission = await Geolocator.checkPermission();
       if (permission == LocationPermission.denied) {
         permission = await Geolocator.requestPermission();
         if (permission == LocationPermission.denied) {
+          setState(() => _isLoading = false); // Stop loading if permission is denied
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(content: Text("Location permissions are denied.")),
           );
@@ -78,6 +140,7 @@ class _LocationInputScreenState extends State<LocationInputScreen> {
       }
 
       if (permission == LocationPermission.deniedForever) {
+        setState(() => _isLoading = false); // Stop loading if permission is denied forever
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text("Location permissions are permanently denied.")),
         );
@@ -94,11 +157,12 @@ class _LocationInputScreenState extends State<LocationInputScreen> {
 
       setState(() {
         _currentLocation = _cachedLocation!;
-        _isLoading = false;
+        _isLoading = false; // Stop loading after successful fetch
       });
 
       _moveToCurrentLocation();
     } catch (e) {
+      setState(() => _isLoading = false); // Stop loading in case of error
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text("Error fetching location: $e")),
       );
@@ -231,14 +295,17 @@ class _LocationInputScreenState extends State<LocationInputScreen> {
                             child: FloatingActionButton(
                               onPressed: _relocateToCachedLocation,
                               backgroundColor: const Color(0xFF8B5CF6),
-                              child: const Icon(Icons.my_location, color: Colors.white),
+                              child: Icon(
+                                  _isFetchingLocation ? Icons.location_searching : Icons.my_location, // Change icon based on loading state
+                                  color: Colors.white
+                              ),
                             ),
                           ),
                         ],
                       )
-                    : const Center(
+                    : Center(
                         child: CircularProgressIndicator(
-                          color: Color(0xFF8B5CF6),
+                          color: const Color(0xFF8B5CF6),
                         ),
                       ),
               ),
@@ -252,7 +319,7 @@ class _LocationInputScreenState extends State<LocationInputScreen> {
                   onTap: () {
                     Navigator.push(
                     context,
-                    MaterialPageRoute(builder: (context) => GenderSelectionScreen())
+                    MaterialPageRoute(builder: (context) => const GenderSelectionScreen())
                     );
                   },
                   child: Container(

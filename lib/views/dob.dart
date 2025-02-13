@@ -1,7 +1,7 @@
 import 'package:dtx/views/location.dart';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
-import 'package:pin_code_fields/pin_code_fields.dart'; // For segmented fields
+// For segmented fields
 
 class DateOfBirthScreen extends StatefulWidget {
   const DateOfBirthScreen({super.key});

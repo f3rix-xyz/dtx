@@ -1,3 +1,4 @@
+import 'package:dtx/views/media.dart';
 import 'package:flutter/material.dart';
 import 'package:dtx/views/splash_screen.dart';
 
@@ -15,7 +16,7 @@ class MyApp extends StatelessWidget {
       theme: ThemeData(
         primarySwatch: Colors.blue,
       ),
-      home: SplashScreen(),
+      home: MediaPickerScreen(),
     );
   }
 }
