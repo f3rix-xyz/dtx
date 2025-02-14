@@ -1,11 +1,13 @@
 import 'dart:io';
+import 'dart:typed_data';
 import 'package:dtx/views/religion.dart';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:image_picker/image_picker.dart';
-import 'package:video_player/video_player.dart';
+import 'package:get_thumbnail_video/video_thumbnail.dart'; // Updated package
 import 'package:reorderable_grid_view/reorderable_grid_view.dart';
 import 'package:dotted_border/dotted_border.dart';
+import 'package:get_thumbnail_video/index.dart'; // NEW import
 
 class MediaPickerScreen extends StatefulWidget {
   const MediaPickerScreen({super.key});
@@ -18,6 +20,7 @@ class _MediaPickerState extends State<MediaPickerScreen> {
   late List<MediaFile> _selectedMedia;
   late List<UniqueKey> _itemKeys;
   bool _isForwardButtonEnabled = false;
+  final _thumbnailCache = <String, Uint8List>{};
 
   final Set<String> _allowedImageMime = {
     'image/jpeg', 'image/png', 'image/gif', 'image/webp', 'image/jpg'
@@ -43,6 +46,12 @@ class _MediaPickerState extends State<MediaPickerScreen> {
     _itemKeys = List.generate(6, (index) => UniqueKey());
   }
 
+  @override
+  void dispose() {
+    _thumbnailCache.clear();
+    super.dispose();
+  }
+
   Future<void> _pickMedia(int index) async {
     final ImagePicker picker = ImagePicker();
     final XFile? media = await picker.pickMedia();
@@ -57,6 +66,12 @@ class _MediaPickerState extends State<MediaPickerScreen> {
       
       final isValidVideo = _allowedVideoMime.contains(mimeType) || 
           _allowedVideoExtensions.contains(extension);
+
+      if (index == 0 && !isValidImage) {
+        await _showErrorDialog(context, isMainImage: true);
+        _clearInvalidInput(index);
+        return;
+      }
 
       if (!isValidImage && !isValidVideo) {
         await _showErrorDialog(context);
@@ -74,14 +89,14 @@ class _MediaPickerState extends State<MediaPickerScreen> {
     }
   }
 
-  Future<void> _showErrorDialog(BuildContext context) async {
+  Future<void> _showErrorDialog(BuildContext context, {bool isMainImage = false}) async {
     return showDialog(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Invalid File Type'),
-        content: const Text('Allowed formats:\n'
-            '• Images: JPG, JPEG, PNG, GIF, WEBP, BMP, TIFF\n'
-            '• Videos: MP4, MOV, AVI, MPEG, 3GP, TS, MKV'),
+        title: Text(isMainImage ? 'Invalid Main Image' : 'Invalid File Type'),
+        content: Text(isMainImage 
+            ? 'Main image must be an image file.\nAllowed formats: JPG, JPEG, PNG, GIF, WEBP, BMP, TIFF'
+            : 'Allowed formats:\n• Images: JPG, JPEG, PNG, GIF, WEBP, BMP, TIFF\n• Videos: MP4, MOV, AVI, MPEG, 3GP, TS, MKV'),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
@@ -100,19 +115,13 @@ class _MediaPickerState extends State<MediaPickerScreen> {
   }
 
   void _reorderMedia(int oldIndex, int newIndex) {
-    // Prevent reordering if either oldIndex or newIndex is 0
-    if (oldIndex == 0 || newIndex == 0) {
-      return; // Exit without making any changes
-    }
+    if (oldIndex == 0 || newIndex == 0) return;
 
     setState(() {
       final MediaFile item = _selectedMedia.removeAt(oldIndex);
       final UniqueKey key = _itemKeys.removeAt(oldIndex);
       
-      // Adjust newIndex to account for removal
-      if (oldIndex < newIndex) {
-        newIndex -= 1;
-      }
+      if (oldIndex < newIndex) newIndex -= 1;
       
       _selectedMedia.insert(newIndex, item);
       _itemKeys.insert(newIndex, key);
@@ -255,7 +264,10 @@ class _MediaPickerState extends State<MediaPickerScreen> {
                           fit: BoxFit.cover,
                         ),
                       )
-                    : VideoThumbnail(file: media.file!),
+                    : VideoThumbnailWidget(
+                        file: media.file!,
+                        cache: _thumbnailCache,
+                      ),
               if (media.file == null)
                 Center(
                   child: Column(
@@ -306,72 +318,79 @@ class _MediaPickerState extends State<MediaPickerScreen> {
   }
 }
 
-class VideoThumbnail extends StatefulWidget {
+class VideoThumbnailWidget extends StatefulWidget {
   final File file;
+  final Map<String, Uint8List> cache;
 
-  const VideoThumbnail({super.key, required this.file});
+  const VideoThumbnailWidget({super.key, required this.file, required this.cache});
 
   @override
-  State<VideoThumbnail> createState() => _VideoThumbnailState();
+  State<VideoThumbnailWidget> createState() => _VideoThumbnailWidgetState();
 }
 
-class _VideoThumbnailState extends State<VideoThumbnail> {
-  late VideoPlayerController _controller;
-  late Future<void> _initializeVideoPlayerFuture;
-  bool _isDisposed = false;
+class _VideoThumbnailWidgetState extends State<VideoThumbnailWidget> {
+  late Future<Uint8List?> _thumbnailFuture;
 
   @override
   void initState() {
     super.initState();
-    _initializeController();
+    _thumbnailFuture = _getThumbnail();
   }
 
-  void _initializeController() {
-    _controller = VideoPlayerController.file(widget.file)
-      ..initialize().then((_) {
-        if (!_isDisposed) {
-          setState(() {});
-        }
-      });
-    _controller.setLooping(true);
+  Future<Uint8List?> _getThumbnail() async {
+    if (widget.cache.containsKey(widget.file.path)) {
+      return widget.cache[widget.file.path];
+    }
+
+    final thumbnail = await VideoThumbnail.thumbnailData(
+      video: widget.file.path,
+      imageFormat: ImageFormat.JPEG,
+      maxWidth: 256,
+      quality: 40,
+      timeMs: 1000,
+    );
+
+    if (thumbnail != null) {
+      widget.cache[widget.file.path] = thumbnail;
+    }
+
+    return thumbnail;
   }
 
   @override
-  void didUpdateWidget(covariant VideoThumbnail oldWidget) {
+  void didUpdateWidget(covariant VideoThumbnailWidget oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.file.path != widget.file.path) {
-      _controller.dispose();
-      _initializeController();
+      _thumbnailFuture = _getThumbnail();
     }
   }
 
   @override
-  void dispose() {
-    _isDisposed = true;
-    _controller.pause();
-    _controller.dispose();
-    super.dispose();
-  }
-
-  @override
   Widget build(BuildContext context) {
-    return FutureBuilder(
-      future: _controller.initialize(),
+    return FutureBuilder<Uint8List?>(
+      future: _thumbnailFuture,
       builder: (context, snapshot) {
-        if (snapshot.connectionState == ConnectionState.done) {
-          return AspectRatio(
-            aspectRatio: _controller.value.aspectRatio,
-            child: VideoPlayer(_controller),
-          );
-        } else {
-          return const Center(
-            child: CircularProgressIndicator(
-              color: Color(0xFF8B5CF6),
-              strokeWidth: 2,
-            ),
+        if (snapshot.hasData) {
+          return Image.memory(
+            snapshot.data!,
+            fit: BoxFit.cover,
           );
         }
+        return _buildFallback();
       },
+    );
+  }
+
+  Widget _buildFallback() {
+    return Container(
+      color: Colors.grey[200],
+      child: const Center(
+        child: Icon(
+          Icons.videocam_rounded,
+          color: Colors.grey,
+          size: 40,
+        ),
+      ),
     );
   }
 }
@@ -384,4 +403,3 @@ class MediaFile {
 
   MediaFile({required this.file, required this.type});
 }
-
