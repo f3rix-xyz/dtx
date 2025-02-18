@@ -1,6 +1,6 @@
-import 'package:dtx/views/media.dart';
 import 'package:flutter/material.dart';
 import 'package:dtx/views/splash_screen.dart';
+import 'package:dtx/views/writeprompt.dart';
 
 void main() {
   runApp(const MyApp());
@@ -16,7 +16,7 @@ class MyApp extends StatelessWidget {
       theme: ThemeData(
         primarySwatch: Colors.blue,
       ),
-      home: MediaPickerScreen(),
+      home: WriteAnswerScreen(),
     );
   }
 }

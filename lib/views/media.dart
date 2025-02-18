@@ -1,6 +1,7 @@
 import 'dart:io';
 import 'dart:typed_data';
 import 'package:dtx/views/religion.dart';
+import 'package:dtx/views/prompt.dart';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:image_picker/image_picker.dart';
@@ -23,26 +24,48 @@ class _MediaPickerState extends State<MediaPickerScreen> {
   final _thumbnailCache = <String, Uint8List>{};
 
   final Set<String> _allowedImageMime = {
-    'image/jpeg', 'image/png', 'image/gif', 'image/webp', 'image/jpg'
+    'image/jpeg',
+    'image/png',
+    'image/gif',
+    'image/webp',
+    'image/jpg'
   };
-  
+
   final Set<String> _allowedVideoMime = {
-    'video/mp4', 'video/quicktime', 'video/x-msvideo', 'video/mpeg', 
-    'video/3gpp', 'video/mp2t'
+    'video/mp4',
+    'video/quicktime',
+    'video/x-msvideo',
+    'video/mpeg',
+    'video/3gpp',
+    'video/mp2t'
   };
 
   final Set<String> _allowedImageExtensions = {
-    'jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp', 'tiff'
+    'jpg',
+    'jpeg',
+    'png',
+    'gif',
+    'webp',
+    'bmp',
+    'tiff'
   };
 
   final Set<String> _allowedVideoExtensions = {
-    'mp4', 'mov', 'avi', 'mpeg', 'mpg', '3gp', 'ts', 'mkv'
+    'mp4',
+    'mov',
+    'avi',
+    'mpeg',
+    'mpg',
+    '3gp',
+    'ts',
+    'mkv'
   };
 
   @override
   void initState() {
     super.initState();
-    _selectedMedia = List.generate(6, (index) => MediaFile(file: null, type: MediaType.image));
+    _selectedMedia = List.generate(
+        6, (index) => MediaFile(file: null, type: MediaType.image));
     _itemKeys = List.generate(6, (index) => UniqueKey());
   }
 
@@ -61,10 +84,10 @@ class _MediaPickerState extends State<MediaPickerScreen> {
       final extension = media.path.split('.').last.toLowerCase();
       final filePath = media.path.replaceFirst('file://', '');
 
-      final isValidImage = _allowedImageMime.contains(mimeType) || 
+      final isValidImage = _allowedImageMime.contains(mimeType) ||
           _allowedImageExtensions.contains(extension);
-      
-      final isValidVideo = _allowedVideoMime.contains(mimeType) || 
+
+      final isValidVideo = _allowedVideoMime.contains(mimeType) ||
           _allowedVideoExtensions.contains(extension);
 
       if (index == 0 && !isValidImage) {
@@ -89,12 +112,13 @@ class _MediaPickerState extends State<MediaPickerScreen> {
     }
   }
 
-  Future<void> _showErrorDialog(BuildContext context, {bool isMainImage = false}) async {
+  Future<void> _showErrorDialog(BuildContext context,
+      {bool isMainImage = false}) async {
     return showDialog(
       context: context,
       builder: (context) => AlertDialog(
         title: Text(isMainImage ? 'Invalid Main Image' : 'Invalid File Type'),
-        content: Text(isMainImage 
+        content: Text(isMainImage
             ? 'Main image must be an image file.\nAllowed formats: JPG, JPEG, PNG, GIF, WEBP, BMP, TIFF'
             : 'Allowed formats:\n• Images: JPG, JPEG, PNG, GIF, WEBP, BMP, TIFF\n• Videos: MP4, MOV, AVI, MPEG, 3GP, TS, MKV'),
         actions: [
@@ -120,16 +144,17 @@ class _MediaPickerState extends State<MediaPickerScreen> {
     setState(() {
       final MediaFile item = _selectedMedia.removeAt(oldIndex);
       final UniqueKey key = _itemKeys.removeAt(oldIndex);
-      
+
       if (oldIndex < newIndex) newIndex -= 1;
-      
+
       _selectedMedia.insert(newIndex, item);
       _itemKeys.insert(newIndex, key);
     });
   }
 
   void _updateForwardButtonState() {
-    int selectedCount = _selectedMedia.where((media) => media.file != null).length;
+    int selectedCount =
+        _selectedMedia.where((media) => media.file != null).length;
     setState(() {
       _isForwardButtonEnabled = selectedCount >= 3;
     });
@@ -166,7 +191,8 @@ class _MediaPickerState extends State<MediaPickerScreen> {
               SizedBox(height: screenSize.height * 0.05),
               Expanded(
                 child: Padding(
-                  padding: EdgeInsets.symmetric(horizontal: screenSize.width * 0.01),
+                  padding:
+                      EdgeInsets.symmetric(horizontal: screenSize.width * 0.01),
                   child: ReorderableGridView.count(
                     crossAxisCount: 2,
                     mainAxisSpacing: 16,
@@ -174,7 +200,8 @@ class _MediaPickerState extends State<MediaPickerScreen> {
                     childAspectRatio: 1.1,
                     shrinkWrap: true,
                     physics: const AlwaysScrollableScrollPhysics(),
-                    children: List.generate(6, (index) => _buildMediaPlaceholder(index)),
+                    children: List.generate(
+                        6, (index) => _buildMediaPlaceholder(index)),
                     onReorder: _reorderMedia,
                   ),
                 ),
@@ -198,7 +225,8 @@ class _MediaPickerState extends State<MediaPickerScreen> {
                           Navigator.push(
                             context,
                             MaterialPageRoute(
-                              builder: (context) => const ReligionScreen(),
+                              builder: (context) =>
+                                  const ProfileAnswersScreen(),
                             ),
                           );
                         }
@@ -207,15 +235,15 @@ class _MediaPickerState extends State<MediaPickerScreen> {
                         width: 70,
                         height: 70,
                         decoration: BoxDecoration(
-                          color: _isForwardButtonEnabled 
-                              ? const Color(0xFF8B5CF6) 
+                          color: _isForwardButtonEnabled
+                              ? const Color(0xFF8B5CF6)
                               : Colors.grey.shade400,
                           borderRadius: BorderRadius.circular(35),
                         ),
                         child: Icon(
                           Icons.arrow_forward_rounded,
-                          color: _isForwardButtonEnabled 
-                              ? Colors.white 
+                          color: _isForwardButtonEnabled
+                              ? Colors.white
                               : Colors.grey.shade600,
                           size: 32,
                         ),
@@ -233,13 +261,13 @@ class _MediaPickerState extends State<MediaPickerScreen> {
 
   Widget _buildMediaPlaceholder(int index) {
     final media = _selectedMedia[index];
-    
+
     return GestureDetector(
       key: _itemKeys[index],
       onTap: () => _pickMedia(index),
       child: DottedBorder(
         dashPattern: const [6, 3],
-        color: index == 0 
+        color: index == 0
             ? const Color(0xFF8B5CF6).withOpacity(0.8)
             : const Color(0xFF8B5CF6),
         strokeWidth: 2,
@@ -247,9 +275,7 @@ class _MediaPickerState extends State<MediaPickerScreen> {
         radius: const Radius.circular(12),
         child: Container(
           decoration: BoxDecoration(
-            color: index == 0 
-                ? Colors.white.withOpacity(0.95)
-                : Colors.white,
+            color: index == 0 ? Colors.white.withOpacity(0.95) : Colors.white,
             borderRadius: BorderRadius.circular(12),
           ),
           child: Stack(
@@ -322,7 +348,8 @@ class VideoThumbnailWidget extends StatefulWidget {
   final File file;
   final Map<String, Uint8List> cache;
 
-  const VideoThumbnailWidget({super.key, required this.file, required this.cache});
+  const VideoThumbnailWidget(
+      {super.key, required this.file, required this.cache});
 
   @override
   State<VideoThumbnailWidget> createState() => _VideoThumbnailWidgetState();

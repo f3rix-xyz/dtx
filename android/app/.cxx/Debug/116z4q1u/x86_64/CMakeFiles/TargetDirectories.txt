@@ -1,0 +1,2 @@
+/home/hehe/Desktop/code/dtx/android/app/.cxx/Debug/116z4q1u/x86_64/CMakeFiles/edit_cache.dir
+/home/hehe/Desktop/code/dtx/android/app/.cxx/Debug/116z4q1u/x86_64/CMakeFiles/rebuild_cache.dir
