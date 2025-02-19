@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:dtx/views/dating_intentions.dart';
+import 'package:dtx/utils/app_enums.dart';
 
 class GenderSelectionScreen extends StatefulWidget {
   const GenderSelectionScreen({super.key});
@@ -10,8 +11,8 @@ class GenderSelectionScreen extends StatefulWidget {
 }
 
 class _GenderSelectionScreenState extends State<GenderSelectionScreen> {
-  String _selectedGender = ''; // Tracks the selected option
-  bool _isVisibleOnProfile = true; // Tracks the checkbox state
+  Gender? _selectedGender;
+  bool _isVisibleOnProfile = true;
 
   @override
   Widget build(BuildContext context) {
@@ -26,8 +27,6 @@ class _GenderSelectionScreenState extends State<GenderSelectionScreen> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               SizedBox(height: screenSize.height * 0.03),
-
-              // Progress Dots
               Center(
                 child: Row(
                   mainAxisAlignment: MainAxisAlignment.center,
@@ -39,18 +38,15 @@ class _GenderSelectionScreenState extends State<GenderSelectionScreen> {
                       height: 10,
                       decoration: BoxDecoration(
                         color: index < 6
-                            ? const Color(0xFF8B5CF6) // Purple for completed dots
-                            : Colors.grey.shade300, // Gray for incomplete dots
+                            ? const Color(0xFF8B5CF6)
+                            : Colors.grey.shade300,
                         shape: BoxShape.circle,
                       ),
                     ),
                   ),
                 ),
               ),
-
               SizedBox(height: screenSize.height * 0.05),
-
-              // Main Title
               Text(
                 "Which gender best\ndescribes you?",
                 style: GoogleFonts.poppins(
@@ -60,25 +56,16 @@ class _GenderSelectionScreenState extends State<GenderSelectionScreen> {
                   height: 1.2,
                 ),
               ),
-
               SizedBox(height: screenSize.height * 0.04),
-
-              // Gender Options
               Column(
-                children: [
-                  _buildOption("Man"),
-                  _buildOption("Woman"),
-                  _buildOption("Bisexual"),
-                  _buildOption("Lesbian"),
-                  _buildOption("Gay"),
-                ],
+                children: Gender.values
+                    .map((gender) => _buildOption(gender))
+                    .toList(),
               ),
-
               SizedBox(height: screenSize.height * 0.04),
-
-              // Visibility on Profile Checkbox
               GestureDetector(
-                onTap: () => setState(() => _isVisibleOnProfile = !_isVisibleOnProfile),
+                onTap: () =>
+                    setState(() => _isVisibleOnProfile = !_isVisibleOnProfile),
                 child: Row(
                   children: [
                     Icon(
@@ -99,34 +86,32 @@ class _GenderSelectionScreenState extends State<GenderSelectionScreen> {
                   ],
                 ),
               ),
-
               const Spacer(),
-
-              // Forward Arrow Button
               Align(
                 alignment: Alignment.centerRight,
                 child: GestureDetector(
-                  onTap: _selectedGender.isNotEmpty
+                  onTap: _selectedGender != null
                       ? () {
                           Navigator.push(
                             context,
                             MaterialPageRoute(
-                              builder: (context) => const DatingIntentionsScreen(),
+                              builder: (context) =>
+                                  const DatingIntentionsScreen(),
                             ),
                           );
                         }
-                      : null, // Disable the button if no option is selected
+                      : null,
                   child: Container(
                     width: screenSize.width * 0.15,
                     height: screenSize.width * 0.15,
                     decoration: BoxDecoration(
-                      color: _selectedGender.isNotEmpty
-                          ? const Color(0xFF8B5CF6) // Purple when enabled
-                          : Colors.grey.shade300, // Disabled state
+                      color: _selectedGender != null
+                          ? const Color(0xFF8B5CF6)
+                          : Colors.grey.shade300,
                       shape: BoxShape.circle,
                       boxShadow: [
                         BoxShadow(
-                          color: _selectedGender.isNotEmpty
+                          color: _selectedGender != null
                               ? Colors.grey.shade400
                               : Colors.transparent,
                           spreadRadius: 2,
@@ -138,14 +123,12 @@ class _GenderSelectionScreenState extends State<GenderSelectionScreen> {
                     child: Icon(
                       Icons.arrow_forward_rounded,
                       size: 28,
-                      color: _selectedGender.isNotEmpty
-                          ? Colors.white // Enabled state
-                          : Colors.grey, // Disabled state
+                      color:
+                          _selectedGender != null ? Colors.white : Colors.grey,
                     ),
                   ),
                 ),
               ),
-
               SizedBox(height: screenSize.height * 0.04),
             ],
           ),
@@ -154,9 +137,8 @@ class _GenderSelectionScreenState extends State<GenderSelectionScreen> {
     );
   }
 
-  // Gender Option Builder
-  Widget _buildOption(String label) {
-    final isSelected = _selectedGender == label;
+  Widget _buildOption(Gender gender) {
+    final isSelected = _selectedGender == gender;
 
     return Padding(
       padding: const EdgeInsets.only(bottom: 12),
@@ -164,7 +146,7 @@ class _GenderSelectionScreenState extends State<GenderSelectionScreen> {
         borderRadius: BorderRadius.circular(12),
         elevation: isSelected ? 2 : 0,
         child: InkWell(
-          onTap: () => setState(() => _selectedGender = label),
+          onTap: () => setState(() => _selectedGender = gender),
           borderRadius: BorderRadius.circular(12),
           child: Container(
             width: double.infinity,
@@ -178,7 +160,7 @@ class _GenderSelectionScreenState extends State<GenderSelectionScreen> {
               ),
             ),
             child: Text(
-              label,
+              gender.label,
               style: GoogleFonts.poppins(
                 fontSize: 16,
                 fontWeight: isSelected ? FontWeight.w600 : FontWeight.w500,

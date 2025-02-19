@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:dtx/utils/app_enums.dart';
 
 class TextSelectPromptScreen extends StatefulWidget {
   const TextSelectPromptScreen({Key? key}) : super(key: key);
@@ -8,60 +9,16 @@ class TextSelectPromptScreen extends StatefulWidget {
 }
 
 class _TextSelectPromptScreenState extends State<TextSelectPromptScreen> {
-  String selectedCategory = 'My type';
+  PromptCategory selectedCategory = PromptCategory.storyTime;
   bool showAllPrompts = false;
 
-  final Map<String, List<String>> promptsByCategory = {
-    'Story time': [
-      'Two truths and a lie',
-      'Worst idea I\'ve ever had',
-      'Biggest risk I\'ve taken',
-      'My biggest date fail',
-      'Never have I ever',
-      'Best travel story',
-      'Weirdest gift I\'ve given or received',
-      'Most spontaneous thing I\'ve done',
-      'One thing I\'ll never do again',
-    ],
-    'My type': [
-      'Something that\'s non-negotiable for me is',
-      'The hallmark of a good relationship is',
-      'I\'m looking for',
-      'I\'m weirdly attracted to',
-      'All I ask is that you',
-      'We\'ll get along if',
-      'I want someone who',
-      'Green flags I look out for',
-      'We\'re the same type of weird if',
-      'I\'d fall for you if',
-      'I\'ll brag about you to my friends if',
-    ],
-    'Getting personal': [
-      'The one thing you should know about me is',
-      'My Love Language is',
-      'The dorkiest thing about me is',
-      'Don\'t hate me if I',
-      'I geek out on',
-      'If loving this is wrong, I don\'t want to be right',
-      'The key to my heart is',
-      'I won\'t shut up about',
-      'You should *not* go out with me if',
-      'What if I told you that',
-    ],
-    'Date vibes': [
-      'Together, we could',
-      'First round is on me if',
-      'What I order for the table',
-      'I know the best spot in town for',
-      'The best way to ask me out is by',
-    ],
-  };
-
-  List<String> get currentPrompts {
+  List<Prompt> get currentPrompts {
     if (showAllPrompts) {
-      return promptsByCategory.values.expand((prompts) => prompts).toList();
+      return PromptCategory.values
+          .expand((category) => category.getPrompts())
+          .toList();
     }
-    return promptsByCategory[selectedCategory] ?? [];
+    return selectedCategory.getPrompts();
   }
 
   @override
@@ -111,7 +68,7 @@ class _TextSelectPromptScreenState extends State<TextSelectPromptScreen> {
                 scrollDirection: Axis.horizontal,
                 padding: const EdgeInsets.symmetric(horizontal: 16),
                 child: Row(
-                  children: promptsByCategory.keys.map((category) {
+                  children: PromptCategory.values.map((category) {
                     final isSelected = category == selectedCategory;
                     return Padding(
                       padding: const EdgeInsets.only(right: 8),
@@ -134,7 +91,7 @@ class _TextSelectPromptScreenState extends State<TextSelectPromptScreen> {
                             ),
                           ),
                           child: Text(
-                            category,
+                            category.label,
                             style: TextStyle(
                               color: isSelected
                                   ? Colors.white
@@ -165,7 +122,7 @@ class _TextSelectPromptScreenState extends State<TextSelectPromptScreen> {
                       ),
                     ),
                     child: Text(
-                      currentPrompts[index],
+                      currentPrompts[index].label,
                       style: const TextStyle(
                         fontSize: 16,
                         color: Colors.black87,

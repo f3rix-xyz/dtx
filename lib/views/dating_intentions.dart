@@ -1,6 +1,7 @@
 import 'package:dtx/views/height.dart';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:dtx/utils/app_enums.dart';
 
 class DatingIntentionsScreen extends StatefulWidget {
   const DatingIntentionsScreen({super.key});
@@ -10,17 +11,8 @@ class DatingIntentionsScreen extends StatefulWidget {
 }
 
 class _DatingIntentionsScreenState extends State<DatingIntentionsScreen> {
-  String _selectedIntention = ""; // Currently selected option
-  bool _isVisibleOnProfile = true; // Checkbox state
-
-  final List<String> _options = [
-    "Life partner",
-    "Long-term relationship",
-    "Long-term relationship, open to short",
-    "Short-term relationship, open to long",
-    "Short-term relationship",
-    "Figuring out my dating goals",
-  ];
+  DatingIntention? _selectedIntention;
+  bool _isVisibleOnProfile = true;
 
   @override
   Widget build(BuildContext context) {
@@ -31,7 +23,6 @@ class _DatingIntentionsScreenState extends State<DatingIntentionsScreen> {
       body: SafeArea(
         child: Column(
           children: [
-            // Progress and Header Section
             Padding(
               padding: EdgeInsets.symmetric(horizontal: screenSize.width * 0.06),
               child: Column(
@@ -39,7 +30,6 @@ class _DatingIntentionsScreenState extends State<DatingIntentionsScreen> {
                 children: [
                   SizedBox(height: screenSize.height * 0.02),
 
-                  // Dots Progress Bar
                   Center(
                     child: Row(
                       mainAxisAlignment: MainAxisAlignment.center,
@@ -60,7 +50,6 @@ class _DatingIntentionsScreenState extends State<DatingIntentionsScreen> {
 
                   SizedBox(height: screenSize.height * 0.03),
 
-                  // Title
                   Text(
                     "What's your dating intention?",
                     style: GoogleFonts.poppins(
@@ -75,19 +64,17 @@ class _DatingIntentionsScreenState extends State<DatingIntentionsScreen> {
               ),
             ),
 
-            // Options List with Cascading Effect
             Expanded(
               child: ListView.builder(
                 physics: const BouncingScrollPhysics(),
                 padding: EdgeInsets.symmetric(horizontal: screenSize.width * 0.06),
-                itemCount: _options.length,
+                itemCount: DatingIntention.values.length,
                 itemBuilder: (context, index) {
-                  return _buildOption(index);
+                  return _buildOption(DatingIntention.values[index]);
                 },
               ),
             ),
 
-            // "Visible on Profile" Checkbox
             Padding(
               padding: EdgeInsets.symmetric(
                   horizontal: screenSize.width * 0.06, vertical: 10),
@@ -110,30 +97,29 @@ class _DatingIntentionsScreenState extends State<DatingIntentionsScreen> {
               ),
             ),
 
-            // Forward Arrow Button
             Align(
               alignment: Alignment.centerRight,
               child: Padding(
                 padding: EdgeInsets.symmetric(horizontal: screenSize.width * 0.06),
                 child: GestureDetector(
-                  onTap: _selectedIntention.isNotEmpty
+                  onTap: _selectedIntention != null
                       ? () {
                           Navigator.push(
-                    context,
-                    MaterialPageRoute(builder: (context) => HeightSelectionScreen()),
-                  );
+                            context,
+                            MaterialPageRoute(builder: (context) => HeightSelectionScreen()),
+                          );
                         }
-                      : null, // Disable when no option is selected
+                      : null,
                   child: Container(
                     width: 56,
                     height: 56,
                     decoration: BoxDecoration(
-                      color: _selectedIntention.isNotEmpty
+                      color: _selectedIntention != null
                           ? const Color(0xFF8B5CF6)
                           : Colors.grey.shade300,
                       shape: BoxShape.circle,
                       boxShadow: [
-                        if (_selectedIntention.isNotEmpty)
+                        if (_selectedIntention != null)
                           BoxShadow(
                             color: Colors.black.withOpacity(0.2),
                             spreadRadius: 1,
@@ -144,7 +130,7 @@ class _DatingIntentionsScreenState extends State<DatingIntentionsScreen> {
                     child: Icon(
                       Icons.arrow_forward_rounded,
                       size: 28,
-                      color: _selectedIntention.isNotEmpty
+                      color: _selectedIntention != null
                           ? Colors.white
                           : Colors.grey.shade500,
                     ),
@@ -159,15 +145,13 @@ class _DatingIntentionsScreenState extends State<DatingIntentionsScreen> {
     );
   }
 
-  // Build Option Tiles
-  Widget _buildOption(int index) {
-    final String option = _options[index];
-    final bool isSelected = _selectedIntention == option;
+  Widget _buildOption(DatingIntention intention) {
+    final bool isSelected = _selectedIntention == intention;
 
     return GestureDetector(
       onTap: () {
         setState(() {
-          _selectedIntention = option;
+          _selectedIntention = intention;
         });
       },
       child: AnimatedContainer(
@@ -186,7 +170,7 @@ class _DatingIntentionsScreenState extends State<DatingIntentionsScreen> {
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
             Text(
-              option,
+              intention.label,
               style: GoogleFonts.poppins(
                 fontSize: 16,
                 fontWeight: isSelected ? FontWeight.w600 : FontWeight.w400,

@@ -12,44 +12,17 @@ class HeightSelectionScreen extends StatefulWidget {
 
 class _HeightSelectionScreenState extends State<HeightSelectionScreen> {
   String _unit = "FT"; // Default unit is Feet
-  int _selectedFeetIndex = 12; // Start at 5'0" (index 12) - Correct starting index
+  int _selectedFeetIndex = 0; // Start at the first index
   int _selectedCmIndex = 30; // Start at 150 cm (index 30)
 
+  // Define the starting and ending points explicitly
+  int _startFeet = 4;
+  int _startInches = 0;
+  int _endFeet = 6;
+  int _endInches = 5;
 
-  // Feet and CM values
-  final List<String> _feetValues = [
-    "4' 0\"",
-    "4' 1\"",
-    "4' 2\"",
-    "4' 3\"",
-    "4' 4\"",
-    "4' 5\"",
-    "4' 6\"",
-    "4' 7\"",
-    "4' 8\"",
-    "4' 9\"",
-    "4' 10\"",
-    "4' 11\"",
-    "5' 0\"",
-    "5' 1\"",
-    "5' 2\"",
-    "5' 3\"",
-    "5' 4\"",
-    "5' 5\"",
-    "5' 6\"",
-    "5' 7\"",
-    "5' 8\"",
-    "5' 9\"",
-    "5' 10\"",
-    "5' 11\"",
-    "6' 0\"",
-    "6' 1\"",
-    "6' 2\"",
-    "6' 3\"",
-    "6' 4\"",
-    "6' 5\"",
-  ];
-  final List<String> _cmValues = List.generate(81, (index) => "${120 + index} cm");
+  List<String>? _feetValues; // Declare as nullable
+  List<String> _cmValues = List.generate(81, (index) => "${120 + index} cm");
 
   // Function to convert CM to Feet and Inches string
   String _cmToFeet(int cm) {
@@ -63,13 +36,26 @@ class _HeightSelectionScreenState extends State<HeightSelectionScreen> {
     return "$feet' $inches\"";
   }
 
+  @override
+  void initState() {
+    super.initState();
+    _feetValues = List.generate(
+      ((_endFeet * 12) + _endInches) - ((_startFeet * 12) + _startInches) + 1,
+      (index) {
+        int totalInches = ((_startFeet * 12) + _startInches) + index;
+        int feet = totalInches ~/ 12;
+        int inches = totalInches % 12;
+        return "$feet' $inches\"";
+      },
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
     final screenSize = MediaQuery.of(context).size;
 
     // Use appropriate values for the current unit
-    final List<String> currentValues = _unit == "FT" ? _feetValues : _cmValues;
+    final List<String> currentValues = _unit == "FT" ? _feetValues! : _cmValues;
     int currentIndex = _unit == "FT" ? _selectedFeetIndex : _selectedCmIndex;
 
     return Scaffold(
@@ -160,9 +146,9 @@ class _HeightSelectionScreenState extends State<HeightSelectionScreen> {
                     }
 
                     Navigator.push(
-                    context,
-                    MaterialPageRoute(builder: (context) => HometownScreen()),
-                  );
+                      context,
+                      MaterialPageRoute(builder: (context) => HometownScreen()),
+                    );
                     // In a real app, you would save 'savedHeightFeet' to your database here.
                   },
                   child: Container(
