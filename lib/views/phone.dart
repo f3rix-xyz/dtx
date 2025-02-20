@@ -1,22 +1,27 @@
-import 'package:dtx/views/otp.dart';
+import 'package:dtx/models/error_model.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_fonts/google_fonts.dart';
+import '../providers/auth_provider.dart';
+import '../providers/error_provider.dart';
+import 'otp.dart';
 
-class PhoneInputScreen extends StatefulWidget {
+class PhoneInputScreen extends ConsumerStatefulWidget {
   const PhoneInputScreen({super.key});
 
   @override
-  _PhoneInputScreenState createState() => _PhoneInputScreenState();
+  ConsumerState<PhoneInputScreen> createState() => _PhoneInputScreenState();
 }
 
-class _PhoneInputScreenState extends State<PhoneInputScreen> {
+class _PhoneInputScreenState extends ConsumerState<PhoneInputScreen> {
   final TextEditingController _phoneController = TextEditingController();
   final FocusNode _focusNode = FocusNode();
-  String? _errorText;
 
   @override
   Widget build(BuildContext context) {
     final screenSize = MediaQuery.of(context).size;
+    final authState = ref.watch(authProvider);
+    final error = ref.watch(errorProvider);
 
     return Scaffold(
       body: Container(
@@ -33,46 +38,41 @@ class _PhoneInputScreenState extends State<PhoneInputScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                SizedBox(height: screenSize.height * 0.08), // Top padding
-
-                // Title: What's your phone number?
+                SizedBox(height: screenSize.height * 0.08),
                 Text(
                   "What's your\nphone number?",
                   style: GoogleFonts.poppins(
-                    fontSize: screenSize.width * 0.09, // Large title font size
+                    fontSize: screenSize.width * 0.09,
                     fontWeight: FontWeight.bold,
                     color: Colors.white,
                   ),
                 ),
-
                 SizedBox(height: screenSize.height * 0.02),
-
-                // Subtitle: Subtle helper text
                 Text(
                   "You'll receive an OTP on this number.",
                   style: GoogleFonts.poppins(
                     fontSize: screenSize.width * 0.045,
-                    color: Colors.white70, // Subtle gray color
+                    color: Colors.white70,
                   ),
                 ),
-
                 SizedBox(height: screenSize.height * 0.05),
-
-                // Phone number input field
                 Container(
-                  padding: EdgeInsets.symmetric(vertical: screenSize.height * 0.015),
+                  padding:
+                      EdgeInsets.symmetric(vertical: screenSize.height * 0.015),
                   decoration: BoxDecoration(
                     border: Border(
                       bottom: BorderSide(
                         width: 2.5,
-                        color: _errorText == null ? Color(0xFFFFFFFF) : Colors.red, // Red if error
+                        color: error?.type == ErrorType.validation
+                            ? Colors.red
+                            : const Color(0xFFFFFFFF),
                       ),
                     ),
                   ),
                   child: Row(
                     children: [
                       Text(
-                        "+91", // Static country code
+                        "+91",
                         style: GoogleFonts.poppins(
                           fontSize: screenSize.width * 0.06,
                           fontWeight: FontWeight.bold,
@@ -80,15 +80,13 @@ class _PhoneInputScreenState extends State<PhoneInputScreen> {
                         ),
                       ),
                       SizedBox(width: screenSize.width * 0.02),
-
-                      // Input TextField
                       Expanded(
                         child: TextField(
                           focusNode: _focusNode,
                           controller: _phoneController,
                           keyboardType: TextInputType.phone,
                           style: GoogleFonts.poppins(
-                            fontSize: screenSize.width * 0.06, // Large font
+                            fontSize: screenSize.width * 0.06,
                             fontWeight: FontWeight.w500,
                             color: Colors.white,
                           ),
@@ -102,57 +100,45 @@ class _PhoneInputScreenState extends State<PhoneInputScreen> {
                             border: InputBorder.none,
                           ),
                           onChanged: (value) {
-                            setState(() {
-                              _validatePhoneNumber(value);
-                            });
+                            ref.read(authProvider.notifier).verifyPhone(value);
                           },
                         ),
                       ),
                     ],
                   ),
                 ),
-
-                // Error message if validation fails
-                if (_errorText != null)
+                if (error?.type == ErrorType.validation)
                   Padding(
                     padding: const EdgeInsets.only(top: 8.0),
                     child: Text(
-                      _errorText!,
+                      error!.message,
                       style: GoogleFonts.poppins(
                         color: Colors.redAccent,
                         fontSize: screenSize.width * 0.04,
                       ),
                     ),
                   ),
-
-                Spacer(),
-
-                // Next button: Enabled only when valid input
+                const Spacer(),
                 Center(
                   child: GestureDetector(
-                    onTap: () {
-                      if (_validatePhoneNumber(_phoneController.text)) {
-                        // Navigate to OTP Verification Screen
-                        Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                            builder: (context) => const OtpVerificationScreen(),
-                          ),
-                        );
-                      } else {
-                        // Show an error message
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(
-                            content: Text("Invalid phone number! Please try again."),
-                          ),
-                        );
-                      }
-                    },
+                    onTap: authState.unverifiedPhone != null
+                        ? () {
+                            Navigator.push(
+                              context,
+                              MaterialPageRoute(
+                                builder: (context) =>
+                                    const OtpVerificationScreen(),
+                              ),
+                            );
+                          }
+                        : null,
                     child: Container(
                       width: screenSize.width * 0.18,
                       height: screenSize.width * 0.18,
                       decoration: BoxDecoration(
-                        color: _errorText == null ? Colors.white : Colors.grey.shade400, // Disable if invalid
+                        color: authState.unverifiedPhone != null
+                            ? Colors.white
+                            : Colors.grey.shade400,
                         shape: BoxShape.circle,
                         boxShadow: [
                           BoxShadow(
@@ -166,13 +152,14 @@ class _PhoneInputScreenState extends State<PhoneInputScreen> {
                       child: Icon(
                         Icons.arrow_forward_rounded,
                         size: 28,
-                        color: _errorText == null ? Color(0xFF8B5CF6) : Colors.grey.shade600,
+                        color: authState.unverifiedPhone != null
+                            ? const Color(0xFF8B5CF6)
+                            : Colors.grey.shade600,
                       ),
                     ),
                   ),
                 ),
-
-                SizedBox(height: screenSize.height * 0.05), // Bottom padding
+                SizedBox(height: screenSize.height * 0.05),
               ],
             ),
           ),
@@ -181,17 +168,10 @@ class _PhoneInputScreenState extends State<PhoneInputScreen> {
     );
   }
 
-  // Phone number validation logic
-  bool _validatePhoneNumber(String value) {
-    if (value.isEmpty) {
-      _errorText = "Phone number can't be empty.";
-      return false;
-    } else if (value.length != 10 || !RegExp(r'^[0-9]+$').hasMatch(value)) {
-      _errorText = "Enter a valid 10-digit phone number.";
-      return false;
-    } else {
-      _errorText = null; // No error
-      return true;
-    }
+  @override
+  void dispose() {
+    _phoneController.dispose();
+    _focusNode.dispose();
+    super.dispose();
   }
 }

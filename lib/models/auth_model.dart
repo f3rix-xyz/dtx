@@ -16,18 +16,20 @@ class AuthState {
   });
 
   AuthState copyWith({
-    String? unverifiedPhone,
-    String? verificationId,
+    String? Function()? unverifiedPhone,
+    String? Function()? verificationId,
     bool? isLoading,
-    String? error,
-    int? resendTimer,
+    String? Function()? error,
+    int? Function()? resendTimer,
   }) {
     return AuthState(
-      unverifiedPhone: unverifiedPhone ?? this.unverifiedPhone,
-      verificationId: verificationId ?? this.verificationId,
+      unverifiedPhone:
+          unverifiedPhone != null ? unverifiedPhone() : this.unverifiedPhone,
+      verificationId:
+          verificationId != null ? verificationId() : this.verificationId,
       isLoading: isLoading ?? this.isLoading,
-      error: error, // Intentionally not using ?? operator
-      resendTimer: resendTimer ?? this.resendTimer,
+      error: error != null ? error() : this.error,
+      resendTimer: resendTimer != null ? resendTimer() : this.resendTimer,
     );
   }
 }

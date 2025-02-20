@@ -88,6 +88,8 @@ class UserModel {
     required this.prompts,
     this.audioPrompt,
   }) {
+    // Server-side validations will handle these checks
+    /*
     // Phone validation
     if (!RegExp(r'^[0-9]{10}$').hasMatch(phoneNumber)) {
       throw ArgumentError('Phone number must be exactly 10 digits');
@@ -119,6 +121,7 @@ class UserModel {
     if (education != null && education!.length > 30) {
       throw ArgumentError('Education cannot exceed 30 characters');
     }
+    */
   }
 
   Map<String, dynamic> toJson() => {

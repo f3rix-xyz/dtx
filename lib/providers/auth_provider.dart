@@ -1,50 +1,53 @@
 import 'package:dtx/models/auth_model.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../models/error_model.dart';
+import 'error_provider.dart';
 
 final authProvider = StateNotifierProvider<AuthNotifier, AuthState>((ref) {
-  return AuthNotifier();
+  return AuthNotifier(ref);
 });
 
 class AuthNotifier extends StateNotifier<AuthState> {
-  AuthNotifier() : super(const AuthState());
+  final Ref ref;
+  int _lastRequestId = 0;
+  static final _phoneRegex = RegExp(r'^[6-9][0-9]{9}$');
 
-  String get fullPhoneNumber => '+91${state.unverifiedPhone}';
+  AuthNotifier(this.ref) : super(const AuthState());
 
   Future<bool> verifyPhone(String phone) async {
-    // Clear previous errors
-    state = state.copyWith(error: null, isLoading: true);
+    final requestId = ++_lastRequestId;
 
-    // Core validation
-    if (phone.isEmpty) {
-      state = state.copyWith(
-        error: "Phone number can't be empty",
-        isLoading: false,
-      );
-      return false;
-    }
-
-    if (!RegExp(r'^[6-9][0-9]{9}$').hasMatch(phone)) {
-      state = state.copyWith(
-        error: "Please enter a valid Indian phone number",
-        isLoading: false,
-      );
-      return false;
-    }
-
-    // Simulate API delay
-    await Future.delayed(const Duration(milliseconds: 500));
-
-    // Update state with validated phone
     state = state.copyWith(
-      unverifiedPhone: phone,
-      isLoading: false,
-      error: null,
+      isLoading: true,
+      unverifiedPhone: () => null,
     );
 
-    return true;
-  }
+    // Clear any existing errors first
+    ref.read(errorProvider.notifier).clearError();
 
-  void clearState() {
-    state = const AuthState();
+    if (phone.isEmpty) {
+      ref.read(errorProvider.notifier).setError(
+            AppError.validation("Phone number can't be empty"),
+          );
+      state = state.copyWith(isLoading: false);
+      return false;
+    }
+
+    if (!_phoneRegex.hasMatch(phone)) {
+      ref.read(errorProvider.notifier).setError(
+            AppError.validation("Please enter a valid Indian phone number"),
+          );
+      state = state.copyWith(isLoading: false);
+      return false;
+    }
+
+    // Clear error on successful verification
+    ref.read(errorProvider.notifier).clearError();
+
+    state = state.copyWith(
+      unverifiedPhone: () => phone,
+      isLoading: false,
+    );
+    return true;
   }
 }

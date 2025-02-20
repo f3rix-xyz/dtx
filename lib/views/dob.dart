@@ -1,16 +1,19 @@
+import 'package:dtx/models/error_model.dart';
+import 'package:dtx/providers/error_provider.dart';
+import 'package:dtx/providers/user_provider.dart';
 import 'package:dtx/views/location.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_fonts/google_fonts.dart';
-// For segmented fields
 
-class DateOfBirthScreen extends StatefulWidget {
+class DateOfBirthScreen extends ConsumerStatefulWidget {
   const DateOfBirthScreen({super.key});
 
   @override
-  _DateOfBirthScreenState createState() => _DateOfBirthScreenState();
+  ConsumerState<DateOfBirthScreen> createState() => _DateOfBirthScreenState();
 }
 
-class _DateOfBirthScreenState extends State<DateOfBirthScreen> {
+class _DateOfBirthScreenState extends ConsumerState<DateOfBirthScreen> {
   final TextEditingController _dayController = TextEditingController();
   final TextEditingController _monthController = TextEditingController();
   final TextEditingController _yearController = TextEditingController();
@@ -18,6 +21,7 @@ class _DateOfBirthScreenState extends State<DateOfBirthScreen> {
   @override
   Widget build(BuildContext context) {
     final screenSize = MediaQuery.of(context).size;
+    final error = ref.watch(errorProvider);
 
     return Scaffold(
       body: Container(
@@ -34,9 +38,7 @@ class _DateOfBirthScreenState extends State<DateOfBirthScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                SizedBox(height: screenSize.height * 0.1), // Space from the top
-
-                // Title: What's your date of birth?
+                SizedBox(height: screenSize.height * 0.1),
                 Text(
                   "What's your date of birth?",
                   style: GoogleFonts.poppins(
@@ -45,10 +47,7 @@ class _DateOfBirthScreenState extends State<DateOfBirthScreen> {
                     color: Colors.white,
                   ),
                 ),
-
                 SizedBox(height: screenSize.height * 0.04),
-
-                // Date Input Fields (DD/MM/YYYY)
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
@@ -57,10 +56,7 @@ class _DateOfBirthScreenState extends State<DateOfBirthScreen> {
                     _buildDateInput("YYYY", _yearController, 4),
                   ],
                 ),
-
                 SizedBox(height: screenSize.height * 0.03),
-
-                // Helper Text
                 Text(
                   "We use this to calculate the age on your profile.",
                   style: GoogleFonts.poppins(
@@ -68,53 +64,20 @@ class _DateOfBirthScreenState extends State<DateOfBirthScreen> {
                     color: Colors.white70,
                   ),
                 ),
-
-                Spacer(),
-
-                // Circular "Next" Button
-                Align(
-                  alignment: Alignment.centerRight,
-                  child: GestureDetector(
-                    onTap: () {
-                      // Validate input and proceed
-                      if (_validateDob()) {
-                         Navigator.push(
-                    context,
-                    MaterialPageRoute(builder: (context) => LocationInputScreen())
-                    );
-                      } else {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(
-                            content: Text("Please enter a valid date of birth!"),
-                          ),
-                        );
-                      }
-                    },
-                    child: Container(
-                      width: screenSize.width * 0.15,
-                      height: screenSize.width * 0.15,
-                      decoration: BoxDecoration(
-                        color: Colors.white,
-                        shape: BoxShape.circle,
-                        boxShadow: [
-                          BoxShadow(
-                            color: Colors.black.withOpacity(0.2),
-                            spreadRadius: 2,
-                            blurRadius: 8,
-                            offset: const Offset(0, 4), // Shadow position
-                          ),
-                        ],
-                      ),
-                      child: const Icon(
-                        Icons.arrow_forward_rounded,
-                        size: 28,
-                        color: Color(0xFF8B5CF6),
+                if (error?.type == ErrorType.validation)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 8.0),
+                    child: Text(
+                      error!.message,
+                      style: GoogleFonts.poppins(
+                        color: Colors.redAccent,
+                        fontSize: screenSize.width * 0.035,
                       ),
                     ),
                   ),
-                ),
-
-                SizedBox(height: screenSize.height * 0.05), // Bottom padding
+                const Spacer(),
+                _buildNextButton(screenSize),
+                SizedBox(height: screenSize.height * 0.05),
               ],
             ),
           ),
@@ -123,12 +86,16 @@ class _DateOfBirthScreenState extends State<DateOfBirthScreen> {
     );
   }
 
-  // Widget for individual date input fields
-  Widget _buildDateInput(String hint, TextEditingController controller, int maxLength) {
+  Widget _buildDateInput(
+      String hint, TextEditingController controller, int maxLength) {
+    // Create a FocusNode for each input field
+    final focusNode = FocusNode();
+
     return Expanded(
-      flex: maxLength == 4 ? 2 : 1, // Flex for wider fields (YYYY)
+      flex: maxLength == 4 ? 2 : 1,
       child: TextField(
         controller: controller,
+        focusNode: focusNode,
         keyboardType: TextInputType.number,
         maxLength: maxLength,
         style: GoogleFonts.poppins(
@@ -143,7 +110,7 @@ class _DateOfBirthScreenState extends State<DateOfBirthScreen> {
             fontWeight: FontWeight.w500,
             color: Colors.white70,
           ),
-          counterText: "", // Remove counter below the text field
+          counterText: "",
           enabledBorder: const UnderlineInputBorder(
             borderSide: BorderSide(color: Colors.white54, width: 2.0),
           ),
@@ -152,20 +119,100 @@ class _DateOfBirthScreenState extends State<DateOfBirthScreen> {
           ),
         ),
         textAlign: TextAlign.center,
+        onChanged: (value) {
+          // Move to next field when max length is reached
+          if (value.length == maxLength) {
+            if (hint == "DD") {
+              FocusScope.of(context).nextFocus();
+            } else if (hint == "MM") {
+              FocusScope.of(context).nextFocus();
+            }
+          }
+          _validateInputs();
+        },
       ),
     );
   }
 
-  // Function to validate the date input
-  bool _validateDob() {
+  void _validateInputs() {
+    ref.read(errorProvider.notifier).clearError();
     final day = int.tryParse(_dayController.text) ?? 0;
     final month = int.tryParse(_monthController.text) ?? 0;
     final year = int.tryParse(_yearController.text) ?? 0;
 
-    if (day < 1 || day > 31) return false;
-    if (month < 1 || month > 12) return false;
-    if (year < 1900 || year > DateTime.now().year) return false;
+    if (_dayController.text.isEmpty ||
+        _monthController.text.isEmpty ||
+        _yearController.text.isEmpty) return;
 
-    return true;
+    if (day < 1 || day > 31) {
+      ref.read(errorProvider.notifier).setError(
+            AppError.validation("Invalid day"),
+          );
+      return;
+    }
+
+    if (month < 1 || month > 12) {
+      ref.read(errorProvider.notifier).setError(
+            AppError.validation("Invalid month"),
+          );
+      return;
+    }
+
+    try {
+      final date = DateTime(year, month, day);
+      ref.read(userProvider.notifier).updateDateOfBirth(date);
+    } catch (e) {
+      ref.read(errorProvider.notifier).setError(
+            AppError.validation("Invalid date combination"),
+          );
+    }
+  }
+
+  Widget _buildNextButton(Size screenSize) {
+    final isValid = _dayController.text.length == 2 &&
+        _monthController.text.length == 2 &&
+        _yearController.text.length == 4 &&
+        ref.read(errorProvider) == null;
+
+    return Align(
+      alignment: Alignment.centerRight,
+      child: ElevatedButton(
+        onPressed: isValid ? _handleNext : null,
+        style: ElevatedButton.styleFrom(
+          shape: const CircleBorder(),
+          backgroundColor: isValid ? Colors.white : Colors.grey.shade400,
+          shadowColor: Colors.black.withOpacity(0.2),
+          elevation: 8,
+          padding: const EdgeInsets.all(16),
+        ),
+        child: Icon(
+          Icons.arrow_forward_rounded,
+          size: 24,
+          color: isValid ? const Color(0xFF8B5CF6) : Colors.white54,
+        ),
+      ),
+    );
+  }
+
+  void _handleNext() {
+    final date = DateTime(
+      int.parse(_yearController.text),
+      int.parse(_monthController.text),
+      int.parse(_dayController.text),
+    );
+
+    ref.read(userProvider.notifier).updateDateOfBirth(date);
+    Navigator.push(
+      context,
+      MaterialPageRoute(builder: (context) => const LocationInputScreen()),
+    );
+  }
+
+  @override
+  void dispose() {
+    _dayController.dispose();
+    _monthController.dispose();
+    _yearController.dispose();
+    super.dispose();
   }
 }
