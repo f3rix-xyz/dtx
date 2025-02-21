@@ -12,27 +12,7 @@ final userProvider = StateNotifierProvider<UserNotifier, UserModel>((ref) {
 class UserNotifier extends StateNotifier<UserModel> {
   final Ref ref;
 
-  UserNotifier(this.ref)
-      : super(UserModel(
-          name: '',
-          phoneNumber: '',
-          dateOfBirth: DateTime.now(),
-          latitude: 0.0,
-          longitude: 0.0,
-          gender: Gender.man,
-          datingIntention: DatingIntention.figuringOut,
-          height: '',
-          religiousBeliefs: Religion.spiritual,
-          drinkingHabit: DrinkingSmokingHabits.no,
-          smokingHabit: DrinkingSmokingHabits.no,
-          mediaUrls: [],
-          prompts: [],
-          lastName: null,
-          hometown: null,
-          jobTitle: null,
-          education: null,
-          audioPrompt: null,
-        ));
+  UserNotifier(this.ref) : super(UserModel());
 
   void updateName(String firstName, String? lastName) {
     ref.read(errorProvider.notifier).clearError();
@@ -78,7 +58,6 @@ class UserNotifier extends StateNotifier<UserModel> {
     }
 
     try {
-      // Validate date combination
       final validatedDate = DateTime(date.year, date.month, date.day);
       state = state.copyWith(dateOfBirth: validatedDate);
     } catch (e) {
@@ -88,20 +67,112 @@ class UserNotifier extends StateNotifier<UserModel> {
     }
   }
 
-  void updateLocation(LatLng location) {
+  void updateLocation(double latitude, double longitude) {
     state = state.copyWith(
-      latitude: location.latitude,
-      longitude: location.longitude,
+      latitude: latitude,
+      longitude: longitude,
     );
   }
 
   LatLng getCurrentLocation() {
-    return LatLng(state.latitude, state.longitude);
+    return LatLng(
+      state.latitude ?? 0.0,
+      state.longitude ?? 0.0,
+    );
   }
 
   bool isLocationValid() {
-    return state.latitude != 0.0 && state.longitude != 0.0;
+    return state.latitude != null &&
+        state.longitude != null &&
+        state.latitude != 0.0 &&
+        state.longitude != 0.0;
   }
 
-  bool isNameValid() => state.name.trim().length >= 3;
+  bool isNameValid() => (state.name?.trim().length ?? 0) >= 3;
+
+  void updateDatingIntention(DatingIntention? intention) {
+    state = state.copyWith(
+      datingIntention: intention,
+    );
+  }
+
+  bool isDatingIntentionSelected() {
+    return state.datingIntention != null;
+  }
+
+  void updateGender(Gender? gender) {
+    state = state.copyWith(
+      gender: gender,
+    );
+  }
+
+  bool isGenderSelected() {
+    return state.gender != null;
+  }
+
+  void updateHeight(String height) {
+    state = state.copyWith(
+      height: height,
+    );
+  }
+
+  bool isHeightSelected() {
+    return state.height != null;
+  }
+
+  void updateHometown(String? hometown) {
+    state = state.copyWith(
+      hometown: hometown,
+    );
+  }
+
+  bool isHometownSelected() {
+    return state.hometown != null;
+  }
+
+  void updateJobTitle(String? jobTitle) {
+    state = state.copyWith(
+      jobTitle: jobTitle?.trim(),
+    );
+  }
+
+  void updateEducation(String? education) {
+    state = state.copyWith(
+      education: education?.trim(),
+    );
+  }
+
+  void updateReligiousBeliefs(Religion? religion) {
+    state = state.copyWith(
+      religiousBeliefs: religion,
+    );
+  }
+
+  void updateDrinkingHabit(DrinkingSmokingHabits? habit) {
+    state = state.copyWith(
+      drinkingHabit: habit,
+    );
+  }
+
+  void updateSmokingHabit(DrinkingSmokingHabits? habit) {
+    state = state.copyWith(
+      smokingHabit: habit,
+    );
+  }
+
+  void addPrompt(Prompt prompt) {
+    final List<Prompt> updatedPrompts = [...state.prompts, prompt];
+    state = state.copyWith(prompts: updatedPrompts);
+  }
+
+  void updatePromptAnswer(String question, String answer) {
+    final List<Prompt> updatedPrompts = state.prompts.map((prompt) {
+      if (prompt.question == question) {
+        return prompt.copyWith(answer: answer);
+      }
+      return prompt;
+    }).toList();
+
+    state = state.copyWith(prompts: updatedPrompts);
+  }
 }

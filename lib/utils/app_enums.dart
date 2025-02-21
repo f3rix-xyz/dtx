@@ -56,60 +56,60 @@ enum PromptCategory {
   final String label;
   const PromptCategory(this.label);
 
-  List<Prompt> getPrompts() {
+  List<PromptType> getPrompts() {
     switch (this) {
       case PromptCategory.storyTime:
         return [
-          Prompt.twoTruthsAndALie,
-          Prompt.worstIdea,
-          Prompt.biggestRisk,
-          Prompt.biggestDateFail,
-          Prompt.neverHaveIEver,
-          Prompt.bestTravelStory,
-          Prompt.weirdestGift,
-          Prompt.mostSpontaneous,
-          Prompt.oneThingNeverDoAgain,
+          PromptType.twoTruthsAndALie,
+          PromptType.worstIdea,
+          PromptType.biggestRisk,
+          PromptType.biggestDateFail,
+          PromptType.neverHaveIEver,
+          PromptType.bestTravelStory,
+          PromptType.weirdestGift,
+          PromptType.mostSpontaneous,
+          PromptType.oneThingNeverDoAgain,
         ];
       case PromptCategory.myType:
         return [
-          Prompt.nonNegotiable,
-          Prompt.hallmarkOfGoodRelationship,
-          Prompt.lookingFor,
-          Prompt.weirdlyAttractedTo,
-          Prompt.allIAskIsThatYou,
-          Prompt.wellGetAlongIf,
-          Prompt.wantSomeoneWho,
-          Prompt.greenFlags,
-          Prompt.sameTypeOfWeird,
-          Prompt.fallForYouIf,
-          Prompt.bragAboutYou,
+          PromptType.nonNegotiable,
+          PromptType.hallmarkOfGoodRelationship,
+          PromptType.lookingFor,
+          PromptType.weirdlyAttractedTo,
+          PromptType.allIAskIsThatYou,
+          PromptType.wellGetAlongIf,
+          PromptType.wantSomeoneWho,
+          PromptType.greenFlags,
+          PromptType.sameTypeOfWeird,
+          PromptType.fallForYouIf,
+          PromptType.bragAboutYou,
         ];
       case PromptCategory.gettingPersonal:
         return [
-          Prompt.oneThingYouShouldKnow,
-          Prompt.loveLanguage,
-          Prompt.dorkiestThing,
-          Prompt.dontHateMeIf,
-          Prompt.geekOutOn,
-          Prompt.ifLovingThisIsWrong,
-          Prompt.keyToMyHeart,
-          Prompt.wontShutUpAbout,
-          Prompt.shouldNotGoOutWithMeIf,
-          Prompt.whatIfIToldYouThat,
+          PromptType.oneThingYouShouldKnow,
+          PromptType.loveLanguage,
+          PromptType.dorkiestThing,
+          PromptType.dontHateMeIf,
+          PromptType.geekOutOn,
+          PromptType.ifLovingThisIsWrong,
+          PromptType.keyToMyHeart,
+          PromptType.wontShutUpAbout,
+          PromptType.shouldNotGoOutWithMeIf,
+          PromptType.whatIfIToldYouThat,
         ];
       case PromptCategory.dateVibes:
         return [
-          Prompt.togetherWeCould,
-          Prompt.firstRoundIsOnMeIf,
-          Prompt.whatIOderForTheTable,
-          Prompt.bestSpotInTown,
-          Prompt.bestWayToAskMeOut,
+          PromptType.togetherWeCould,
+          PromptType.firstRoundIsOnMeIf,
+          PromptType.whatIOderForTheTable,
+          PromptType.bestSpotInTown,
+          PromptType.bestWayToAskMeOut,
         ];
     }
   }
 }
 
-enum Prompt {
+enum PromptType {
   twoTruthsAndALie('Two truths and a lie'),
   worstIdea('Worst idea I\'ve ever had'),
   biggestRisk('Biggest risk I\'ve taken'),
@@ -147,7 +147,16 @@ enum Prompt {
   bestWayToAskMeOut('The best way to ask me out is by');
 
   final String label;
-  const Prompt(this.label);
+  const PromptType(this.label);
+
+  PromptCategory getCategory() {
+    for (var category in PromptCategory.values) {
+      if (category.getPrompts().contains(this)) {
+        return category;
+      }
+    }
+    return PromptCategory.storyTime; // Default category if not found
+  }
 }
 
 enum AudioPrompt {
@@ -191,4 +200,3 @@ enum AudioPrompt {
   final String label;
   const AudioPrompt(this.label);
 }
-

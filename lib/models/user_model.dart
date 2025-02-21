@@ -1,5 +1,3 @@
-// models/user_model.dart
-
 import 'package:dtx/utils/app_enums.dart';
 
 class Prompt {
@@ -25,6 +23,14 @@ class Prompt {
         question: json['question'],
         answer: json['answer'],
       );
+
+  Prompt copyWith({String? answer}) {
+    return Prompt(
+      category: category,
+      question: question,
+      answer: answer ?? this.answer,
+    );
+  }
 }
 
 class AudioPromptModel {
@@ -49,97 +55,62 @@ class AudioPromptModel {
 }
 
 class UserModel {
-  final String name;
+  final String? name;
   final String? lastName;
-  final String phoneNumber;
-  final DateTime dateOfBirth;
-  final double latitude;
-  final double longitude;
-  final Gender gender;
-  final DatingIntention datingIntention;
-  final String height;
+  final String? phoneNumber;
+  final DateTime? dateOfBirth;
+  final double? latitude;
+  final double? longitude;
+  final Gender? gender;
+  final DatingIntention? datingIntention;
+  final String? height;
   final String? hometown;
   final String? jobTitle;
   final String? education;
-  final Religion religiousBeliefs;
-  final DrinkingSmokingHabits drinkingHabit;
-  final DrinkingSmokingHabits smokingHabit;
-  final List<String> mediaUrls;
+  final Religion? religiousBeliefs;
+  final DrinkingSmokingHabits? drinkingHabit;
+  final DrinkingSmokingHabits? smokingHabit;
+  final List<String>? mediaUrls;
   final List<Prompt> prompts;
   final AudioPromptModel? audioPrompt;
 
   UserModel({
-    required this.name,
+    this.name,
     this.lastName,
-    required this.phoneNumber,
-    required this.dateOfBirth,
-    required this.latitude,
-    required this.longitude,
-    required this.gender,
-    required this.datingIntention,
-    required this.height,
+    this.phoneNumber,
+    this.dateOfBirth,
+    this.latitude,
+    this.longitude,
+    this.gender,
+    this.datingIntention,
+    this.height,
     this.hometown,
     this.jobTitle,
     this.education,
-    required this.religiousBeliefs,
-    required this.drinkingHabit,
-    required this.smokingHabit,
-    required this.mediaUrls,
-    required this.prompts,
+    this.religiousBeliefs,
+    this.drinkingHabit,
+    this.smokingHabit,
+    this.mediaUrls,
+    this.prompts = const [],
     this.audioPrompt,
-  }) {
-    // Server-side validations will handle these checks
-    /*
-    // Phone validation
-    if (!RegExp(r'^[0-9]{10}$').hasMatch(phoneNumber)) {
-      throw ArgumentError('Phone number must be exactly 10 digits');
-    }
-
-    // Media validations
-    if (mediaUrls.length < 3) {
-      throw ArgumentError('Minimum 3 media files required');
-    }
-    if (mediaUrls.length > 6) {
-      throw ArgumentError('Maximum 6 media files allowed');
-    }
-
-    // Prompt validations
-    if (prompts.isEmpty) {
-      throw ArgumentError('At least 1 prompt is required');
-    }
-    if (prompts.length > 3) {
-      throw ArgumentError('Maximum 3 prompts allowed');
-    }
-
-    // Text length validations
-    if (hometown != null && hometown!.length > 100) {
-      throw ArgumentError('Hometown cannot exceed 100 characters');
-    }
-    if (jobTitle != null && jobTitle!.length > 30) {
-      throw ArgumentError('Job title cannot exceed 30 characters');
-    }
-    if (education != null && education!.length > 30) {
-      throw ArgumentError('Education cannot exceed 30 characters');
-    }
-    */
-  }
+  });
 
   Map<String, dynamic> toJson() => {
         'name': name,
         'last_name': lastName,
         'phone_number': phoneNumber,
-        'date_of_birth': dateOfBirth.toIso8601String(),
+        'date_of_birth': dateOfBirth?.toIso8601String(),
         'latitude': latitude,
         'longitude': longitude,
-        'gender': gender.name,
-        'dating_intention': datingIntention.name,
+        'gender': gender?.name,
+        'dating_intention': datingIntention?.name,
         'height': height,
         'hometown': hometown,
         'job_title': jobTitle,
         'education': education,
-        'religious_beliefs': religiousBeliefs.name,
-        'drinking_habit': drinkingHabit.name,
-        'smoking_habit': smokingHabit.name,
+        'religious_beliefs': religiousBeliefs?.name,
+        'drinking_habit': drinkingHabit?.name,
+        'smoking_habit': smokingHabit?.name,
         'media_urls': mediaUrls,
         'prompts': prompts.map((prompt) => prompt.toJson()).toList(),
         'audio_prompt': audioPrompt?.toJson(),
@@ -149,26 +120,42 @@ class UserModel {
         name: json['name'],
         lastName: json['last_name'],
         phoneNumber: json['phone_number'],
-        dateOfBirth: DateTime.parse(json['date_of_birth']),
+        dateOfBirth: json['date_of_birth'] != null
+            ? DateTime.parse(json['date_of_birth'])
+            : null,
         latitude: json['latitude'],
         longitude: json['longitude'],
-        gender: Gender.values.firstWhere((e) => e.name == json['gender']),
-        datingIntention: DatingIntention.values
-            .firstWhere((e) => e.name == json['dating_intention']),
+        gender: json['gender'] != null
+            ? Gender.values.firstWhere((e) => e.name == json['gender'])
+            : null,
+        datingIntention: json['dating_intention'] != null
+            ? DatingIntention.values
+                .firstWhere((e) => e.name == json['dating_intention'])
+            : null,
         height: json['height'],
         hometown: json['hometown'],
         jobTitle: json['job_title'],
         education: json['education'],
-        religiousBeliefs: Religion.values
-            .firstWhere((e) => e.name == json['religious_beliefs']),
-        drinkingHabit: DrinkingSmokingHabits.values
-            .firstWhere((e) => e.name == json['drinking_habit']),
-        smokingHabit: DrinkingSmokingHabits.values
-            .firstWhere((e) => e.name == json['smoking_habit']),
-        mediaUrls: List<String>.from(json['media_urls']),
-        prompts: (json['prompts'] as List)
-            .map((prompt) => Prompt.fromJson(prompt))
-            .toList(),
+        religiousBeliefs: json['religious_beliefs'] != null
+            ? Religion.values
+                .firstWhere((e) => e.name == json['religious_beliefs'])
+            : null,
+        drinkingHabit: json['drinking_habit'] != null
+            ? DrinkingSmokingHabits.values
+                .firstWhere((e) => e.name == json['drinking_habit'])
+            : null,
+        smokingHabit: json['smoking_habit'] != null
+            ? DrinkingSmokingHabits.values
+                .firstWhere((e) => e.name == json['smoking_habit'])
+            : null,
+        mediaUrls: json['media_urls'] != null
+            ? List<String>.from(json['media_urls'])
+            : null,
+        prompts: json['prompts'] != null
+            ? (json['prompts'] as List)
+                .map((prompt) => Prompt.fromJson(prompt))
+                .toList()
+            : [],
         audioPrompt: json['audio_prompt'] != null
             ? AudioPromptModel.fromJson(json['audio_prompt'])
             : null,
@@ -211,7 +198,7 @@ class UserModel {
       drinkingHabit: drinkingHabit ?? this.drinkingHabit,
       smokingHabit: smokingHabit ?? this.smokingHabit,
       mediaUrls: mediaUrls ?? this.mediaUrls,
-      prompts: prompts ?? this.prompts,
+      prompts: prompts ?? List.from(this.prompts),
       audioPrompt: audioPrompt ?? this.audioPrompt,
     );
   }

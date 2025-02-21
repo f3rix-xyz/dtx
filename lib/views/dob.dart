@@ -18,6 +18,41 @@ class _DateOfBirthScreenState extends ConsumerState<DateOfBirthScreen> {
   final TextEditingController _monthController = TextEditingController();
   final TextEditingController _yearController = TextEditingController();
 
+  final FocusNode _dayFocusNode = FocusNode();
+  final FocusNode _monthFocusNode = FocusNode();
+  final FocusNode _yearFocusNode = FocusNode();
+
+  @override
+  void initState() {
+    super.initState();
+    _dayFocusNode.addListener(() {
+      if (!_dayFocusNode.hasFocus) {
+        _validateInputs();
+      }
+    });
+    _monthFocusNode.addListener(() {
+      if (!_monthFocusNode.hasFocus) {
+        _validateInputs();
+      }
+    });
+    _yearFocusNode.addListener(() {
+      if (!_yearFocusNode.hasFocus) {
+        _validateInputs();
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _dayController.dispose();
+    _monthController.dispose();
+    _yearController.dispose();
+    _dayFocusNode.dispose();
+    _monthFocusNode.dispose();
+    _yearFocusNode.dispose();
+    super.dispose();
+  }
+
   @override
   Widget build(BuildContext context) {
     final screenSize = MediaQuery.of(context).size;
@@ -51,9 +86,27 @@ class _DateOfBirthScreenState extends ConsumerState<DateOfBirthScreen> {
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    _buildDateInput("DD", _dayController, 2),
-                    _buildDateInput("MM", _monthController, 2),
-                    _buildDateInput("YYYY", _yearController, 4),
+                    _buildDateInput(
+                      "DD",
+                      _dayController,
+                      _dayFocusNode,
+                      2,
+                      _monthFocusNode,
+                    ),
+                    _buildDateInput(
+                      "MM",
+                      _monthController,
+                      _monthFocusNode,
+                      2,
+                      _yearFocusNode,
+                    ),
+                    _buildDateInput(
+                      "YYYY",
+                      _yearController,
+                      _yearFocusNode,
+                      4,
+                      null,
+                    ),
                   ],
                 ),
                 SizedBox(height: screenSize.height * 0.03),
@@ -87,10 +140,12 @@ class _DateOfBirthScreenState extends ConsumerState<DateOfBirthScreen> {
   }
 
   Widget _buildDateInput(
-      String hint, TextEditingController controller, int maxLength) {
-    // Create a FocusNode for each input field
-    final focusNode = FocusNode();
-
+    String hint,
+    TextEditingController controller,
+    FocusNode focusNode,
+    int maxLength,
+    FocusNode? nextFocusNode,
+  ) {
     return Expanded(
       flex: maxLength == 4 ? 2 : 1,
       child: TextField(
@@ -120,12 +175,10 @@ class _DateOfBirthScreenState extends ConsumerState<DateOfBirthScreen> {
         ),
         textAlign: TextAlign.center,
         onChanged: (value) {
-          // Move to next field when max length is reached
           if (value.length == maxLength) {
-            if (hint == "DD") {
-              FocusScope.of(context).nextFocus();
-            } else if (hint == "MM") {
-              FocusScope.of(context).nextFocus();
+            focusNode.unfocus();
+            if (nextFocusNode != null) {
+              FocusScope.of(context).requestFocus(nextFocusNode);
             }
           }
           _validateInputs();
@@ -206,13 +259,5 @@ class _DateOfBirthScreenState extends ConsumerState<DateOfBirthScreen> {
       context,
       MaterialPageRoute(builder: (context) => const LocationInputScreen()),
     );
-  }
-
-  @override
-  void dispose() {
-    _dayController.dispose();
-    _monthController.dispose();
-    _yearController.dispose();
-    super.dispose();
   }
 }

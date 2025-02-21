@@ -1,4 +1,4 @@
-enum ErrorType { network, validation, auth, generic }
+enum ErrorType { network, validation, auth, generic, locationService }
 
 class AppError {
   final String message;
@@ -10,7 +10,6 @@ class AppError {
     required this.type,
   }) : timestamp = DateTime.now();
 
-  // Factory constructors for common errors
   factory AppError.network(String message) => AppError(
         message: message,
         type: ErrorType.network,
@@ -24,5 +23,10 @@ class AppError {
   factory AppError.auth(String message) => AppError(
         message: message,
         type: ErrorType.auth,
+      );
+
+  factory AppError.locationService(String message) => AppError(
+        message: message,
+        type: ErrorType.locationService,
       );
 }

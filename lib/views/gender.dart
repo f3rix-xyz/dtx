@@ -1,22 +1,23 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_fonts/google_fonts.dart';
-import 'package:dtx/views/dating_intentions.dart';
 import 'package:dtx/utils/app_enums.dart';
+import '../providers/user_provider.dart';
+import 'dating_intentions.dart';
 
-class GenderSelectionScreen extends StatefulWidget {
+class GenderSelectionScreen extends ConsumerStatefulWidget {
   const GenderSelectionScreen({super.key});
 
   @override
-  State<GenderSelectionScreen> createState() => _GenderSelectionScreenState();
+  ConsumerState<GenderSelectionScreen> createState() =>
+      _GenderSelectionScreenState();
 }
 
-class _GenderSelectionScreenState extends State<GenderSelectionScreen> {
-  Gender? _selectedGender;
-  bool _isVisibleOnProfile = true;
-
+class _GenderSelectionScreenState extends ConsumerState<GenderSelectionScreen> {
   @override
   Widget build(BuildContext context) {
     final screenSize = MediaQuery.of(context).size;
+    final userState = ref.watch(userProvider);
 
     return Scaffold(
       backgroundColor: Colors.white,
@@ -27,26 +28,6 @@ class _GenderSelectionScreenState extends State<GenderSelectionScreen> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               SizedBox(height: screenSize.height * 0.03),
-              Center(
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: List.generate(
-                    10,
-                    (index) => Container(
-                      margin: const EdgeInsets.symmetric(horizontal: 3.5),
-                      width: 10,
-                      height: 10,
-                      decoration: BoxDecoration(
-                        color: index < 6
-                            ? const Color(0xFF8B5CF6)
-                            : Colors.grey.shade300,
-                        shape: BoxShape.circle,
-                      ),
-                    ),
-                  ),
-                ),
-              ),
-              SizedBox(height: screenSize.height * 0.05),
               Text(
                 "Which gender best\ndescribes you?",
                 style: GoogleFonts.poppins(
@@ -56,48 +37,23 @@ class _GenderSelectionScreenState extends State<GenderSelectionScreen> {
                   height: 1.2,
                 ),
               ),
-              SizedBox(height: screenSize.height * 0.04),
+              SizedBox(height: screenSize.height * 0.09),
               Column(
                 children: Gender.values
                     .map((gender) => _buildOption(gender))
                     .toList(),
               ),
-              SizedBox(height: screenSize.height * 0.04),
-              GestureDetector(
-                onTap: () =>
-                    setState(() => _isVisibleOnProfile = !_isVisibleOnProfile),
-                child: Row(
-                  children: [
-                    Icon(
-                      _isVisibleOnProfile
-                          ? Icons.check_box
-                          : Icons.check_box_outline_blank,
-                      color: const Color(0xFF8B5CF6),
-                    ),
-                    const SizedBox(width: 12),
-                    Text(
-                      "Visible on profile",
-                      style: GoogleFonts.poppins(
-                        fontSize: 16,
-                        fontWeight: FontWeight.w500,
-                        color: Colors.black,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
               const Spacer(),
               Align(
                 alignment: Alignment.centerRight,
                 child: GestureDetector(
-                  onTap: _selectedGender != null
+                  onTap: userState.gender != null
                       ? () {
                           Navigator.push(
                             context,
                             MaterialPageRoute(
-                              builder: (context) =>
-                                  const DatingIntentionsScreen(),
-                            ),
+                                builder: (context) =>
+                                    const DatingIntentionsScreen()),
                           );
                         }
                       : null,
@@ -105,26 +61,25 @@ class _GenderSelectionScreenState extends State<GenderSelectionScreen> {
                     width: screenSize.width * 0.15,
                     height: screenSize.width * 0.15,
                     decoration: BoxDecoration(
-                      color: _selectedGender != null
+                      color: userState.gender != null
                           ? const Color(0xFF8B5CF6)
                           : Colors.grey.shade300,
                       shape: BoxShape.circle,
                       boxShadow: [
-                        BoxShadow(
-                          color: _selectedGender != null
-                              ? Colors.grey.shade400
-                              : Colors.transparent,
-                          spreadRadius: 2,
-                          blurRadius: 8,
-                          offset: const Offset(0, 4),
-                        ),
+                        if (userState.gender != null)
+                          BoxShadow(
+                            color: Colors.grey.shade400,
+                            spreadRadius: 2,
+                            blurRadius: 8,
+                            offset: const Offset(0, 4),
+                          ),
                       ],
                     ),
                     child: Icon(
                       Icons.arrow_forward_rounded,
                       size: 28,
                       color:
-                          _selectedGender != null ? Colors.white : Colors.grey,
+                          userState.gender != null ? Colors.white : Colors.grey,
                     ),
                   ),
                 ),
@@ -138,7 +93,7 @@ class _GenderSelectionScreenState extends State<GenderSelectionScreen> {
   }
 
   Widget _buildOption(Gender gender) {
-    final isSelected = _selectedGender == gender;
+    final bool isSelected = ref.watch(userProvider).gender == gender;
 
     return Padding(
       padding: const EdgeInsets.only(bottom: 12),
@@ -146,7 +101,9 @@ class _GenderSelectionScreenState extends State<GenderSelectionScreen> {
         borderRadius: BorderRadius.circular(12),
         elevation: isSelected ? 2 : 0,
         child: InkWell(
-          onTap: () => setState(() => _selectedGender = gender),
+          onTap: () {
+            ref.read(userProvider.notifier).updateGender(gender);
+          },
           borderRadius: BorderRadius.circular(12),
           child: Container(
             width: double.infinity,

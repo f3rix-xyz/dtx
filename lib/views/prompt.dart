@@ -1,34 +1,44 @@
 import 'package:dtx/views/media.dart';
+import 'package:dtx/views/textpromptsselect.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:dotted_border/dotted_border.dart';
+import 'package:dtx/providers/user_provider.dart';
 
-class ProfileAnswersScreen extends StatefulWidget {
+class ProfileAnswersScreen extends ConsumerStatefulWidget {
   const ProfileAnswersScreen({super.key});
 
   @override
-  State<ProfileAnswersScreen> createState() => _ProfileAnswersScreenState();
+  ConsumerState<ProfileAnswersScreen> createState() =>
+      _ProfileAnswersScreenState();
 }
 
-class _ProfileAnswersScreenState extends State<ProfileAnswersScreen> {
-  List<String?> _answers = List.generate(
-      3, (index) => null); // Keeping 3 prompts, even without answer boxes
-  bool _isForwardButtonEnabled =
-      false; // Still using forward button logic (can be adjusted if needed)
+class _ProfileAnswersScreenState extends ConsumerState<ProfileAnswersScreen> {
+  bool _isForwardButtonEnabled = false;
 
   void _updateForwardButtonState() {
-    // Logic might need adjustment if forward button functionality changes without answers
+    final userState = ref.watch(userProvider);
+    final prompts = userState.prompts ?? [];
     int filledAnswers =
-        _answers.where((answer) => answer != null && answer.isNotEmpty).length;
+        prompts.where((prompt) => prompt.answer.isNotEmpty).length;
     setState(() {
-      _isForwardButtonEnabled = filledAnswers >=
-          0; // Always enabled now since no answer needed for button? Adjust as needed
+      _isForwardButtonEnabled = filledAnswers >= 3;
+    });
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _updateForwardButtonState();
     });
   }
 
   @override
   Widget build(BuildContext context) {
     final screenSize = MediaQuery.of(context).size;
+    final userState = ref.watch(userProvider);
 
     return Scaffold(
       backgroundColor: const Color(0xFFF4F4F4),
@@ -38,9 +48,7 @@ class _ProfileAnswersScreenState extends State<ProfileAnswersScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              SizedBox(height: screenSize.height * 0.03), // Slight top spacing
-
-              // Top Navigation Bar (No Icon)
+              SizedBox(height: screenSize.height * 0.03),
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
@@ -48,10 +56,7 @@ class _ProfileAnswersScreenState extends State<ProfileAnswersScreen> {
                   const SizedBox(width: 48),
                 ],
               ),
-
-              SizedBox(height: screenSize.height * 0.04), // Spacing below nav
-
-              // Heading Text - Lexend Deca Font
+              SizedBox(height: screenSize.height * 0.04),
               Text(
                 "Write your profile answers",
                 textAlign: TextAlign.left,
@@ -62,55 +67,43 @@ class _ProfileAnswersScreenState extends State<ProfileAnswersScreen> {
                   height: 1.0,
                 ),
               ),
-
-              SizedBox(
-                  height: screenSize.height *
-                      0.045), // **Increased spacing below heading** for visual balance
-
-              // Prompt Box Section 1 - No Answer Box now
+              SizedBox(height: screenSize.height * 0.045),
               _buildPromptAnswerSection(
                 screenSize: screenSize,
                 promptNumber: 1,
-                onAnswerChanged: (text) {
-                  _answers[0] =
-                      text; // Keeping answer update logic, even if not used in UI right now
-                  _updateForwardButtonState();
+                onPromptSelected: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                        builder: (context) => TextSelectPromptScreen()),
+                  );
                 },
               ),
-
-              SizedBox(
-                  height: screenSize.height *
-                      0.035), // **Increased spacing between boxes**
-
-              // Prompt Box Section 2 - No Answer Box
+              SizedBox(height: screenSize.height * 0.035),
               _buildPromptAnswerSection(
                 screenSize: screenSize,
                 promptNumber: 2,
-                onAnswerChanged: (text) {
-                  _answers[1] = text;
-                  _updateForwardButtonState();
+                onPromptSelected: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                        builder: (context) => TextSelectPromptScreen()),
+                  );
                 },
               ),
-
-              SizedBox(
-                  height: screenSize.height *
-                      0.035), // **Increased spacing between boxes**
-
-              // Prompt Box Section 3 - No Answer Box
+              SizedBox(height: screenSize.height * 0.035),
               _buildPromptAnswerSection(
                 screenSize: screenSize,
                 promptNumber: 3,
-                onAnswerChanged: (text) {
-                  _answers[2] = text;
-                  _updateForwardButtonState();
+                onPromptSelected: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                        builder: (context) => TextSelectPromptScreen()),
+                  );
                 },
               ),
-
-              SizedBox(
-                  height: screenSize.height *
-                      0.04), // **Increased spacing before "required answers"** for balance
-
-              // "3 answers required" Text - Poppins font
+              SizedBox(height: screenSize.height * 0.04),
               Padding(
                 padding: EdgeInsets.only(left: screenSize.width * 0.01),
                 child: Text(
@@ -123,10 +116,7 @@ class _ProfileAnswersScreenState extends State<ProfileAnswersScreen> {
                   ),
                 ),
               ),
-
               const Spacer(),
-
-              // Forward Button - Keep for now, functionality can be adjusted
               Align(
                 alignment: Alignment.bottomRight,
                 child: Padding(
@@ -134,11 +124,10 @@ class _ProfileAnswersScreenState extends State<ProfileAnswersScreen> {
                   child: GestureDetector(
                     onTap: () {
                       if (_isForwardButtonEnabled) {
-                        // Keep button enabled logic for now
                         ScaffoldMessenger.of(context).showSnackBar(
                           const SnackBar(
                             content: Text(
-                                "Navigating to next screen (MediaPickerScreen)..."), // Updated message
+                                "Navigating to next screen (MediaPickerScreen)..."),
                           ),
                         );
                         Navigator.push(
@@ -149,8 +138,7 @@ class _ProfileAnswersScreenState extends State<ProfileAnswersScreen> {
                       } else {
                         ScaffoldMessenger.of(context).showSnackBar(
                           const SnackBar(
-                            content: Text(
-                                "Continue to Media Selection."), // Updated message - no longer answer-related
+                            content: Text("Continue to Media Selection."),
                           ),
                         );
                       }
@@ -185,70 +173,82 @@ class _ProfileAnswersScreenState extends State<ProfileAnswersScreen> {
   Widget _buildPromptAnswerSection({
     required Size screenSize,
     required int promptNumber,
-    required ValueChanged<String>
-        onAnswerChanged, // Keep callback for potential future use
+    required VoidCallback onPromptSelected,
   }) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        // "Select a Prompt" - BIGGER Box, No Answer Input
-        GestureDetector(
-          onTap: () {},
-          child: DottedBorder(
-            dashPattern: const [6, 3],
-            color: const Color(0xFF8B5CF6),
-            strokeWidth:
-                2.2, // **Slightly Thicker Border for visual prominence**
-            borderType: BorderType.RRect,
-            radius:
-                const Radius.circular(15), // **Slightly more rounded corners**
-            child: Container(
-              width: double.infinity,
-              padding: EdgeInsets.symmetric(
-                  vertical: screenSize.height * 0.035,
-                  horizontal: screenSize.width *
-                      0.04), // **Increased padding - BIGGER BOXES**
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(
-                    15), // **Matching BorderRadius to DottedBorder**
-              ),
-              child: Stack(
-                alignment: Alignment.centerLeft,
+    final userState = ref.watch(userProvider);
+    final prompt = userState.prompts?.elementAtOrNull(promptNumber - 1);
+
+    return GestureDetector(
+      onTap: onPromptSelected,
+      child: DottedBorder(
+        dashPattern: const [6, 3],
+        color: prompt != null
+            ? const Color(0xFF8B5CF6).withOpacity(0.8)
+            : const Color(0xFF8B5CF6),
+        strokeWidth: 2.2,
+        borderType: BorderType.RRect,
+        radius: const Radius.circular(15),
+        child: Container(
+          width: double.infinity,
+          padding: EdgeInsets.symmetric(
+            vertical: screenSize.height * 0.035,
+            horizontal: screenSize.width * 0.04,
+          ),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(15),
+          ),
+          child: Stack(
+            alignment: Alignment.centerLeft,
+            children: [
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Padding(
-                    padding: EdgeInsets.only(
-                        left: screenSize.width *
-                            0.03), // **Slightly more left padding for text**
+                    padding: EdgeInsets.only(left: screenSize.width * 0.03),
                     child: Text(
-                      "Select a Prompt",
+                      prompt != null
+                          ? "${prompt.question.substring(0, 20)}..."
+                          : "Select a Prompt",
                       style: GoogleFonts.poppins(
-                        fontSize:
-                            19, // **Increased font size for "Select a Prompt"**
+                        fontSize: 19,
                         fontWeight: FontWeight.w500,
                         color: Colors.black87,
                       ),
                     ),
                   ),
-                  Positioned(
-                    right: 0,
-                    top: 0,
-                    bottom: 0,
-                    child: Icon(
-                      Icons.add,
-                      color: Colors.grey.shade600,
-                      size: 26, // **Slightly bigger "+" icon**
+                  if (prompt != null && prompt.answer.isNotEmpty)
+                    Padding(
+                      padding: EdgeInsets.only(
+                        left: screenSize.width * 0.03,
+                        top: 4,
+                      ),
+                      child: Text(
+                        "${prompt.answer.substring(0, 30)}...",
+                        style: GoogleFonts.poppins(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w400,
+                          color: Colors.grey[600],
+                        ),
+                      ),
                     ),
-                  ),
                 ],
               ),
-            ),
+              Positioned(
+                right: 0,
+                top: 0,
+                bottom: 0,
+                child: Icon(
+                  prompt != null ? Icons.edit_rounded : Icons.add,
+                  color:
+                      prompt != null ? Colors.grey[600]! : Colors.grey.shade600,
+                  size: 26,
+                ),
+              ),
+            ],
           ),
         ),
-
-        // **Removed TextFormField - No answer box anymore**
-        // SizedBox(height: screenSize.height * 0.01), // No longer needed spacing below answer box
-      ],
+      ),
     );
   }
 }

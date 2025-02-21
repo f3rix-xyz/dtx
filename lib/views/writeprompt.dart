@@ -1,15 +1,24 @@
+import 'package:dtx/views/prompt.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:google_fonts/google_fonts.dart';
+import 'package:dtx/providers/user_provider.dart';
+import 'package:dtx/models/user_model.dart';
 
-class WriteAnswerScreen extends StatefulWidget {
-  const WriteAnswerScreen({Key? key}) : super(key: key);
+class WriteAnswerScreen extends ConsumerStatefulWidget {
+  final Prompt prompt;
+
+  const WriteAnswerScreen({
+    super.key,
+    required this.prompt,
+  });
 
   @override
-  State<WriteAnswerScreen> createState() => _WriteAnswerScreenState();
+  ConsumerState<WriteAnswerScreen> createState() => _WriteAnswerScreenState();
 }
 
-class _WriteAnswerScreenState extends State<WriteAnswerScreen> {
+class _WriteAnswerScreenState extends ConsumerState<WriteAnswerScreen> {
   final TextEditingController _answerController = TextEditingController();
-  final String prompt = "A life goal of mine"; // Hardcoded for now
 
   @override
   void initState() {
@@ -23,6 +32,23 @@ class _WriteAnswerScreenState extends State<WriteAnswerScreen> {
   void dispose() {
     _answerController.dispose();
     super.dispose();
+  }
+
+  void _saveAnswer() {
+    if (_answerController.text.trim().isNotEmpty) {
+      ref.read(userProvider.notifier).updatePromptAnswer(
+            widget.prompt.question,
+            _answerController.text.trim(),
+          );
+
+      Navigator.pushAndRemoveUntil(
+        context,
+        MaterialPageRoute(
+          builder: (context) => const ProfileAnswersScreen(),
+        ),
+        (route) => false,
+      );
+    }
   }
 
   @override
@@ -41,9 +67,8 @@ class _WriteAnswerScreenState extends State<WriteAnswerScreen> {
             fontWeight: FontWeight.w700,
           ),
         ),
-        leadingWidth: 80, // Add this to give more width to the leading section
+        leadingWidth: 80,
         leading: GestureDetector(
-          // Changed to GestureDetector
           onTap: () => Navigator.pop(context),
           child: const Center(
             child: Text(
@@ -58,16 +83,14 @@ class _WriteAnswerScreenState extends State<WriteAnswerScreen> {
         ),
         actions: [
           TextButton(
-            onPressed: _answerController.text.trim().isNotEmpty
-                ? () => Navigator.pop(context)
-                : null, // Disable button if text field is empty
+            onPressed:
+                _answerController.text.trim().isNotEmpty ? _saveAnswer : null,
             child: Text(
               'Done',
               style: TextStyle(
                 color: _answerController.text.trim().isNotEmpty
                     ? const Color(0xFF8B5CF6)
-                    : const Color(0xFF8B5CF6)
-                        .withOpacity(0.5), // Change color if disabled
+                    : const Color(0xFF8B5CF6).withOpacity(0.5),
                 fontSize: 16,
                 fontWeight: FontWeight.w700,
               ),
@@ -77,10 +100,7 @@ class _WriteAnswerScreenState extends State<WriteAnswerScreen> {
       ),
       body: Column(
         children: [
-          // Added top spacing
           const SizedBox(height: 64),
-
-          // Prompt Card
           Container(
             margin: const EdgeInsets.symmetric(horizontal: 16),
             padding: const EdgeInsets.all(16),
@@ -104,7 +124,7 @@ class _WriteAnswerScreenState extends State<WriteAnswerScreen> {
               children: [
                 Expanded(
                   child: Text(
-                    prompt,
+                    widget.prompt.question,
                     style: const TextStyle(
                       fontSize: 17,
                       fontWeight: FontWeight.w600,
@@ -121,13 +141,9 @@ class _WriteAnswerScreenState extends State<WriteAnswerScreen> {
               ],
             ),
           ),
-
-          // Added spacing between prompt and answer box
           const SizedBox(height: 54),
-
-          // Input Container with fixed height
           Container(
-            height: 200, // Fixed height for more squarish appearance
+            height: 200,
             margin: const EdgeInsets.symmetric(horizontal: 16),
             decoration: BoxDecoration(
               color: Colors.white,
@@ -144,7 +160,7 @@ class _WriteAnswerScreenState extends State<WriteAnswerScreen> {
                   child: TextField(
                     controller: _answerController,
                     maxLength: 255,
-                    maxLines: null, // Allow text to scroll within container
+                    maxLines: null,
                     style: const TextStyle(
                       fontSize: 16,
                       color: Colors.black87,

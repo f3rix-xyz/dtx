@@ -1,8 +1,12 @@
+import 'package:dtx/models/user_model.dart';
+import 'package:dtx/views/writeprompt.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:google_fonts/google_fonts.dart';
 import 'package:dtx/utils/app_enums.dart';
 
 class TextSelectPromptScreen extends StatefulWidget {
-  const TextSelectPromptScreen({Key? key}) : super(key: key);
+  const TextSelectPromptScreen({super.key});
 
   @override
   State<TextSelectPromptScreen> createState() => _TextSelectPromptScreenState();
@@ -11,8 +15,9 @@ class TextSelectPromptScreen extends StatefulWidget {
 class _TextSelectPromptScreenState extends State<TextSelectPromptScreen> {
   PromptCategory selectedCategory = PromptCategory.storyTime;
   bool showAllPrompts = false;
+  PromptType? selectedPrompt;
 
-  List<Prompt> get currentPrompts {
+  List<PromptType> get currentPrompts {
     if (showAllPrompts) {
       return PromptCategory.values
           .expand((category) => category.getPrompts())
@@ -111,21 +116,38 @@ class _TextSelectPromptScreenState extends State<TextSelectPromptScreen> {
                 padding: const EdgeInsets.symmetric(horizontal: 16),
                 itemCount: currentPrompts.length,
                 itemBuilder: (context, index) {
-                  return Container(
-                    padding: const EdgeInsets.symmetric(vertical: 16),
-                    decoration: BoxDecoration(
-                      border: Border(
-                        bottom: BorderSide(
-                          color: Colors.grey[200]!,
-                          width: 1,
+                  final promptType = currentPrompts[index];
+                  return GestureDetector(
+                    onTap: () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (context) => WriteAnswerScreen(
+                            prompt: Prompt(
+                              category: promptType.getCategory(),
+                              question: promptType.label,
+                              answer: '',
+                            ),
+                          ),
+                        ),
+                      );
+                    },
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(vertical: 16),
+                      decoration: BoxDecoration(
+                        border: Border(
+                          bottom: BorderSide(
+                            color: Colors.grey[200]!,
+                            width: 1,
+                          ),
                         ),
                       ),
-                    ),
-                    child: Text(
-                      currentPrompts[index].label,
-                      style: const TextStyle(
-                        fontSize: 16,
-                        color: Colors.black87,
+                      child: Text(
+                        promptType.label,
+                        style: const TextStyle(
+                          fontSize: 16,
+                          color: Colors.black87,
+                        ),
                       ),
                     ),
                   );

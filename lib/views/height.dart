@@ -1,16 +1,19 @@
-import 'package:dtx/views/hometown.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_fonts/google_fonts.dart';
-import 'dart:math'; // Import dart:math for rounding functions
+import 'package:dtx/utils/app_enums.dart';
+import '../providers/user_provider.dart';
+import 'hometown.dart';
 
-class HeightSelectionScreen extends StatefulWidget {
+class HeightSelectionScreen extends ConsumerStatefulWidget {
   const HeightSelectionScreen({super.key});
 
   @override
-  State<HeightSelectionScreen> createState() => _HeightSelectionScreenState();
+  ConsumerState<HeightSelectionScreen> createState() =>
+      _HeightSelectionScreenState();
 }
 
-class _HeightSelectionScreenState extends State<HeightSelectionScreen> {
+class _HeightSelectionScreenState extends ConsumerState<HeightSelectionScreen> {
   String _unit = "FT"; // Default unit is Feet
   int _selectedFeetIndex = 0; // Start at the first index
   int _selectedCmIndex = 30; // Start at 150 cm (index 30)
@@ -28,8 +31,10 @@ class _HeightSelectionScreenState extends State<HeightSelectionScreen> {
   String _cmToFeet(int cm) {
     double totalInches = cm * 0.393701;
     int feet = (totalInches / 12).floor();
-    int inches = (totalInches % 12).round(); // Round inches to nearest whole number
-    if (inches == 12) { // Handle cases where inches round up to 12
+    int inches =
+        (totalInches % 12).round(); // Round inches to nearest whole number
+    if (inches == 12) {
+      // Handle cases where inches round up to 12
       feet++;
       inches = 0;
     }
@@ -54,123 +59,150 @@ class _HeightSelectionScreenState extends State<HeightSelectionScreen> {
   Widget build(BuildContext context) {
     final screenSize = MediaQuery.of(context).size;
 
-    // Use appropriate values for the current unit
-    final List<String> currentValues = _unit == "FT" ? _feetValues! : _cmValues;
-    int currentIndex = _unit == "FT" ? _selectedFeetIndex : _selectedCmIndex;
+    return Consumer(
+      builder: (context, ref, child) {
+        final userState = ref.watch(userProvider);
 
-    return Scaffold(
-      backgroundColor: const Color(0xFFF4F4F4), // Light background
-      body: SafeArea(
-        child: Padding(
-          padding: EdgeInsets.symmetric(horizontal: screenSize.width * 0.06),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              SizedBox(height: screenSize.height * 0.06), // Increased spacing
+        // Use appropriate values for the current unit
+        final List<String> currentValues =
+            _unit == "FT" ? _feetValues! : _cmValues;
+        int currentIndex =
+            _unit == "FT" ? _selectedFeetIndex : _selectedCmIndex;
 
-              // Title
-              Center(
-                child: Text(
-                  "How tall are you?",
-                  style: GoogleFonts.poppins(
-                    fontSize: screenSize.width * 0.1, // Increased font size for title
-                    fontWeight: FontWeight.w700, // More bold title
-                    color: const Color(0xFF333333), // Darker title color
+        return Scaffold(
+          backgroundColor: const Color(0xFFF4F4F4), // Light background
+          body: SafeArea(
+            child: Padding(
+              padding:
+                  EdgeInsets.symmetric(horizontal: screenSize.width * 0.06),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  SizedBox(
+                      height: screenSize.height * 0.06), // Increased spacing
+
+                  // Title
+                  Center(
+                    child: Text(
+                      "How tall are you?",
+                      style: GoogleFonts.poppins(
+                        fontSize: screenSize.width *
+                            0.1, // Increased font size for title
+                        fontWeight: FontWeight.w700, // More bold title
+                        color: const Color(0xFF333333), // Darker title color
+                      ),
+                    ),
                   ),
-                ),
-              ),
 
-              SizedBox(height: screenSize.height * 0.05), // Increased spacing below title
+                  SizedBox(
+                      height: screenSize.height *
+                          0.05), // Increased spacing below title
 
-              // Height Selector
-              Expanded(
-                child: ListWheelScrollView.useDelegate(
-                  itemExtent: 70, // Increased item extent for better spacing
-                  diameterRatio: 1.3, // Adjusted for better visual
-                  physics: const FixedExtentScrollPhysics(),
-                  onSelectedItemChanged: (index) {
-                    setState(() {
-                      if (_unit == "FT") {
-                        _selectedFeetIndex = index;
-                      } else {
-                        _selectedCmIndex = index;
-                      }
-                    });
-                  },
-                  childDelegate: ListWheelChildBuilderDelegate(
-                    childCount: currentValues.length,
-                    builder: (context, index) {
-                      final isSelected = index == currentIndex;
-                      return Center(
-                        child: Text(
-                          currentValues[index],
-                          style: GoogleFonts.poppins(
-                            fontSize: isSelected ? 30 : 22, // Larger font sizes for list items
-                            fontWeight: isSelected ? FontWeight.w600 : FontWeight.w400, // Adjusted weight
-                            color: isSelected ? const Color(0xFF8B5CF6) : Colors.grey.shade700, // Highlighted selected color, darker unselected
-                          ),
+                  // Height Selector
+                  Expanded(
+                    child: ListWheelScrollView.useDelegate(
+                      itemExtent:
+                          70, // Increased item extent for better spacing
+                      diameterRatio: 1.3, // Adjusted for better visual
+                      physics: const FixedExtentScrollPhysics(),
+                      onSelectedItemChanged: (index) {
+                        setState(() {
+                          if (_unit == "FT") {
+                            _selectedFeetIndex = index;
+                          } else {
+                            _selectedCmIndex = index;
+                          }
+                          _updateHeight(ref);
+                        });
+                      },
+                      childDelegate: ListWheelChildBuilderDelegate(
+                        childCount: currentValues.length,
+                        builder: (context, index) {
+                          final isSelected = index == currentIndex;
+                          return Center(
+                            child: Text(
+                              currentValues[index],
+                              style: GoogleFonts.poppins(
+                                fontSize: isSelected
+                                    ? 30
+                                    : 22, // Larger font sizes for list items
+                                fontWeight: isSelected
+                                    ? FontWeight.w600
+                                    : FontWeight.w400, // Adjusted weight
+                                color: isSelected
+                                    ? const Color(0xFF8B5CF6)
+                                    : Colors.grey
+                                        .shade700, // Highlighted selected color, darker unselected
+                              ),
+                            ),
+                          );
+                        },
+                      ),
+                    ),
+                  ),
+
+                  SizedBox(
+                      height: screenSize.height *
+                          0.03), // Reduced spacing above buttons
+
+                  // Unit Toggle Buttons - Improved UI
+                  Padding(
+                    padding: EdgeInsets.symmetric(
+                        horizontal: screenSize.width *
+                            0.1), // Add horizontal padding for buttons
+                    child: Row(
+                      mainAxisAlignment:
+                          MainAxisAlignment.spaceAround, // Space buttons evenly
+                      children: [
+                        _buildUnitButton("FT", screenSize),
+                        _buildUnitButton("CM", screenSize),
+                      ],
+                    ),
+                  ),
+
+                  SizedBox(
+                      height: screenSize.height *
+                          0.04), // Spacing before forward button
+
+                  // Forward Button - More prominent and centered
+                  Center(
+                    child: GestureDetector(
+                      onTap: userState.height != null
+                          ? () {
+                              Navigator.push(
+                                context,
+                                MaterialPageRoute(
+                                    builder: (context) => HometownScreen()),
+                              );
+                            }
+                          : null,
+                      child: Container(
+                        width: 70, // Even larger button
+                        height: 70,
+                        decoration: BoxDecoration(
+                          color: userState.height != null
+                              ? const Color(0xFF8B5CF6)
+                              : Colors.grey.shade400,
+                          borderRadius:
+                              BorderRadius.circular(35), // More rounded
                         ),
-                      );
-                    },
-                  ),
-                ),
-              ),
-
-              SizedBox(height: screenSize.height * 0.03), // Reduced spacing above buttons
-
-              // Unit Toggle Buttons - Improved UI
-              Padding(
-                padding: EdgeInsets.symmetric(horizontal: screenSize.width * 0.1), // Add horizontal padding for buttons
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceAround, // Space buttons evenly
-                  children: [
-                    _buildUnitButton("FT", screenSize),
-                    _buildUnitButton("CM", screenSize),
-                  ],
-                ),
-              ),
-
-              SizedBox(height: screenSize.height * 0.04), // Spacing before forward button
-
-              // Forward Button - More prominent and centered
-              Center(
-                child: GestureDetector(
-                  onTap: () {
-                    String savedHeightFeet;
-                    String selectedValue = currentValues[currentIndex];
-
-                    if (_unit == "CM") {
-                      savedHeightFeet = _cmToFeet(int.parse(selectedValue.replaceAll(" cm", "")));
-                    } else {
-                      savedHeightFeet = selectedValue;
-                    }
-
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(builder: (context) => HometownScreen()),
-                    );
-                    // In a real app, you would save 'savedHeightFeet' to your database here.
-                  },
-                  child: Container(
-                    width: 70, // Even larger button
-                    height: 70,
-                    decoration: BoxDecoration(
-                      color: const Color(0xFF8B5CF6),
-                      borderRadius: BorderRadius.circular(35), // More rounded
-                    ),
-                    child: const Icon(
-                      Icons.arrow_forward_rounded,
-                      color: Colors.white,
-                      size: 32, // Larger icon
+                        child: const Icon(
+                          Icons.arrow_forward_rounded,
+                          color: Colors.white,
+                          size: 32, // Larger icon
+                        ),
+                      ),
                     ),
                   ),
-                ),
+                  SizedBox(
+                      height:
+                          screenSize.height * 0.06), // Increased bottom spacing
+                ],
               ),
-              SizedBox(height: screenSize.height * 0.06), // Increased bottom spacing
-            ],
+            ),
           ),
-        ),
-      ),
+        );
+      },
     );
   }
 
@@ -183,12 +215,17 @@ class _HeightSelectionScreenState extends State<HeightSelectionScreen> {
         });
       },
       child: Container(
-        padding: EdgeInsets.symmetric(vertical: 12, horizontal: screenSize.width * 0.08), // Dynamic horizontal padding
+        padding: EdgeInsets.symmetric(
+            vertical: 12,
+            horizontal: screenSize.width * 0.08), // Dynamic horizontal padding
         decoration: BoxDecoration(
-          color: isSelected ? const Color(0xFF8B5CF6) : Colors.white, // White background for unselected
+          color: isSelected
+              ? const Color(0xFF8B5CF6)
+              : Colors.white, // White background for unselected
           border: Border.all(color: Colors.grey.shade300), // Subtle border
           borderRadius: BorderRadius.circular(30), // Even more rounded corners
-          boxShadow: [ // Subtle shadow for depth
+          boxShadow: [
+            // Subtle shadow for depth
             BoxShadow(
               color: Colors.grey.withOpacity(0.15),
               spreadRadius: 0,
@@ -201,11 +238,31 @@ class _HeightSelectionScreenState extends State<HeightSelectionScreen> {
           unit,
           style: GoogleFonts.poppins(
             fontSize: 18, // Larger font size for buttons
-            fontWeight: isSelected ? FontWeight.w600 : FontWeight.w500, // Slightly bolder for selected
-            color: isSelected ? Colors.white : const Color(0xFF555555), // Darker text for unselected
+            fontWeight: isSelected
+                ? FontWeight.w600
+                : FontWeight.w500, // Slightly bolder for selected
+            color: isSelected
+                ? Colors.white
+                : const Color(0xFF555555), // Darker text for unselected
           ),
         ),
       ),
     );
+  }
+
+  void _updateHeight(WidgetRef ref) {
+    String savedHeightFeet;
+    String selectedValue = _unit == "FT"
+        ? _feetValues![_selectedFeetIndex]
+        : _cmValues[_selectedCmIndex];
+
+    if (_unit == "CM") {
+      savedHeightFeet =
+          _cmToFeet(int.parse(selectedValue.replaceAll(" cm", "")));
+    } else {
+      savedHeightFeet = selectedValue;
+    }
+
+    ref.read(userProvider.notifier).updateHeight(savedHeightFeet);
   }
 }

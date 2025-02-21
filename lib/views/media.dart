@@ -165,60 +165,117 @@ class _MediaPickerState extends State<MediaPickerScreen> {
     final screenSize = MediaQuery.of(context).size;
 
     return Scaffold(
-      backgroundColor: const Color(0xFFF4F4F4),
+      backgroundColor: const Color(0xFFFAFAFA), // Lighter background
       body: SafeArea(
         child: Padding(
           padding: EdgeInsets.symmetric(horizontal: screenSize.width * 0.06),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              SizedBox(height: screenSize.height * 0.02),
-              Icon(
-                Icons.image,
-                color: const Color(0xFF8B5CF6),
-                size: 56,
-              ),
-              SizedBox(height: screenSize.height * 0.015),
-              Text(
-                "Pick your videos and photos",
-                style: GoogleFonts.poppins(
-                  fontSize: screenSize.width * 0.09,
-                  fontWeight: FontWeight.w700,
-                  color: const Color(0xFF333333),
-                  height: 1.1,
+              SizedBox(height: screenSize.height * 0.03),
+              // Enhanced header section
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF8B5CF6).withOpacity(0.1),
+                  borderRadius: BorderRadius.circular(16),
+                ),
+                child: Icon(
+                  Icons.photo_library_rounded,
+                  color: const Color(0xFF8B5CF6),
+                  size: 48,
                 ),
               ),
-              SizedBox(height: screenSize.height * 0.05),
+              SizedBox(height: screenSize.height * 0.02),
+              // Enhanced title
+              Text(
+                "Create Your Gallery",
+                style: GoogleFonts.poppins(
+                  fontSize: screenSize.width * 0.08,
+                  fontWeight: FontWeight.w700,
+                  color: const Color(0xFF1A1A1A),
+                  letterSpacing: -0.5,
+                ),
+              ),
+              // Enhanced subtitle
+              Text(
+                "Select at least 3 photos or videos",
+                style: GoogleFonts.poppins(
+                  fontSize: screenSize.width * 0.04,
+                  color: Colors.grey[600],
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+              SizedBox(height: screenSize.height * 0.03),
+              // Enhanced grid view
               Expanded(
-                child: Padding(
-                  padding:
-                      EdgeInsets.symmetric(horizontal: screenSize.width * 0.01),
+                child: Container(
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(20),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withOpacity(0.05),
+                        blurRadius: 10,
+                        offset: const Offset(0, 4),
+                      ),
+                    ],
+                  ),
+                  padding: const EdgeInsets.all(16),
                   child: ReorderableGridView.count(
                     crossAxisCount: 2,
                     mainAxisSpacing: 16,
                     crossAxisSpacing: 16,
-                    childAspectRatio: 1.1,
+                    childAspectRatio: 0.95,
                     shrinkWrap: true,
-                    physics: const AlwaysScrollableScrollPhysics(),
+                    physics: const BouncingScrollPhysics(),
                     children: List.generate(
                         6, (index) => _buildMediaPlaceholder(index)),
                     onReorder: _reorderMedia,
                   ),
                 ),
               ),
-              Padding(
-                padding: EdgeInsets.only(bottom: screenSize.height * 0.02),
+              // Enhanced bottom section
+              Container(
+                padding: EdgeInsets.symmetric(
+                  vertical: screenSize.height * 0.02,
+                  horizontal: screenSize.width * 0.04,
+                ),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(16),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withOpacity(0.05),
+                      blurRadius: 10,
+                      offset: const Offset(0, -4),
+                    ),
+                  ],
+                ),
                 child: Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    Text(
-                      "Minimum 3 required",
-                      style: GoogleFonts.poppins(
-                        fontSize: screenSize.width * 0.035,
-                        fontWeight: FontWeight.w500,
-                        color: Colors.grey.shade600,
-                      ),
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          "${_selectedMedia.where((media) => media.file != null).length}/6 Selected",
+                          style: GoogleFonts.poppins(
+                            fontSize: screenSize.width * 0.04,
+                            fontWeight: FontWeight.w600,
+                            color: const Color(0xFF8B5CF6),
+                          ),
+                        ),
+                        Text(
+                          "Minimum 3 required",
+                          style: GoogleFonts.poppins(
+                            fontSize: screenSize.width * 0.035,
+                            color: Colors.grey[600],
+                          ),
+                        ),
+                      ],
                     ),
+                    // Enhanced forward button
                     GestureDetector(
                       onTap: () {
                         if (_isForwardButtonEnabled) {
@@ -231,27 +288,39 @@ class _MediaPickerState extends State<MediaPickerScreen> {
                           );
                         }
                       },
-                      child: Container(
-                        width: 70,
-                        height: 70,
+                      child: AnimatedContainer(
+                        duration: const Duration(milliseconds: 200),
+                        width: 60,
+                        height: 60,
                         decoration: BoxDecoration(
                           color: _isForwardButtonEnabled
                               ? const Color(0xFF8B5CF6)
-                              : Colors.grey.shade400,
-                          borderRadius: BorderRadius.circular(35),
+                              : Colors.grey[300],
+                          borderRadius: BorderRadius.circular(30),
+                          boxShadow: _isForwardButtonEnabled
+                              ? [
+                                  BoxShadow(
+                                    color: const Color(0xFF8B5CF6)
+                                        .withOpacity(0.3),
+                                    blurRadius: 8,
+                                    offset: const Offset(0, 4),
+                                  ),
+                                ]
+                              : null,
                         ),
                         child: Icon(
                           Icons.arrow_forward_rounded,
                           color: _isForwardButtonEnabled
                               ? Colors.white
-                              : Colors.grey.shade600,
-                          size: 32,
+                              : Colors.grey[500],
+                          size: 28,
                         ),
                       ),
                     ),
                   ],
                 ),
               ),
+              SizedBox(height: screenSize.height * 0.02),
             ],
           ),
         ),
@@ -261,22 +330,21 @@ class _MediaPickerState extends State<MediaPickerScreen> {
 
   Widget _buildMediaPlaceholder(int index) {
     final media = _selectedMedia[index];
-
     return GestureDetector(
       key: _itemKeys[index],
       onTap: () => _pickMedia(index),
       child: DottedBorder(
         dashPattern: const [6, 3],
         color: index == 0
-            ? const Color(0xFF8B5CF6).withOpacity(0.8)
-            : const Color(0xFF8B5CF6),
+            ? const Color(0xFF8B5CF6)
+            : const Color(0xFF8B5CF6).withOpacity(0.6),
         strokeWidth: 2,
         borderType: BorderType.RRect,
-        radius: const Radius.circular(12),
+        radius: const Radius.circular(16),
         child: Container(
           decoration: BoxDecoration(
-            color: index == 0 ? Colors.white.withOpacity(0.95) : Colors.white,
-            borderRadius: BorderRadius.circular(12),
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(16),
           ),
           child: Stack(
             fit: StackFit.expand,
@@ -284,7 +352,7 @@ class _MediaPickerState extends State<MediaPickerScreen> {
               if (media.file != null)
                 media.type == MediaType.image
                     ? ClipRRect(
-                        borderRadius: BorderRadius.circular(12),
+                        borderRadius: BorderRadius.circular(16),
                         child: Image.file(
                           media.file!,
                           fit: BoxFit.cover,
@@ -300,40 +368,42 @@ class _MediaPickerState extends State<MediaPickerScreen> {
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
                       Icon(
-                        Icons.image_outlined,
-                        color: Colors.grey.shade400,
-                        size: 40,
+                        index == 0
+                            ? Icons.add_photo_alternate_rounded
+                            : Icons.add_rounded,
+                        color: const Color(0xFF8B5CF6).withOpacity(0.6),
+                        size: 36,
                       ),
                       if (index == 0)
                         Padding(
                           padding: const EdgeInsets.only(top: 8),
                           child: Text(
-                            "Main image",
-                            style: GoogleFonts.poppins(
-                              fontSize: 14,
-                              fontWeight: FontWeight.w500,
-                              color: const Color(0xFF8B5CF6),
-                            ),
+                            "Main Photo",
+                            style: GoogleFonts.poppins(fontSize: 14),
                           ),
                         ),
                     ],
                   ),
                 ),
-              Positioned(
-                top: 0,
-                right: 0,
-                child: Icon(
-                  media.file == null ? Icons.add_circle : Icons.edit,
-                  color: const Color(0xFF8B5CF6),
-                  size: 20,
+              if (media.type == MediaType.video && media.file != null)
+                Container(
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      begin: Alignment.bottomCenter,
+                      end: Alignment.topCenter,
+                      colors: [
+                        Colors.black.withOpacity(0.6),
+                        Colors.transparent,
+                      ],
+                    ),
+                  ),
                 ),
-              ),
-              if (media.type == MediaType.video)
+              if (media.type == MediaType.video && media.file != null)
                 const Center(
                   child: Icon(
-                    Icons.play_circle_filled,
+                    Icons.play_circle_fill_rounded,
                     color: Colors.white,
-                    size: 40,
+                    size: 48,
                   ),
                 ),
             ],
@@ -344,89 +414,72 @@ class _MediaPickerState extends State<MediaPickerScreen> {
   }
 }
 
+class MediaFile {
+  final File? file;
+  final MediaType type;
+
+  MediaFile({this.file, required this.type});
+}
+
+enum MediaType { image, video }
+
 class VideoThumbnailWidget extends StatefulWidget {
   final File file;
   final Map<String, Uint8List> cache;
 
-  const VideoThumbnailWidget(
-      {super.key, required this.file, required this.cache});
+  const VideoThumbnailWidget({
+    super.key,
+    required this.file,
+    required this.cache,
+  });
 
   @override
   State<VideoThumbnailWidget> createState() => _VideoThumbnailWidgetState();
 }
 
 class _VideoThumbnailWidgetState extends State<VideoThumbnailWidget> {
-  late Future<Uint8List?> _thumbnailFuture;
+  Uint8List? _thumbnail;
 
   @override
   void initState() {
     super.initState();
-    _thumbnailFuture = _getThumbnail();
+    _loadThumbnail();
   }
 
-  Future<Uint8List?> _getThumbnail() async {
-    if (widget.cache.containsKey(widget.file.path)) {
-      return widget.cache[widget.file.path];
+  Future<void> _loadThumbnail() async {
+    final filePath = widget.file.path;
+    if (widget.cache.containsKey(filePath)) {
+      setState(() {
+        _thumbnail = widget.cache[filePath];
+      });
+      return;
     }
 
     final thumbnail = await VideoThumbnail.thumbnailData(
-      video: widget.file.path,
-      imageFormat: ImageFormat.JPEG,
-      maxWidth: 256,
-      quality: 40,
-      timeMs: 1000,
+      video: filePath,
+      quality: 100,
     );
 
     if (thumbnail != null) {
-      widget.cache[widget.file.path] = thumbnail;
-    }
-
-    return thumbnail;
-  }
-
-  @override
-  void didUpdateWidget(covariant VideoThumbnailWidget oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (oldWidget.file.path != widget.file.path) {
-      _thumbnailFuture = _getThumbnail();
+      widget.cache[filePath] = thumbnail;
+      setState(() {
+        _thumbnail = thumbnail;
+      });
     }
   }
 
   @override
   Widget build(BuildContext context) {
-    return FutureBuilder<Uint8List?>(
-      future: _thumbnailFuture,
-      builder: (context, snapshot) {
-        if (snapshot.hasData) {
-          return Image.memory(
-            snapshot.data!,
-            fit: BoxFit.cover,
+    return _thumbnail != null
+        ? ClipRRect(
+            borderRadius: BorderRadius.circular(16),
+            child: Image.memory(
+              _thumbnail!,
+              fit: BoxFit.cover,
+            ),
+          )
+        : const Center(
+            child: CircularProgressIndicator(),
           );
-        }
-        return _buildFallback();
-      },
-    );
   }
-
-  Widget _buildFallback() {
-    return Container(
-      color: Colors.grey[200],
-      child: const Center(
-        child: Icon(
-          Icons.videocam_rounded,
-          color: Colors.grey,
-          size: 40,
-        ),
-      ),
-    );
-  }
-}
-
-enum MediaType { image, video }
-
-class MediaFile {
-  final File? file;
-  final MediaType type;
-
-  MediaFile({required this.file, required this.type});
 }

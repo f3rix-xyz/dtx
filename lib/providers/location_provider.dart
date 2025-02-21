@@ -1,6 +1,5 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:geolocator/geolocator.dart';
-import 'package:latlong2/latlong.dart';
 import '../models/error_model.dart';
 import '../models/location_model.dart';
 import 'error_provider.dart';
@@ -20,24 +19,33 @@ class LocationNotifier extends StateNotifier<LocationState> {
     state = state.copyWith(isMapReady: ready);
   }
 
-  Future<void> fetchCurrentLocation() async {
-    if (state.cachedLatitude != null && state.cachedLongitude != null) {
-      state = state.copyWith(
-        latitude: state.cachedLatitude!,
-        longitude: state.cachedLongitude!,
-        isLoading: false,
-      );
-      return;
+  Future<void> openLocationSettings() async {
+    try {
+      await Geolocator.openLocationSettings();
+    } catch (e) {
+      ref
+          .read(errorProvider.notifier)
+          .setError(AppError.network("Failed to open location settings"));
     }
+  }
 
-    state = state.copyWith(isFetching: true, isLoading: true);
+  Future<void> fetchCurrentLocation() async {
+    // Clear any existing errors
+    ref.read(errorProvider.notifier).clearError();
+
+    // Reset state for fresh fetch
+    state = state.copyWith(
+      isFetching: true,
+      isLoading: true,
+      cachedLatitude: null,
+      cachedLongitude: null,
+    );
 
     try {
       bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
       if (!serviceEnabled) {
-        ref
-            .read(errorProvider.notifier)
-            .setError(AppError.validation("Location services are disabled"));
+        ref.read(errorProvider.notifier).setError(
+            AppError.locationService("Location services are disabled"));
         state = state.copyWith(isLoading: false);
         return;
       }
@@ -68,9 +76,7 @@ class LocationNotifier extends StateNotifier<LocationState> {
       final newLongitude = position.longitude;
 
       // Update user provider with the location
-      ref
-          .read(userProvider.notifier)
-          .updateLocation(LatLng(newLatitude, newLongitude));
+      ref.read(userProvider.notifier).updateLocation(newLatitude, newLongitude);
 
       state = state.copyWith(
         latitude: newLatitude,
@@ -90,7 +96,7 @@ class LocationNotifier extends StateNotifier<LocationState> {
 
   void updateLocation(double latitude, double longitude) {
     state = state.copyWith(latitude: latitude, longitude: longitude);
-    ref.read(userProvider.notifier).updateLocation(LatLng(latitude, longitude));
+    ref.read(userProvider.notifier).updateLocation(latitude, longitude);
   }
 
   void useCachedLocation() {

@@ -75,15 +75,9 @@ class _LocationInputScreenState extends ConsumerState<LocationInputScreen> {
                 'Open Settings',
                 style: GoogleFonts.poppins(color: const Color(0xFF8B5CF6)),
               ),
-              onPressed: () async {
-                try {
-                  await AppSettings.openAppSettings(
-                      type: AppSettingsType.location);
-                } catch (e) {
-                  ref
-                      .read(errorProvider.notifier)
-                      .setError(AppError.network("Failed to open settings"));
-                }
+              onPressed: () {
+                Navigator.pop(context);
+                ref.read(locationProvider.notifier).openLocationSettings();
               },
             ),
             TextButton(
@@ -92,7 +86,8 @@ class _LocationInputScreenState extends ConsumerState<LocationInputScreen> {
                 style: GoogleFonts.poppins(color: const Color(0xFF8B5CF6)),
               ),
               onPressed: () {
-                Navigator.of(context).pop();
+                Navigator.pop(context);
+                ref.read(errorProvider.notifier).clearError();
                 ref.read(locationProvider.notifier).fetchCurrentLocation();
               },
             ),
@@ -107,6 +102,13 @@ class _LocationInputScreenState extends ConsumerState<LocationInputScreen> {
     final screenSize = MediaQuery.of(context).size;
     final locationState = ref.watch(locationProvider);
     final error = ref.watch(errorProvider);
+
+    // Show location service dialog if needed
+    if (error?.type == ErrorType.locationService) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _showLocationServiceDialog();
+      });
+    }
 
     return Scaffold(
       body: SafeArea(
@@ -183,7 +185,9 @@ class _LocationInputScreenState extends ConsumerState<LocationInputScreen> {
                                   ref
                                       .read(locationProvider.notifier)
                                       .updateLocation(
-                                          latlng.latitude, latlng.longitude);
+                                        latlng.latitude,
+                                        latlng.longitude,
+                                      );
                                 },
                                 onMapReady: _onMapReady,
                               ),
@@ -228,9 +232,9 @@ class _LocationInputScreenState extends ConsumerState<LocationInputScreen> {
                           ),
                         ],
                       )
-                    : Center(
+                    : const Center(
                         child: CircularProgressIndicator(
-                          color: const Color(0xFF8B5CF6),
+                          color: Color(0xFF8B5CF6),
                         ),
                       ),
               ),
@@ -274,5 +278,11 @@ class _LocationInputScreenState extends ConsumerState<LocationInputScreen> {
         ),
       ),
     );
+  }
+
+  @override
+  void dispose() {
+    _mapController.dispose();
+    super.dispose();
   }
 }

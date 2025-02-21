@@ -10,7 +10,7 @@ class LocationState {
   LocationState({
     this.isLoading = true,
     this.isFetching = false,
-    this.latitude = 19.2183,
+    this.latitude = 19.2183, // Default location
     this.longitude = 73.0864,
     this.cachedLatitude,
     this.cachedLongitude,
