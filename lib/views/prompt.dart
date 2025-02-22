@@ -1,3 +1,4 @@
+import 'package:dtx/models/user_model.dart';
 import 'package:dtx/views/media.dart';
 import 'package:dtx/views/textpromptsselect.dart';
 import 'package:flutter/material.dart';
@@ -19,7 +20,7 @@ class _ProfileAnswersScreenState extends ConsumerState<ProfileAnswersScreen> {
 
   void _updateForwardButtonState() {
     final userState = ref.watch(userProvider);
-    final prompts = userState.prompts ?? [];
+    final prompts = userState.prompts;
     int filledAnswers =
         prompts.where((prompt) => prompt.answer.isNotEmpty).length;
     setState(() {
@@ -39,6 +40,7 @@ class _ProfileAnswersScreenState extends ConsumerState<ProfileAnswersScreen> {
   Widget build(BuildContext context) {
     final screenSize = MediaQuery.of(context).size;
     final userState = ref.watch(userProvider);
+    final prompts = userState.prompts;
 
     return Scaffold(
       backgroundColor: const Color(0xFFF4F4F4),
@@ -68,41 +70,7 @@ class _ProfileAnswersScreenState extends ConsumerState<ProfileAnswersScreen> {
                 ),
               ),
               SizedBox(height: screenSize.height * 0.045),
-              _buildPromptAnswerSection(
-                screenSize: screenSize,
-                promptNumber: 1,
-                onPromptSelected: () {
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                        builder: (context) => TextSelectPromptScreen()),
-                  );
-                },
-              ),
-              SizedBox(height: screenSize.height * 0.035),
-              _buildPromptAnswerSection(
-                screenSize: screenSize,
-                promptNumber: 2,
-                onPromptSelected: () {
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                        builder: (context) => TextSelectPromptScreen()),
-                  );
-                },
-              ),
-              SizedBox(height: screenSize.height * 0.035),
-              _buildPromptAnswerSection(
-                screenSize: screenSize,
-                promptNumber: 3,
-                onPromptSelected: () {
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                        builder: (context) => TextSelectPromptScreen()),
-                  );
-                },
-              ),
+              ..._buildPromptSections(screenSize, prompts),
               SizedBox(height: screenSize.height * 0.04),
               Padding(
                 padding: EdgeInsets.only(left: screenSize.width * 0.01),
@@ -117,52 +85,7 @@ class _ProfileAnswersScreenState extends ConsumerState<ProfileAnswersScreen> {
                 ),
               ),
               const Spacer(),
-              Align(
-                alignment: Alignment.bottomRight,
-                child: Padding(
-                  padding: EdgeInsets.only(bottom: screenSize.height * 0.03),
-                  child: GestureDetector(
-                    onTap: () {
-                      if (_isForwardButtonEnabled) {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(
-                            content: Text(
-                                "Navigating to next screen (MediaPickerScreen)..."),
-                          ),
-                        );
-                        Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                              builder: (context) => const MediaPickerScreen()),
-                        );
-                      } else {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(
-                            content: Text("Continue to Media Selection."),
-                          ),
-                        );
-                      }
-                    },
-                    child: Container(
-                      width: 70,
-                      height: 70,
-                      decoration: BoxDecoration(
-                        color: _isForwardButtonEnabled
-                            ? const Color(0xFF8B5CF6)
-                            : Colors.grey.shade400,
-                        borderRadius: BorderRadius.circular(35),
-                      ),
-                      child: Icon(
-                        Icons.arrow_forward_rounded,
-                        color: _isForwardButtonEnabled
-                            ? Colors.white
-                            : Colors.grey.shade600,
-                        size: 32,
-                      ),
-                    ),
-                  ),
-                ),
-              ),
+              _buildForwardButton(context, screenSize),
             ],
           ),
         ),
@@ -170,14 +93,34 @@ class _ProfileAnswersScreenState extends ConsumerState<ProfileAnswersScreen> {
     );
   }
 
+  List<Widget> _buildPromptSections(Size screenSize, List<Prompt> prompts) {
+    return List.generate(3, (index) {
+      final prompt = index < prompts.length ? prompts[index] : null;
+      return Column(
+        children: [
+          if (index > 0) SizedBox(height: screenSize.height * 0.035),
+          _buildPromptAnswerSection(
+            screenSize: screenSize,
+            prompt: prompt,
+            onPromptSelected: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (context) => const TextSelectPromptScreen(),
+                ),
+              );
+            },
+          ),
+        ],
+      );
+    });
+  }
+
   Widget _buildPromptAnswerSection({
     required Size screenSize,
-    required int promptNumber,
+    required Prompt? prompt,
     required VoidCallback onPromptSelected,
   }) {
-    final userState = ref.watch(userProvider);
-    final prompt = userState.prompts?.elementAtOrNull(promptNumber - 1);
-
     return GestureDetector(
       onTap: onPromptSelected,
       child: DottedBorder(
@@ -208,7 +151,7 @@ class _ProfileAnswersScreenState extends ConsumerState<ProfileAnswersScreen> {
                     padding: EdgeInsets.only(left: screenSize.width * 0.03),
                     child: Text(
                       prompt != null
-                          ? "${prompt.question.substring(0, 20)}..."
+                          ? _truncateText(prompt.question, 20)
                           : "Select a Prompt",
                       style: GoogleFonts.poppins(
                         fontSize: 19,
@@ -224,7 +167,7 @@ class _ProfileAnswersScreenState extends ConsumerState<ProfileAnswersScreen> {
                         top: 4,
                       ),
                       child: Text(
-                        "${prompt.answer.substring(0, 30)}...",
+                        _truncateText(prompt.answer, 30),
                         style: GoogleFonts.poppins(
                           fontSize: 16,
                           fontWeight: FontWeight.w400,
@@ -246,6 +189,54 @@ class _ProfileAnswersScreenState extends ConsumerState<ProfileAnswersScreen> {
                 ),
               ),
             ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  String _truncateText(String text, int maxLength) {
+    if (text.length <= maxLength) return text;
+    return '${text.substring(0, maxLength)}...';
+  }
+
+  Widget _buildForwardButton(BuildContext context, Size screenSize) {
+    return Align(
+      alignment: Alignment.bottomRight,
+      child: Padding(
+        padding: EdgeInsets.only(bottom: screenSize.height * 0.03),
+        child: GestureDetector(
+          onTap: () {
+            if (_isForwardButtonEnabled) {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (context) => const MediaPickerScreen(),
+                ),
+              );
+            } else {
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                  content: Text("Please complete at least 3 prompts"),
+                ),
+              );
+            }
+          },
+          child: Container(
+            width: 70,
+            height: 70,
+            decoration: BoxDecoration(
+              color: _isForwardButtonEnabled
+                  ? const Color(0xFF8B5CF6)
+                  : Colors.grey.shade400,
+              borderRadius: BorderRadius.circular(35),
+            ),
+            child: Icon(
+              Icons.arrow_forward_rounded,
+              color:
+                  _isForwardButtonEnabled ? Colors.white : Colors.grey.shade600,
+              size: 32,
+            ),
           ),
         ),
       ),

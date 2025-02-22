@@ -31,6 +31,11 @@ class Prompt {
       answer: answer ?? this.answer,
     );
   }
+
+  @override
+  String toString() {
+    return 'Prompt(question: $question, answer: $answer)';
+  }
 }
 
 class AudioPromptModel {

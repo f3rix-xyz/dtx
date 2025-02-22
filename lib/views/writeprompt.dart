@@ -1,3 +1,4 @@
+import 'package:dtx/utils/app_enums.dart';
 import 'package:dtx/views/prompt.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -6,11 +7,13 @@ import 'package:dtx/providers/user_provider.dart';
 import 'package:dtx/models/user_model.dart';
 
 class WriteAnswerScreen extends ConsumerStatefulWidget {
-  final Prompt prompt;
+  final PromptCategory category;
+  final String question;
 
   const WriteAnswerScreen({
     super.key,
-    required this.prompt,
+    required this.category,
+    required this.question,
   });
 
   @override
@@ -23,23 +26,39 @@ class _WriteAnswerScreenState extends ConsumerState<WriteAnswerScreen> {
   @override
   void initState() {
     super.initState();
+    print('WriteAnswerScreen - initState called');
     _answerController.addListener(() {
-      setState(() {}); // Triggers rebuild on text change
+      print('Text changed: ${_answerController.text}');
+      setState(() {});
     });
   }
 
   @override
   void dispose() {
+    print('WriteAnswerScreen - dispose called');
     _answerController.dispose();
     super.dispose();
   }
 
   void _saveAnswer() {
     if (_answerController.text.trim().isNotEmpty) {
-      ref.read(userProvider.notifier).updatePromptAnswer(
-            widget.prompt.question,
-            _answerController.text.trim(),
+      print('=== SAVING PROMPT ===');
+      print('Category: ${widget.category.name}');
+      print('Question: ${widget.question}');
+      print('Answer: ${_answerController.text.trim()}');
+
+      final beforeUpdate = ref.read(userProvider);
+      print('Before update - Prompts count: ${beforeUpdate.prompts.length}');
+
+      ref.read(userProvider.notifier).addPrompt(
+            category: widget.category,
+            question: widget.question,
+            answer: _answerController.text.trim(),
           );
+
+      final afterUpdate = ref.read(userProvider);
+      print('After update - Prompts count: ${afterUpdate.prompts.length}');
+      print('Latest prompt: ${afterUpdate.prompts.last}');
 
       Navigator.pushAndRemoveUntil(
         context,
@@ -124,7 +143,7 @@ class _WriteAnswerScreenState extends ConsumerState<WriteAnswerScreen> {
               children: [
                 Expanded(
                   child: Text(
-                    widget.prompt.question,
+                    widget.question,
                     style: const TextStyle(
                       fontSize: 17,
                       fontWeight: FontWeight.w600,

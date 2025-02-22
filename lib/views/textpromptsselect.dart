@@ -119,15 +119,13 @@ class _TextSelectPromptScreenState extends State<TextSelectPromptScreen> {
                   final promptType = currentPrompts[index];
                   return GestureDetector(
                     onTap: () {
+                      final category = promptType.getCategory();
                       Navigator.push(
                         context,
                         MaterialPageRoute(
                           builder: (context) => WriteAnswerScreen(
-                            prompt: Prompt(
-                              category: promptType.getCategory(),
-                              question: promptType.label,
-                              answer: '',
-                            ),
+                            category: category,
+                            question: promptType.label,
                           ),
                         ),
                       );

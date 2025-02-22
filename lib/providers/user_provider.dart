@@ -160,19 +160,37 @@ class UserNotifier extends StateNotifier<UserModel> {
     );
   }
 
-  void addPrompt(Prompt prompt) {
-    final List<Prompt> updatedPrompts = [...state.prompts, prompt];
-    state = state.copyWith(prompts: updatedPrompts);
-  }
+  void addPrompt({
+    required PromptCategory category,
+    required String question,
+    required String answer,
+  }) {
+    print('=== ADDING NEW PROMPT ===');
+    print('Category: $category');
+    print('Question: $question');
+    print('Answer: $answer');
 
-  void updatePromptAnswer(String question, String answer) {
-    final List<Prompt> updatedPrompts = state.prompts.map((prompt) {
-      if (prompt.question == question) {
-        return prompt.copyWith(answer: answer);
-      }
-      return prompt;
-    }).toList();
+    final existingPrompts = state.prompts;
+    print('Current prompts count: ${existingPrompts.length}');
+
+    // Check for duplicate questions
+    final duplicate = existingPrompts.any((p) => p.question == question);
+    if (duplicate) {
+      print('⚠️ Prompt already exists! Question: $question');
+      return;
+    }
+
+    final newPrompt = Prompt(
+      category: category,
+      question: question,
+      answer: answer,
+    );
+
+    final updatedPrompts = [...existingPrompts, newPrompt];
+    print('New prompts count: ${updatedPrompts.length}');
+    print('All prompts: $updatedPrompts');
 
     state = state.copyWith(prompts: updatedPrompts);
+    print('✅ Prompt added successfully!');
   }
 }
