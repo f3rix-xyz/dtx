@@ -4,7 +4,6 @@ import 'package:dtx/views/textpromptsselect.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_fonts/google_fonts.dart';
-import 'package:dotted_border/dotted_border.dart';
 import 'package:dtx/providers/user_provider.dart';
 
 class ProfileAnswersScreen extends ConsumerStatefulWidget {
@@ -21,10 +20,10 @@ class _ProfileAnswersScreenState extends ConsumerState<ProfileAnswersScreen> {
   void _updateForwardButtonState() {
     final userState = ref.watch(userProvider);
     final prompts = userState.prompts;
-    int filledAnswers =
-        prompts.where((prompt) => prompt.answer.isNotEmpty).length;
+    bool hasValidPrompt =
+        prompts.any((prompt) => prompt.answer.trim().isNotEmpty);
     setState(() {
-      _isForwardButtonEnabled = filledAnswers >= 3;
+      _isForwardButtonEnabled = hasValidPrompt;
     });
   }
 
@@ -36,6 +35,17 @@ class _ProfileAnswersScreenState extends ConsumerState<ProfileAnswersScreen> {
     });
   }
 
+  void _handlePromptTap(Prompt? prompt, int index) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => TextSelectPromptScreen(
+          editIndex: prompt != null ? index : null,
+        ),
+      ),
+    ).then((_) => _updateForwardButtonState());
+  }
+
   @override
   Widget build(BuildContext context) {
     final screenSize = MediaQuery.of(context).size;
@@ -43,49 +53,59 @@ class _ProfileAnswersScreenState extends ConsumerState<ProfileAnswersScreen> {
     final prompts = userState.prompts;
 
     return Scaffold(
-      backgroundColor: const Color(0xFFF4F4F4),
+      backgroundColor: Colors.white,
       body: SafeArea(
         child: Padding(
-          padding: EdgeInsets.symmetric(horizontal: screenSize.width * 0.06),
+          padding: EdgeInsets.symmetric(horizontal: 24),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              SizedBox(height: screenSize.height * 0.03),
+              const SizedBox(height: 40),
+              Text(
+                "Profile Prompts",
+                style: GoogleFonts.poppins(
+                  fontSize: 36,
+                  fontWeight: FontWeight.w700,
+                  color: const Color(0xFF1A1A1A),
+                ),
+              ),
+              const SizedBox(height: 12),
+              Text(
+                "Share three interesting facts about yourself",
+                style: GoogleFonts.poppins(
+                  fontSize: 18,
+                  color: Colors.grey[600],
+                ),
+              ),
+              const SizedBox(height: 40),
+              Expanded(
+                child: ListView.separated(
+                  itemCount: 3,
+                  separatorBuilder: (_, __) => const SizedBox(height: 24),
+                  itemBuilder: (context, index) {
+                    final prompt =
+                        index < prompts.length ? prompts[index] : null;
+                    return _buildPromptCard(prompt, index);
+                  },
+                ),
+              ),
+              const SizedBox(height: 16),
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                crossAxisAlignment: CrossAxisAlignment.center,
                 children: [
-                  const SizedBox(width: 32),
-                  const SizedBox(width: 48),
+                  Text(
+                    "At least 1 prompt required",
+                    style: GoogleFonts.poppins(
+                      fontSize: 14,
+                      color: Colors.grey[600],
+                      fontStyle: FontStyle.italic,
+                    ),
+                  ),
+                  _buildForwardButton(),
                 ],
               ),
-              SizedBox(height: screenSize.height * 0.04),
-              Text(
-                "Write your profile answers",
-                textAlign: TextAlign.left,
-                style: GoogleFonts.lexendDeca(
-                  fontSize: screenSize.width * 0.095,
-                  fontWeight: FontWeight.w700,
-                  color: const Color(0xFF333333),
-                  height: 1.0,
-                ),
-              ),
-              SizedBox(height: screenSize.height * 0.045),
-              ..._buildPromptSections(screenSize, prompts),
-              SizedBox(height: screenSize.height * 0.04),
-              Padding(
-                padding: EdgeInsets.only(left: screenSize.width * 0.01),
-                child: Text(
-                  "3 answers required",
-                  textAlign: TextAlign.left,
-                  style: GoogleFonts.poppins(
-                    fontSize: screenSize.width * 0.04,
-                    fontWeight: FontWeight.w400,
-                    color: Colors.grey.shade600,
-                  ),
-                ),
-              ),
-              const Spacer(),
-              _buildForwardButton(context, screenSize),
+              const SizedBox(height: 32),
             ],
           ),
         ),
@@ -93,153 +113,99 @@ class _ProfileAnswersScreenState extends ConsumerState<ProfileAnswersScreen> {
     );
   }
 
-  List<Widget> _buildPromptSections(Size screenSize, List<Prompt> prompts) {
-    return List.generate(3, (index) {
-      final prompt = index < prompts.length ? prompts[index] : null;
-      return Column(
-        children: [
-          if (index > 0) SizedBox(height: screenSize.height * 0.035),
-          _buildPromptAnswerSection(
-            screenSize: screenSize,
-            prompt: prompt,
-            onPromptSelected: () {
-              Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (context) => TextSelectPromptScreen(
-                    editIndex: prompt != null ? index : null,
-                  ),
-                ),
-              );
-            },
+  Widget _buildPromptCard(Prompt? prompt, int index) {
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.grey[50],
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+          color: prompt != null ? const Color(0xFF8B5CF6) : Colors.grey[300]!,
+          width: 1,
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.05),
+            blurRadius: 10,
+            offset: const Offset(0, 2),
           ),
         ],
-      );
-    });
-  }
-
-  Widget _buildPromptAnswerSection({
-    required Size screenSize,
-    required Prompt? prompt,
-    required VoidCallback onPromptSelected,
-  }) {
-    return GestureDetector(
-      onTap: onPromptSelected,
-      child: DottedBorder(
-        dashPattern: const [6, 3],
-        color: prompt != null
-            ? const Color(0xFF8B5CF6).withOpacity(0.8)
-            : const Color(0xFF8B5CF6),
-        strokeWidth: 2.2,
-        borderType: BorderType.RRect,
-        radius: const Radius.circular(15),
-        child: Container(
-          width: double.infinity,
-          padding: EdgeInsets.symmetric(
-            vertical: screenSize.height * 0.035,
-            horizontal: screenSize.width * 0.04,
-          ),
-          decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(15),
-          ),
-          child: Stack(
-            alignment: Alignment.centerLeft,
-            children: [
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Padding(
-                    padding: EdgeInsets.only(left: screenSize.width * 0.03),
-                    child: Text(
-                      prompt != null
-                          ? _truncateText(prompt.question, 20)
-                          : "Select a Prompt",
-                      style: GoogleFonts.poppins(
-                        fontSize: 19,
-                        fontWeight: FontWeight.w500,
-                        color: Colors.black87,
-                      ),
-                    ),
-                  ),
-                  if (prompt != null && prompt.answer.isNotEmpty)
-                    Padding(
-                      padding: EdgeInsets.only(
-                        left: screenSize.width * 0.03,
-                        top: 4,
-                      ),
+      ),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(16),
+          onTap: () => _handlePromptTap(prompt, index),
+          child: Padding(
+            padding: const EdgeInsets.all(24),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Expanded(
                       child: Text(
-                        _truncateText(prompt.answer, 30),
+                        prompt?.question ?? "Add a prompt",
                         style: GoogleFonts.poppins(
-                          fontSize: 16,
-                          fontWeight: FontWeight.w400,
-                          color: Colors.grey[600],
+                          fontSize: 18,
+                          fontWeight: FontWeight.w500,
                         ),
                       ),
                     ),
-                ],
-              ),
-              Positioned(
-                right: 0,
-                top: 0,
-                bottom: 0,
-                child: Icon(
-                  prompt != null ? Icons.edit_rounded : Icons.add,
-                  color:
-                      prompt != null ? Colors.grey[600]! : Colors.grey.shade600,
-                  size: 26,
+                    Icon(
+                      prompt != null ? Icons.edit : Icons.add,
+                      color: const Color(0xFF8B5CF6),
+                      size: 24,
+                    ),
+                  ],
                 ),
-              ),
-            ],
+                if (prompt?.answer.isNotEmpty ?? false) ...[
+                  const SizedBox(height: 12),
+                  Text(
+                    prompt!.answer,
+                    style: GoogleFonts.poppins(
+                      fontSize: 16,
+                      color: Colors.grey[600],
+                    ),
+                  ),
+                ],
+              ],
+            ),
           ),
         ),
       ),
     );
   }
 
-  String _truncateText(String text, int maxLength) {
-    if (text.length <= maxLength) return text;
-    return '${text.substring(0, maxLength)}...';
-  }
-
-  Widget _buildForwardButton(BuildContext context, Size screenSize) {
-    return Align(
-      alignment: Alignment.bottomRight,
-      child: Padding(
-        padding: EdgeInsets.only(bottom: screenSize.height * 0.03),
-        child: GestureDetector(
-          onTap: () {
-            if (_isForwardButtonEnabled) {
-              Navigator.push(
+  Widget _buildForwardButton() {
+    return GestureDetector(
+      onTap: _isForwardButtonEnabled
+          ? () => Navigator.push(
                 context,
                 MaterialPageRoute(
                   builder: (context) => const MediaPickerScreen(),
                 ),
-              );
-            } else {
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(
-                  content: Text("Please complete at least 3 prompts"),
-                ),
-              );
-            }
-          },
-          child: Container(
-            width: 70,
-            height: 70,
-            decoration: BoxDecoration(
-              color: _isForwardButtonEnabled
-                  ? const Color(0xFF8B5CF6)
-                  : Colors.grey.shade400,
-              borderRadius: BorderRadius.circular(35),
+              )
+          : null,
+      child: Container(
+        width: 70,
+        height: 70,
+        decoration: BoxDecoration(
+          color: _isForwardButtonEnabled
+              ? const Color(0xFF8B5CF6)
+              : Colors.grey.shade400,
+          borderRadius: BorderRadius.circular(35),
+          boxShadow: [
+            BoxShadow(
+              color: const Color(0xFF8B5CF6).withOpacity(0.3),
+              blurRadius: 12,
+              offset: const Offset(0, 4),
             ),
-            child: Icon(
-              Icons.arrow_forward_rounded,
-              color:
-                  _isForwardButtonEnabled ? Colors.white : Colors.grey.shade600,
-              size: 32,
-            ),
-          ),
+          ],
+        ),
+        child: Icon(
+          Icons.arrow_forward_rounded,
+          color: _isForwardButtonEnabled ? Colors.white : Colors.grey.shade600,
+          size: 32,
         ),
       ),
     );
