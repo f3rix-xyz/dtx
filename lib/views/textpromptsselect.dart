@@ -6,7 +6,12 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:dtx/utils/app_enums.dart';
 
 class TextSelectPromptScreen extends StatefulWidget {
-  const TextSelectPromptScreen({super.key});
+  final int? editIndex;
+
+  const TextSelectPromptScreen({
+    super.key,
+    this.editIndex,
+  });
 
   @override
   State<TextSelectPromptScreen> createState() => _TextSelectPromptScreenState();
@@ -126,6 +131,7 @@ class _TextSelectPromptScreenState extends State<TextSelectPromptScreen> {
                           builder: (context) => WriteAnswerScreen(
                             category: category,
                             question: promptType.label,
+                            editIndex: widget.editIndex,
                           ),
                         ),
                       );

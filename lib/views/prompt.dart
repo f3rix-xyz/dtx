@@ -106,7 +106,9 @@ class _ProfileAnswersScreenState extends ConsumerState<ProfileAnswersScreen> {
               Navigator.push(
                 context,
                 MaterialPageRoute(
-                  builder: (context) => const TextSelectPromptScreen(),
+                  builder: (context) => TextSelectPromptScreen(
+                    editIndex: prompt != null ? index : null,
+                  ),
                 ),
               );
             },

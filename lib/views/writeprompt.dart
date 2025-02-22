@@ -9,11 +9,13 @@ import 'package:dtx/models/user_model.dart';
 class WriteAnswerScreen extends ConsumerStatefulWidget {
   final PromptCategory category;
   final String question;
+  final int? editIndex;
 
   const WriteAnswerScreen({
     super.key,
     required this.category,
     required this.question,
+    this.editIndex,
   });
 
   @override
@@ -21,53 +23,54 @@ class WriteAnswerScreen extends ConsumerStatefulWidget {
 }
 
 class _WriteAnswerScreenState extends ConsumerState<WriteAnswerScreen> {
-  final TextEditingController _answerController = TextEditingController();
+  late final TextEditingController _answerController;
 
   @override
   void initState() {
     super.initState();
-    print('WriteAnswerScreen - initState called');
+    _answerController = TextEditingController();
+    _loadExistingAnswer();
+
+    // Add listener to update UI when text changes
     _answerController.addListener(() {
-      print('Text changed: ${_answerController.text}');
-      setState(() {});
+      setState(() {}); // This triggers a rebuild when text changes
     });
   }
 
-  @override
-  void dispose() {
-    print('WriteAnswerScreen - dispose called');
-    _answerController.dispose();
-    super.dispose();
+  void _loadExistingAnswer() {
+    if (widget.editIndex != null) {
+      final prompts = ref.read(userProvider).prompts;
+      if (widget.editIndex! < prompts.length) {
+        _answerController.text = prompts[widget.editIndex!].answer;
+      }
+    }
   }
 
   void _saveAnswer() {
     if (_answerController.text.trim().isNotEmpty) {
-      print('=== SAVING PROMPT ===');
-      print('Category: ${widget.category.name}');
-      print('Question: ${widget.question}');
-      print('Answer: ${_answerController.text.trim()}');
-
-      final beforeUpdate = ref.read(userProvider);
-      print('Before update - Prompts count: ${beforeUpdate.prompts.length}');
-
-      ref.read(userProvider.notifier).addPrompt(
-            category: widget.category,
-            question: widget.question,
-            answer: _answerController.text.trim(),
-          );
-
-      final afterUpdate = ref.read(userProvider);
-      print('After update - Prompts count: ${afterUpdate.prompts.length}');
-      print('Latest prompt: ${afterUpdate.prompts.last}');
-
-      Navigator.pushAndRemoveUntil(
-        context,
-        MaterialPageRoute(
-          builder: (context) => const ProfileAnswersScreen(),
-        ),
-        (route) => false,
+      final newPrompt = Prompt(
+        category: widget.category,
+        question: widget.question,
+        answer: _answerController.text.trim(),
       );
+
+      if (widget.editIndex != null) {
+        ref.read(userProvider.notifier).updatePromptAtIndex(
+              widget.editIndex!,
+              newPrompt,
+            );
+      } else {
+        ref.read(userProvider.notifier).addPrompt(newPrompt);
+      }
+
+      Navigator.popUntil(context, (route) => route.isFirst);
     }
+  }
+
+  @override
+  void dispose() {
+    _answerController.dispose(); // Clean up the controller
+    super.dispose();
   }
 
   @override
