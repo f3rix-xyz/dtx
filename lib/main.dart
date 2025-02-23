@@ -1,8 +1,10 @@
 import 'package:dtx/views/gender.dart';
 import 'package:dtx/views/height.dart';
+import 'package:dtx/views/home.dart';
 import 'package:dtx/views/media.dart';
 import 'package:dtx/views/name.dart';
 import 'package:dtx/views/phone.dart';
+import 'package:dtx/views/profile_screens.dart';
 import 'package:dtx/views/prompt.dart';
 import 'package:flutter/material.dart';
 import 'package:dtx/views/splash_screen.dart';
@@ -31,7 +33,7 @@ class MyApp extends ConsumerWidget {
         primarySwatch: Colors.blue,
         // You can add more theme configurations here
       ),
-      home: const ProfileAnswersScreen(),
+      home: const HomeScreen(),
     );
   }
 }
