@@ -1,27 +1,33 @@
 import 'dart:io';
 import 'dart:typed_data';
+import 'package:dtx/providers/error_provider.dart';
+import 'package:dtx/providers/media_upload_provider.dart';
 import 'package:dtx/views/religion.dart';
 import 'package:dtx/views/prompt.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:get_thumbnail_video/video_thumbnail.dart'; // Updated package
 import 'package:reorderable_grid_view/reorderable_grid_view.dart';
 import 'package:dotted_border/dotted_border.dart';
-import 'package:get_thumbnail_video/index.dart'; // NEW import
+import 'package:get_thumbnail_video/index.dart';
 
-class MediaPickerScreen extends StatefulWidget {
+import '../models/error_model.dart'; // NEW import
+
+class MediaPickerScreen extends ConsumerStatefulWidget {
   const MediaPickerScreen({super.key});
 
   @override
-  State<MediaPickerScreen> createState() => _MediaPickerState();
+  ConsumerState<MediaPickerScreen> createState() => _MediaPickerState();
 }
 
-class _MediaPickerState extends State<MediaPickerScreen> {
+class _MediaPickerState extends ConsumerState<MediaPickerScreen> {
   late List<MediaFile> _selectedMedia;
   late List<UniqueKey> _itemKeys;
   bool _isForwardButtonEnabled = false;
   final _thumbnailCache = <String, Uint8List>{};
+  bool _isUploading = false; // Add this new variable
 
   final Set<String> _allowedImageMime = {
     'image/jpeg',
@@ -75,42 +81,66 @@ class _MediaPickerState extends State<MediaPickerScreen> {
     super.dispose();
   }
 
-  Future<void> _pickMedia(int index) async {
-    final ImagePicker picker = ImagePicker();
-    final XFile? media = await picker.pickMedia();
+Future<void> _pickMedia(int index) async {
+  final ImagePicker picker = ImagePicker();
+  final XFile? media = await picker.pickMedia();
 
-    if (media != null) {
-      final mimeType = media.mimeType?.toLowerCase();
-      final extension = media.path.split('.').last.toLowerCase();
-      final filePath = media.path.replaceFirst('file://', '');
-
-      final isValidImage = _allowedImageMime.contains(mimeType) ||
-          _allowedImageExtensions.contains(extension);
-
-      final isValidVideo = _allowedVideoMime.contains(mimeType) ||
-          _allowedVideoExtensions.contains(extension);
-
-      if (index == 0 && !isValidImage) {
-        await _showErrorDialog(context, isMainImage: true);
-        _clearInvalidInput(index);
-        return;
-      }
-
-      if (!isValidImage && !isValidVideo) {
-        await _showErrorDialog(context);
-        _clearInvalidInput(index);
-        return;
-      }
-
-      setState(() {
-        _selectedMedia[index] = MediaFile(
-          file: File(filePath),
-          type: isValidVideo ? MediaType.video : MediaType.image,
-        );
-        _updateForwardButtonState();
-      });
+  if (media != null) {
+    final mimeType = media.mimeType?.toLowerCase();
+    final extension = media.path.split('.').last.toLowerCase();
+    final filePath = media.path.replaceFirst('file://', '');
+    final file = File(filePath);
+    
+    final isValidImage = _allowedImageMime.contains(mimeType) || 
+                       _allowedImageExtensions.contains(extension);
+    final isValidVideo = _allowedVideoMime.contains(mimeType) || 
+                       _allowedVideoExtensions.contains(extension);
+    // Check file size
+    final fileSize = await file.length();
+    final isImage = _allowedImageMime.contains(mimeType) ||
+        _allowedImageExtensions.contains(extension);
+    final isVideo = _allowedVideoMime.contains(mimeType) ||
+        _allowedVideoExtensions.contains(extension);
+        
+    // Size validation (10MB for images, 50MB for videos)
+    if (isImage && fileSize > 10 * 1024 * 1024) {
+      ref.read(errorProvider.notifier).setError(
+        AppError.validation("Image is too large. Maximum size is 10 MB."),
+      );
+      _clearInvalidInput(index);
+      return;
     }
+    
+    if (isVideo && fileSize > 50 * 1024 * 1024) {
+      ref.read(errorProvider.notifier).setError(
+        AppError.validation("Video is too large. Maximum size is 50 MB."),
+      );
+      _clearInvalidInput(index);
+      return;
+    }
+
+    // Existing validation logic...
+    if (index == 0 && !isValidImage) {
+      await _showErrorDialog(context, isMainImage: true);
+      _clearInvalidInput(index);
+      return;
+    }
+
+    if (!isValidImage && !isValidVideo) {
+      await _showErrorDialog(context);
+      _clearInvalidInput(index);
+      return;
+    }
+
+    setState(() {
+      _selectedMedia[index] = MediaFile(
+        file: File(filePath),
+        type: isValidVideo ? MediaType.video : MediaType.image,
+      );
+      _updateForwardButtonState();
+    });
   }
+}
 
   Future<void> _showErrorDialog(BuildContext context,
       {bool isMainImage = false}) async {
@@ -162,6 +192,7 @@ class _MediaPickerState extends State<MediaPickerScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final errorState = ref.watch(errorProvider);
     final screenSize = MediaQuery.of(context).size;
 
     return Scaffold(
@@ -235,6 +266,19 @@ class _MediaPickerState extends State<MediaPickerScreen> {
                   ),
                 ),
               ),
+              // Add this right below the Expanded widget containing the grid view
+if (ref.watch(errorProvider) != null)
+  Padding(
+    padding: const EdgeInsets.symmetric(vertical: 8.0),
+    child: Text(
+      ref.watch(errorProvider)!.message,
+      style: GoogleFonts.poppins(
+        color: Colors.red,
+        fontSize: 14,
+      ),
+    ),
+  ),
+
               // Enhanced bottom section
               Container(
                 padding: EdgeInsets.symmetric(
@@ -276,47 +320,71 @@ class _MediaPickerState extends State<MediaPickerScreen> {
                       ],
                     ),
                     // Enhanced forward button
-                    GestureDetector(
-                      onTap: () {
-                        if (_isForwardButtonEnabled) {
-                          Navigator.push(
-                            context,
-                            MaterialPageRoute(
-                              builder: (context) =>
-                                  const ProfileAnswersScreen(),
-                            ),
-                          );
-                        }
-                      },
-                      child: AnimatedContainer(
-                        duration: const Duration(milliseconds: 200),
-                        width: 60,
-                        height: 60,
-                        decoration: BoxDecoration(
-                          color: _isForwardButtonEnabled
-                              ? const Color(0xFF8B5CF6)
-                              : Colors.grey[300],
-                          borderRadius: BorderRadius.circular(30),
-                          boxShadow: _isForwardButtonEnabled
-                              ? [
-                                  BoxShadow(
-                                    color: const Color(0xFF8B5CF6)
-                                        .withOpacity(0.3),
-                                    blurRadius: 8,
-                                    offset: const Offset(0, 4),
-                                  ),
-                                ]
-                              : null,
-                        ),
-                        child: Icon(
-                          Icons.arrow_forward_rounded,
-                          color: _isForwardButtonEnabled
-                              ? Colors.white
-                              : Colors.grey[500],
-                          size: 28,
-                        ),
-                      ),
-                    ),
+GestureDetector(
+  onTap: () async {
+    if (_isForwardButtonEnabled && !_isUploading) {
+      setState(() {
+        _isUploading = true;
+      });
+      
+      // Transfer selected media to the upload provider
+      for (int i = 0; i < _selectedMedia.length; i++) {
+        if (_selectedMedia[i].file != null) {
+          final file = _selectedMedia[i].file!;
+          final fileName = file.path.split('/').last;
+          final fileType = _selectedMedia[i].type == MediaType.image 
+              ? 'image/jpeg' 
+              : 'video/mp4';
+          
+          ref.read(mediaUploadProvider.notifier).setMediaFile(i, file);
+        }
+      }
+      
+      // Start upload process
+      final success = await ref.read(mediaUploadProvider.notifier).uploadAllMedia();
+      
+      setState(() {
+        _isUploading = false;
+      });
+      
+      if (success) {
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (context) => const ProfileAnswersScreen(),
+          ),
+        );
+      }
+    }
+  },
+  child: AnimatedContainer(
+    duration: const Duration(milliseconds: 200),
+    width: 60,
+    height: 60,
+    decoration: BoxDecoration(
+      color: _isForwardButtonEnabled && !_isUploading
+          ? const Color(0xFF8B5CF6)
+          : Colors.grey[300],
+      borderRadius: BorderRadius.circular(30),
+      boxShadow: _isForwardButtonEnabled && !_isUploading
+          ? [
+              BoxShadow(
+                color: const Color(0xFF8B5CF6).withOpacity(0.3),
+                blurRadius: 8,
+                offset: const Offset(0, 4),
+              ),
+            ]
+          : null,
+    ),
+    child: _isUploading 
+        ? const CircularProgressIndicator(color: Colors.white)
+        : Icon(
+            Icons.arrow_forward_rounded,
+            color: _isForwardButtonEnabled ? Colors.white : Colors.grey[500],
+            size: 28,
+          ),
+  ),
+)
                   ],
                 ),
               ),

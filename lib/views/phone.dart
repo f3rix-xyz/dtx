@@ -16,6 +16,7 @@ class PhoneInputScreen extends ConsumerStatefulWidget {
 class _PhoneInputScreenState extends ConsumerState<PhoneInputScreen> {
   final TextEditingController _phoneController = TextEditingController();
   final FocusNode _focusNode = FocusNode();
+  bool _isSubmitting = false;
 
   @override
   Widget build(BuildContext context) {
@@ -107,7 +108,7 @@ class _PhoneInputScreenState extends ConsumerState<PhoneInputScreen> {
                     ],
                   ),
                 ),
-                if (error?.type == ErrorType.validation)
+                if (error?.type == ErrorType.validation || error?.type == ErrorType.server)
                   Padding(
                     padding: const EdgeInsets.only(top: 8.0),
                     child: Text(
@@ -120,44 +121,59 @@ class _PhoneInputScreenState extends ConsumerState<PhoneInputScreen> {
                   ),
                 const Spacer(),
                 Center(
-                  child: GestureDetector(
-                    onTap: authState.unverifiedPhone != null
-                        ? () {
-                            Navigator.push(
-                              context,
-                              MaterialPageRoute(
-                                builder: (context) =>
-                                    const OtpVerificationScreen(),
-                              ),
-                            );
-                          }
-                        : null,
-                    child: Container(
-                      width: screenSize.width * 0.18,
-                      height: screenSize.width * 0.18,
-                      decoration: BoxDecoration(
-                        color: authState.unverifiedPhone != null
-                            ? Colors.white
-                            : Colors.grey.shade400,
-                        shape: BoxShape.circle,
-                        boxShadow: [
-                          BoxShadow(
-                            color: Colors.black.withOpacity(0.2),
-                            spreadRadius: 2,
-                            blurRadius: 8,
-                            offset: const Offset(0, 4),
+                  child: authState.isLoading
+                      ? const CircularProgressIndicator(color: Colors.white)
+                      : GestureDetector(
+                          onTap: authState.unverifiedPhone != null && !_isSubmitting
+                              ? () async {
+                                  setState(() {
+                                    _isSubmitting = true;
+                                  });
+                                  
+                                  final success = await ref.read(authProvider.notifier)
+                                      .sendOtp(authState.unverifiedPhone!);
+                                      
+                                  setState(() {
+                                    _isSubmitting = false;
+                                  });
+                                  
+                                  if (success) {
+                                    Navigator.push(
+                                      context,
+                                      MaterialPageRoute(
+                                        builder: (context) =>
+                                            const OtpVerificationScreen(),
+                                      ),
+                                    );
+                                  }
+                                }
+                              : null,
+                          child: Container(
+                            width: screenSize.width * 0.18,
+                            height: screenSize.width * 0.18,
+                            decoration: BoxDecoration(
+                              color: authState.unverifiedPhone != null && !_isSubmitting
+                                  ? Colors.white
+                                  : Colors.grey.shade400,
+                              shape: BoxShape.circle,
+                              boxShadow: [
+                                BoxShadow(
+                                  color: Colors.black.withOpacity(0.2),
+                                  spreadRadius: 2,
+                                  blurRadius: 8,
+                                  offset: const Offset(0, 4),
+                                ),
+                              ],
+                            ),
+                            child: Icon(
+                              Icons.arrow_forward_rounded,
+                              size: 28,
+                              color: authState.unverifiedPhone != null && !_isSubmitting
+                                  ? const Color(0xFF8B5CF6)
+                                  : Colors.grey.shade600,
+                            ),
                           ),
-                        ],
-                      ),
-                      child: Icon(
-                        Icons.arrow_forward_rounded,
-                        size: 28,
-                        color: authState.unverifiedPhone != null
-                            ? const Color(0xFF8B5CF6)
-                            : Colors.grey.shade600,
-                      ),
-                    ),
-                  ),
+                        ),
                 ),
                 SizedBox(height: screenSize.height * 0.05),
               ],
