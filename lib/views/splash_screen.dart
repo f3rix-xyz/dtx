@@ -1,24 +1,37 @@
+import 'package:dtx/providers/auth_provider.dart';
+import 'package:dtx/models/auth_model.dart';
+import 'package:dtx/views/home.dart';
+import 'package:dtx/views/name.dart';
 import 'package:dtx/views/phone.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_fonts/google_fonts.dart';
 
-class SplashScreen extends StatefulWidget {
+class SplashScreen extends ConsumerStatefulWidget {
   const SplashScreen({super.key});
 
   @override
-  _SplashScreenState createState() => _SplashScreenState();
+  ConsumerState<SplashScreen> createState() => _SplashScreenState();
 }
 
-class _SplashScreenState extends State<SplashScreen>
+class _SplashScreenState extends ConsumerState<SplashScreen>
     with SingleTickerProviderStateMixin {
   late AnimationController _controller;
   late Animation<double> _fadeAnim;
   late Animation<double> _scaleAnim;
   late Animation<double> _rotateAnim;
+  bool _animationComplete = false;
+  bool _statusCheckComplete = false;
+  AuthStatus _authStatus = AuthStatus.unknown;
 
   @override
   void initState() {
     super.initState();
+    _setupAnimation();
+    _checkAuthStatus();
+  }
+
+  void _setupAnimation() {
     _controller = AnimationController(
       vsync: this,
       duration: const Duration(seconds: 2),
@@ -46,12 +59,63 @@ class _SplashScreenState extends State<SplashScreen>
     );
 
     _controller.forward();
-
-    Future.delayed(const Duration(seconds: 4), () {
-      Navigator.of(context).pushReplacement(
-        MaterialPageRoute(builder: (_) => PhoneInputScreen()),
-      );
+    
+    // Mark animation as complete after 2.5 seconds
+    Future.delayed(const Duration(milliseconds: 2500), () {
+      if (mounted) {
+        setState(() {
+          _animationComplete = true;
+        });
+        _navigateIfReady();
+      }
     });
+  }
+  
+  Future<void> _checkAuthStatus() async {
+    try {
+      final status = await ref.read(authProvider.notifier).checkAuthStatus();
+      if (mounted) {
+        setState(() {
+          _authStatus = status;
+          _statusCheckComplete = true;
+        });
+        _navigateIfReady();
+      }
+    } catch (e) {
+      print('Error checking auth status: $e');
+      if (mounted) {
+        setState(() {
+          _authStatus = AuthStatus.login; // Default to login on error
+          _statusCheckComplete = true;
+        });
+        _navigateIfReady();
+      }
+    }
+  }
+  
+  void _navigateIfReady() {
+    // Only navigate if both animation has played sufficiently and status check is done
+    if (_animationComplete && _statusCheckComplete) {
+      Widget destination;
+      
+      switch (_authStatus) {
+        case AuthStatus.home:
+          destination = const HomeScreen();
+          break;
+        case AuthStatus.onboarding:
+          destination = const NameInputScreen();
+          break;
+        case AuthStatus.login:
+        case AuthStatus.unknown:
+        default:
+          destination = const PhoneInputScreen();
+          break;
+      }
+      
+      Navigator.of(context).pushReplacement(
+        MaterialPageRoute(builder: (_) => destination),
+      );
+    }
   }
 
   @override
@@ -139,6 +203,23 @@ class _SplashScreenState extends State<SplashScreen>
                 },
               ),
             ),
+            // Show loading indicator if status check is taking time
+            if (_animationComplete && !_statusCheckComplete)
+              Positioned(
+                bottom: bottomPadding + 40,
+                left: 0,
+                right: 0,
+                child: Center(
+                  child: SizedBox(
+                    width: 24,
+                    height: 24,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                    ),
+                  ),
+                ),
+              ),
           ],
         ),
       ),

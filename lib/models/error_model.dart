@@ -1,4 +1,4 @@
-enum ErrorType { network, validation, auth, generic, locationService }
+enum ErrorType { network, validation, auth, generic, locationService,server }
 
 class AppError {
   final String message;
@@ -28,5 +28,10 @@ class AppError {
   factory AppError.locationService(String message) => AppError(
         message: message,
         type: ErrorType.locationService,
+      );
+
+  factory AppError.server(String message) => AppError(
+        message: message,
+        type: ErrorType.server,
       );
 }
