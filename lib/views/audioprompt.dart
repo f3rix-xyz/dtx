@@ -1,18 +1,21 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:record/record.dart';
 import 'package:audioplayers/audioplayers.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'dart:io';
+import '../providers/user_provider.dart';
+import '../views/home.dart'; // Import the home screen
 
-class VoicePromptScreen extends StatefulWidget {
+class VoicePromptScreen extends ConsumerStatefulWidget {
   const VoicePromptScreen({Key? key}) : super(key: key);
 
   @override
-  State<VoicePromptScreen> createState() => _VoicePromptScreenState();
+  ConsumerState<VoicePromptScreen> createState() => _VoicePromptScreenState();
 }
 
-class _VoicePromptScreenState extends State<VoicePromptScreen> {
+class _VoicePromptScreenState extends ConsumerState<VoicePromptScreen> {
   final AudioRecorder _audioRecorder = AudioRecorder();
   final AudioPlayer _audioPlayer = AudioPlayer();
   bool _isRecording = false;
@@ -20,6 +23,7 @@ class _VoicePromptScreenState extends State<VoicePromptScreen> {
   String? _audioPath;
   bool _isPlaying = false;
   DateTime? _startTime;
+  bool _isSaving = false;
 
   @override
   void initState() {
@@ -107,6 +111,45 @@ class _VoicePromptScreenState extends State<VoicePromptScreen> {
     }
   }
 
+  // Save profile and navigate
+  Future<void> _saveProfileAndNavigate() async {
+    if (_isRecording) {
+      await _stopRecording();
+    }
+
+    setState(() {
+      _isSaving = true;
+    });
+
+    try {
+      // Save the profile data via the user provider
+      final success = await ref.read(userProvider.notifier).saveProfile();
+      
+      if (success) {
+        // Navigate to the home screen on success
+        Navigator.of(context).pushAndRemoveUntil(
+          MaterialPageRoute(builder: (_) => const HomeScreen()),
+          (route) => false, // Clear all previous routes
+        );
+      } else {
+        // Show error message if saving failed
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Failed to save profile. Please try again.')),
+        );
+      }
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Error: ${e.toString()}')),
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isSaving = false;
+        });
+      }
+    }
+  }
+
   @override
   void dispose() {
     _audioRecorder.dispose();
@@ -161,7 +204,6 @@ class _VoicePromptScreenState extends State<VoicePromptScreen> {
                   ),
                 ],
               ),
-
               const SizedBox(height: 40),
 
               // Title
@@ -295,14 +337,18 @@ class _VoicePromptScreenState extends State<VoicePromptScreen> {
                 alignment: Alignment.centerRight,
                 child: Container(
                   margin: const EdgeInsets.only(bottom: 24),
-                  child: FloatingActionButton(
-                    onPressed: () {},
-                    backgroundColor: const Color(0xFF8b5cf6),
-                    child: const Icon(
-                      Icons.arrow_forward,
-                      color: Colors.white,
-                    ),
-                  ),
+                  child: _isSaving
+                      ? const CircularProgressIndicator(
+                          color: Color(0xFF8b5cf6),
+                        )
+                      : FloatingActionButton(
+                          onPressed: _saveProfileAndNavigate,
+                          backgroundColor: const Color(0xFF8b5cf6),
+                          child: const Icon(
+                            Icons.arrow_forward,
+                            color: Colors.white,
+                          ),
+                        ),
                 ),
               ),
             ],

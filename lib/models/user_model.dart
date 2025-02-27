@@ -2,7 +2,7 @@ import 'package:dtx/utils/app_enums.dart';
 
 class Prompt {
   final PromptCategory category;
-  final String question;
+  final PromptType question;
   final String answer;
 
   Prompt({
@@ -12,15 +12,18 @@ class Prompt {
   });
 
   Map<String, dynamic> toJson() => {
-        'category': category.name,
-        'question': question,
+        'category': category.value,
+        'question': question.value,
         'answer': answer,
       };
 
   factory Prompt.fromJson(Map<String, dynamic> json) => Prompt(
-        category:
-            PromptCategory.values.firstWhere((e) => e.name == json['category']),
-        question: json['question'],
+        category: PromptCategory.values.firstWhere(
+            (e) => e.value == json['category'],
+            orElse: () => PromptCategory.storyTime),
+        question: PromptType.values.firstWhere(
+            (e) => e.value == json['question'],
+            orElse: () => PromptType.twoTruthsAndALie),
         answer: json['answer'],
       );
 
@@ -34,7 +37,7 @@ class Prompt {
 
   @override
   String toString() {
-    return 'Prompt(question: $question, answer: $answer)';
+    return 'Prompt(question: ${question.label}, answer: $answer)';
   }
 }
 
@@ -48,13 +51,15 @@ class AudioPromptModel {
   });
 
   Map<String, dynamic> toJson() => {
-        'prompt': prompt.name,
+        'prompt': prompt.value,
         'audio_url': audioUrl,
       };
 
   factory AudioPromptModel.fromJson(Map<String, dynamic> json) =>
       AudioPromptModel(
-        prompt: AudioPrompt.values.firstWhere((e) => e.name == json['prompt']),
+        prompt: AudioPrompt.values.firstWhere(
+            (e) => e.value == json['prompt'],
+            orElse: () => AudioPrompt.aBoundaryOfMineIs),
         audioUrl: json['audio_url'],
       );
 }
@@ -107,15 +112,15 @@ class UserModel {
         'date_of_birth': dateOfBirth?.toIso8601String(),
         'latitude': latitude,
         'longitude': longitude,
-        'gender': gender?.name,
-        'dating_intention': datingIntention?.name,
+        'gender': gender?.value,
+        'dating_intention': datingIntention?.value,
         'height': height,
         'hometown': hometown,
         'job_title': jobTitle,
         'education': education,
-        'religious_beliefs': religiousBeliefs?.name,
-        'drinking_habit': drinkingHabit?.name,
-        'smoking_habit': smokingHabit?.name,
+        'religious_beliefs': religiousBeliefs?.value,
+        'drinking_habit': drinkingHabit?.value,
+        'smoking_habit': smokingHabit?.value,
         'media_urls': mediaUrls,
         'prompts': prompts.map((prompt) => prompt.toJson()).toList(),
         'audio_prompt': audioPrompt?.toJson(),
@@ -131,27 +136,38 @@ class UserModel {
         latitude: json['latitude'],
         longitude: json['longitude'],
         gender: json['gender'] != null
-            ? Gender.values.firstWhere((e) => e.name == json['gender'])
+            ? Gender.values.firstWhere(
+                (e) => e.value == json['gender'],
+                orElse: () => Gender.man,
+              )
             : null,
         datingIntention: json['dating_intention'] != null
-            ? DatingIntention.values
-                .firstWhere((e) => e.name == json['dating_intention'])
+            ? DatingIntention.values.firstWhere(
+                (e) => e.value == json['dating_intention'],
+                orElse: () => DatingIntention.figuringOut,
+              )
             : null,
         height: json['height'],
         hometown: json['hometown'],
         jobTitle: json['job_title'],
         education: json['education'],
         religiousBeliefs: json['religious_beliefs'] != null
-            ? Religion.values
-                .firstWhere((e) => e.name == json['religious_beliefs'])
+            ? Religion.values.firstWhere(
+                (e) => e.value == json['religious_beliefs'],
+                orElse: () => Religion.agnostic,
+              )
             : null,
         drinkingHabit: json['drinking_habit'] != null
-            ? DrinkingSmokingHabits.values
-                .firstWhere((e) => e.name == json['drinking_habit'])
+            ? DrinkingSmokingHabits.values.firstWhere(
+                (e) => e.value == json['drinking_habit'],
+                orElse: () => DrinkingSmokingHabits.no,
+              )
             : null,
         smokingHabit: json['smoking_habit'] != null
-            ? DrinkingSmokingHabits.values
-                .firstWhere((e) => e.name == json['smoking_habit'])
+            ? DrinkingSmokingHabits.values.firstWhere(
+                (e) => e.value == json['smoking_habit'],
+                orElse: () => DrinkingSmokingHabits.no,
+              )
             : null,
         mediaUrls: json['media_urls'] != null
             ? List<String>.from(json['media_urls'])

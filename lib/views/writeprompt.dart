@@ -63,7 +63,10 @@ class _WriteAnswerScreenState extends ConsumerState<WriteAnswerScreen> {
         ref.read(userProvider.notifier).addPrompt(newPrompt);
       }
 
-      Navigator.popUntil(context, (route) => route.isFirst);
+                          Navigator.push(
+                              context,
+                              MaterialPageRoute(builder: (context) => const ProfileAnswersScreen()
+                          ));
     }
   }
 

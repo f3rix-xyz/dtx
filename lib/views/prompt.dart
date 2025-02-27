@@ -1,4 +1,6 @@
 import 'package:dtx/models/user_model.dart';
+import 'package:dtx/views/audioprompt.dart';
+import 'package:dtx/views/audiopromptsselect.dart';
 import 'package:dtx/views/media.dart';
 import 'package:dtx/views/textpromptsselect.dart';
 import 'package:flutter/material.dart';
@@ -182,7 +184,7 @@ class _ProfileAnswersScreenState extends ConsumerState<ProfileAnswersScreen> {
           ? () => Navigator.push(
                 context,
                 MaterialPageRoute(
-                  builder: (context) => const MediaPickerScreen(),
+                  builder: (context) => const VoicePromptScreen(),
                 ),
               )
           : null,
