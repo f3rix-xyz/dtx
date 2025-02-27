@@ -71,9 +71,13 @@ class _SplashScreenState extends ConsumerState<SplashScreen>
     });
   }
   
-  Future<void> _checkAuthStatus() async {
-    try {
-      final status = await ref.read(authProvider.notifier).checkAuthStatus();
+Future<void> _checkAuthStatus() async {
+  try {
+    // Get the status without updating the state during splash screen check
+    final status = await ref.read(authProvider.notifier)
+      .checkAuthStatus(updateState: false);
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) {
         setState(() {
           _authStatus = status;
@@ -81,17 +85,19 @@ class _SplashScreenState extends ConsumerState<SplashScreen>
         });
         _navigateIfReady();
       }
-    } catch (e) {
-      print('Error checking auth status: $e');
+    });
+  } catch (e) {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) {
         setState(() {
-          _authStatus = AuthStatus.login; // Default to login on error
+          _authStatus = AuthStatus.login;
           _statusCheckComplete = true;
         });
         _navigateIfReady();
       }
-    }
+    });
   }
+}
   
   void _navigateIfReady() {
     // Only navigate if both animation has played sufficiently and status check is done

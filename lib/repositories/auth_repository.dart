@@ -45,39 +45,75 @@ class AuthRepository {
   }
   
   // Check authentication status
-  Future<AuthStatus> checkAuthStatus(String? token) async {
-    if (token == null || token.isEmpty) {
-      return AuthStatus.login;
+Future<AuthStatus> checkAuthStatus(String? token) async {
+  final String methodName = 'checkAuthStatus';
+  print('[${DateTime.now()}] $methodName - Starting auth status check');
+  
+  if (token == null || token.isEmpty) {
+    print('[${DateTime.now()}] $methodName - No token found, redirecting to login');
+    return AuthStatus.login;
+  }
+
+  try {
+    // Sanitize token for logging (show first 4 and last 4 chars)
+    final sanitizedToken = '${token.substring(0, 4)}...${token.substring(token.length - 4)}';
+    print('[${DateTime.now()}] $methodName - Using token: $sanitizedToken');
+    
+    final headers = {
+      'Authorization': 'Bearer $token',
+    };
+    
+    print('[${DateTime.now()}] $methodName - Making request to /api/auth-status');
+    print('[${DateTime.now()}] $methodName - Headers: ${headers.keys.join(', ')}');
+    
+    final response = await _apiService.get(
+      '/api/auth-status',
+      headers: headers,
+    );
+    
+    print('[${DateTime.now()}] $methodName - Received response:');
+    print('  Status Code: ${response['statusCode'] ?? 'Unknown'}');
+    print('  Success: ${response['success']}');
+    print('  Status: ${response['status']}');
+    print('  Message: ${response['message']}');
+
+    if (response['success'] == true) {
+      final status = response['status']?.toString().toLowerCase();
+      
+      switch (status) {
+        case 'home':
+          print('[${DateTime.now()}] $methodName - Valid home status received');
+          return AuthStatus.home;
+        case 'onboarding':
+          print('[${DateTime.now()}] $methodName - Profile incomplete, redirecting to onboarding');
+          return AuthStatus.onboarding;
+        default:
+          print('[${DateTime.now()}] $methodName - Unrecognized status: $status');
+          print('[${DateTime.now()}] $methodName - Defaulting to login');
+          return AuthStatus.login;
+      }
     }
     
-    try {
-      final headers = {
-        'Authorization': 'Bearer $token',
-      };
-      
-      final response = await _apiService.get(
-        '/api/auth-status',
-        headers: headers,
-      );
-      
-      if (response['success'] == true) {
-        final status = response['status']?.toString().toLowerCase();
-        
-        if (status == 'home') {
-          return AuthStatus.home;
-        } else if (status == 'onboarding') {
-          return AuthStatus.onboarding;
-        }
-      }
-      
-      // Default to login if status is not recognized or success is false
-      return AuthStatus.login;
-    } on ApiException {
-      // For authentication errors, redirect to login
-      return AuthStatus.login;
-    } catch (e) {
-      print('Unexpected error during auth status check: $e');
-      return AuthStatus.unknown;
-    }
+    print('[${DateTime.now()}] $methodName - API response indicates failure');
+    print('[${DateTime.now()}] $methodName - Full response: $response');
+    return AuthStatus.login;
+
+  } on ApiException catch (e, stack) {
+    print('[${DateTime.now()}] $methodName - API Exception occurred:');
+    print('  Error Type: ${e.runtimeType}');
+    print('  Message: ${e.message}');
+    print('  Status Code: ${e.statusCode}');
+    print('  Stack Trace: $stack');
+    return AuthStatus.login;
+    
+  } catch (e, stack) {
+    print('[${DateTime.now()}] $methodName - Unexpected error occurred:');
+    print('  Error Type: ${e.runtimeType}');
+    print('  Message: $e');
+    print('  Stack Trace: $stack');
+    return AuthStatus.unknown;
   }
+}
+
+
 }

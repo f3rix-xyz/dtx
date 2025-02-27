@@ -33,35 +33,39 @@ class AuthNotifier extends StateNotifier<AuthState> {
   }
   
   // Check authentication status
-  Future<AuthStatus> checkAuthStatus() async {
-    try {
+Future<AuthStatus> checkAuthStatus({bool updateState = true}) async {
+  try {
+    if (updateState) {
       state = state.copyWith(isLoading: true);
-      
-      // Get token (either from state or storage)
-      String? token = state.jwtToken;
-      if (token == null || token.isEmpty) {
-        token = await TokenStorage.getToken();
-      }
-      
-      // Check auth status via repository
-      final authStatus = await _authRepository.checkAuthStatus(token);
-      
-      // Update state with the result
+    }
+
+    // Get token (either from state or storage)
+    String? token = state.jwtToken;
+    if (token == null || token.isEmpty) {
+      token = await TokenStorage.getToken();
+    }
+
+    // Check auth status via repository
+    final authStatus = await _authRepository.checkAuthStatus(token);
+
+    if (updateState) {
       state = state.copyWith(
         isLoading: false,
         authStatus: authStatus,
       );
-      
-      return authStatus;
-    } catch (e) {
-      print('Error checking auth status: $e');
+    }
+    
+    return authStatus;
+  } catch (e) {
+    if (updateState) {
       state = state.copyWith(
         isLoading: false,
         authStatus: AuthStatus.login,
       );
-      return AuthStatus.login;
     }
+    return AuthStatus.login;
   }
+}
 
   Future<bool> verifyPhone(String phone) async {
     final requestId = ++_lastRequestId;

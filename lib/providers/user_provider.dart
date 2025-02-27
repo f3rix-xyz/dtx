@@ -1,4 +1,6 @@
 import 'package:dtx/providers/error_provider.dart';
+import 'package:dtx/providers/service_provider.dart';
+import 'package:dtx/services/api_service.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:latlong2/latlong.dart';
 import '../models/error_model.dart';
@@ -171,5 +173,54 @@ class UserNotifier extends StateNotifier<UserModel> {
       updatedPrompts[index] = newPrompt;
       state = state.copyWith(prompts: updatedPrompts);
     }
+  }
+
+Future<bool> saveProfile() async {
+    try {
+      // Clear any existing errors
+      ref.read(errorProvider.notifier).clearError();
+      
+      // Basic validation
+      if (!isProfileValid()) {
+        ref.read(errorProvider.notifier).setError(
+          AppError.validation("Please complete all required fields"),
+        );
+        return false;
+      }
+      
+      // Get the repository from provider
+      final userRepository = ref.read(userRepositoryProvider);
+      
+      // Send the profile data to the API
+      final success = await userRepository.updateProfile(state);
+      
+      if (!success) {
+        ref.read(errorProvider.notifier).setError(
+          AppError.auth("Failed to save profile. Please try again."),
+        );
+      }
+      
+      return success;
+    } on ApiException catch (e) {
+      ref.read(errorProvider.notifier).setError(
+        AppError.auth(e.message),
+      );
+      return false;
+    } catch (e) {
+      ref.read(errorProvider.notifier).setError(
+        AppError.auth("An unexpected error occurred. Please try again."),
+      );
+      return false;
+    }
+  }
+  
+  // Helper method to validate profile completeness
+  bool isProfileValid() {
+    return state.name != null && 
+           state.name!.isNotEmpty &&
+           state.dateOfBirth != null &&
+           state.gender != null &&
+           state.datingIntention != null &&
+           isLocationValid();
   }
 }
