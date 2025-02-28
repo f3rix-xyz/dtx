@@ -1,3 +1,7 @@
+// views/audioprompt.dart
+import 'package:dtx/providers/audio_upload_provider.dart';
+import 'package:dtx/utils/app_enums.dart';
+import 'package:dtx/views/audiopromptsselect.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:record/record.dart';
@@ -6,7 +10,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'dart:io';
 import '../providers/user_provider.dart';
-import '../views/home.dart'; // Import the home screen
+import '../views/home.dart';
 
 class VoicePromptScreen extends ConsumerStatefulWidget {
   const VoicePromptScreen({Key? key}) : super(key: key);
@@ -24,6 +28,7 @@ class _VoicePromptScreenState extends ConsumerState<VoicePromptScreen> {
   bool _isPlaying = false;
   DateTime? _startTime;
   bool _isSaving = false;
+  bool _isUploading = false;
 
   @override
   void initState() {
@@ -60,7 +65,7 @@ class _VoicePromptScreenState extends ConsumerState<VoicePromptScreen> {
 
       // Update timer every second
       Stream.periodic(const Duration(seconds: 1)).listen((_) {
-        if (!_isRecording) return;
+        if (!_isRecording || !mounted) return;
 
         final duration = DateTime.now().difference(_startTime!).inSeconds;
         if (duration >= 30) {
@@ -84,6 +89,12 @@ class _VoicePromptScreenState extends ConsumerState<VoicePromptScreen> {
     try {
       await _audioRecorder.stop();
       setState(() => _isRecording = false);
+      
+      // Save the file path to the provider instead of creating the file immediately
+      if (_audioPath != null) {
+        // Just save the path - don't create the media model yet
+        ref.read(audioUploadProvider.notifier).setRecordingPath(_audioPath!);
+      }
     } catch (e) {
       print('Stop recording error: $e');
     }
@@ -111,54 +122,142 @@ class _VoicePromptScreenState extends ConsumerState<VoicePromptScreen> {
     }
   }
 
-  // Save profile and navigate
-  Future<void> _saveProfileAndNavigate() async {
-    if (_isRecording) {
-      await _stopRecording();
-    }
-
-    setState(() {
-      _isSaving = true;
+  void _selectPrompt() {
+    Navigator.push(
+      context,
+      MaterialPageRoute(builder: (context) => const AudioSelectPromptScreen()),
+    ).then((_) {
+      // Refresh UI after selecting a prompt
+      setState(() {});
     });
+  }
 
-    try {
-      // Save the profile data via the user provider
-      final success = await ref.read(userProvider.notifier).saveProfile();
+  // Upload audio and save profile
+// Upload audio and save profile
+Future<void> _uploadAudioAndSaveProfile() async {
+  print('[VoicePrompt] Starting _uploadAudioAndSaveProfile');
+  
+  if (_isRecording) {
+    print('[VoicePrompt] Currently recording, stopping...');
+    await _stopRecording();
+    print('[VoicePrompt] Recording stopped');
+    
+    // Give a small delay to ensure recording is fully stopped
+    print('[VoicePrompt] Waiting 200ms for recording cleanup');
+    await Future.delayed(const Duration(milliseconds: 200));
+  }
+
+  // Verify we have a recording
+  if (_audioPath == null) {
+    print('[VoicePrompt] ERROR: _audioPath is null');
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Please record your voice first')),
+    );
+    return;
+  }
+  
+  final audioFile = File(_audioPath!);
+  if (!audioFile.existsSync()) {
+    print('[VoicePrompt] ERROR: Audio file does not exist at path: $_audioPath');
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Recording file not found')),
+    );
+    return;
+  } else {
+    final fileSize = audioFile.lengthSync();
+    print('[VoicePrompt] Audio file exists, size: ${fileSize / 1024} KB');
+  }
+
+  // Verify prompt is selected
+  final selectedPrompt = ref.read(audioUploadProvider.notifier).selectedPrompt;
+  print('[VoicePrompt] Selected prompt: ${selectedPrompt?.value}');
+  
+  if (selectedPrompt == null) {
+    print('[VoicePrompt] ERROR: No prompt selected');
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Please select a prompt category')),
+    );
+    return;
+  }
+
+  // Show loading state
+  print('[VoicePrompt] Setting loading states to true');
+  setState(() {
+    _isUploading = true;
+    _isSaving = true;
+  });
+
+  try {
+    // Upload the audio file
+    print('[VoicePrompt] Starting audio upload');
+    final audioUploadNotifier = ref.read(audioUploadProvider.notifier);
+    final audioUploaded = await audioUploadNotifier.uploadAudioAndSaveToProfile();
+    print('[VoicePrompt] Audio upload result: $audioUploaded');
+    
+    if (!mounted) {
+      print('[VoicePrompt] Widget not mounted after upload, returning');
+      return;
+    }
+    
+    if (audioUploaded) {
+      // Now save the complete profile
+      print('[VoicePrompt] Audio uploaded successfully, saving profile');
+      final userNotifier = ref.read(userProvider.notifier);
+      final profileSaved = await userNotifier.saveProfile();
+      print('[VoicePrompt] Profile save result: $profileSaved');
       
-      if (success) {
-        // Navigate to the home screen on success
-        Navigator.of(context).pushAndRemoveUntil(
-          MaterialPageRoute(builder: (_) => const HomeScreen()),
-          (route) => false, // Clear all previous routes
-        );
+      if (profileSaved) {
+        // Navigate to home screen
+        if (mounted) {
+          print('[VoicePrompt] Profile saved successfully, navigating to HomeScreen');
+          Navigator.of(context).pushAndRemoveUntil(
+            MaterialPageRoute(builder: (_) => const HomeScreen()),
+            (route) => false, // Clear all previous routes
+          );
+        } else {
+          print('[VoicePrompt] Widget not mounted after profile save');
+        }
       } else {
-        // Show error message if saving failed
+        if (mounted) {
+          print('[VoicePrompt] ERROR: Failed to save profile');
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Failed to save profile. Please try again.')),
+          );
+        }
+      }
+    } else {
+      if (mounted) {
+        print('[VoicePrompt] ERROR: Failed to upload audio');
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Failed to save profile. Please try again.')),
+          const SnackBar(content: Text('Failed to upload audio. Please try again.')),
         );
       }
-    } catch (e) {
+    }
+  } catch (e, stack) {
+    print('[VoicePrompt] EXCEPTION during upload/save: $e');
+    print('[VoicePrompt] Stack trace: $stack');
+    
+    if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Error: ${e.toString()}')),
       );
-    } finally {
-      if (mounted) {
-        setState(() {
-          _isSaving = false;
-        });
-      }
+    }
+  } finally {
+    print('[VoicePrompt] Resetting loading states');
+    if (mounted) {
+      setState(() {
+        _isUploading = false;
+        _isSaving = false;
+      });
+    } else {
+      print('[VoicePrompt] Widget not mounted in finally block');
     }
   }
-
-  @override
-  void dispose() {
-    _audioRecorder.dispose();
-    _audioPlayer.dispose();
-    super.dispose();
-  }
-
+}
   @override
   Widget build(BuildContext context) {
+    final selectedPrompt = ref.watch(audioUploadProvider.notifier).selectedPrompt;
+    
     return Scaffold(
       backgroundColor: Colors.white,
       body: SafeArea(
@@ -218,38 +317,38 @@ class _VoicePromptScreenState extends ConsumerState<VoicePromptScreen> {
 
               const SizedBox(height: 32),
 
-              // Text Input Field
-              Container(
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(16),
-                  border: Border.all(color: Colors.grey[300]!),
-                ),
-                child: Row(
-                  children: [
-                    Expanded(
-                      child: Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 16),
-                        child: TextField(
-                          decoration: InputDecoration(
-                            hintText: 'A boundary of mine is',
-                            border: InputBorder.none,
-                            hintStyle: TextStyle(
-                              color: Colors.grey[600],
+              // Prompt Selection Button
+              GestureDetector(
+                onTap: _selectPrompt,
+                child: Container(
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(16),
+                    border: Border.all(color: Colors.grey[300]!),
+                  ),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+                          child: Text(
+                            selectedPrompt?.label ?? 'Select a prompt',
+                            style: TextStyle(
+                              color: selectedPrompt != null ? Colors.black : Colors.grey[600],
                               fontSize: 16,
                             ),
                           ),
                         ),
                       ),
-                    ),
-                    Padding(
-                      padding: const EdgeInsets.only(right: 16),
-                      child: Icon(
-                        Icons.edit_outlined,
-                        color: Colors.grey[800],
+                      Padding(
+                        padding: const EdgeInsets.only(right: 16),
+                        child: Icon(
+                          Icons.arrow_drop_down,
+                          color: Colors.grey[800],
+                        ),
                       ),
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
               ),
 
@@ -312,23 +411,24 @@ class _VoicePromptScreenState extends ConsumerState<VoicePromptScreen> {
               const SizedBox(height: 16),
 
               // Play Sample Button
-              Center(
-                child: TextButton.icon(
-                  onPressed: _playRecording,
-                  icon: Icon(
-                    _isPlaying ? Icons.stop : Icons.play_arrow,
-                    color: const Color(0xFF8b5cf6),
-                  ),
-                  label: Text(
-                    _isPlaying ? 'Stop playing' : 'Play sample answer',
-                    style: const TextStyle(
-                      color: Color(0xFF8b5cf6),
-                      fontSize: 16,
-                      fontWeight: FontWeight.w500,
+              if (_audioPath != null)
+                Center(
+                  child: TextButton.icon(
+                    onPressed: _playRecording,
+                    icon: Icon(
+                      _isPlaying ? Icons.stop : Icons.play_arrow,
+                      color: const Color(0xFF8b5cf6),
+                    ),
+                    label: Text(
+                      _isPlaying ? 'Stop playing' : 'Play recording',
+                      style: const TextStyle(
+                        color: Color(0xFF8b5cf6),
+                        fontSize: 16,
+                        fontWeight: FontWeight.w500,
+                      ),
                     ),
                   ),
                 ),
-              ),
 
               const SizedBox(height: 16),
 
@@ -337,12 +437,12 @@ class _VoicePromptScreenState extends ConsumerState<VoicePromptScreen> {
                 alignment: Alignment.centerRight,
                 child: Container(
                   margin: const EdgeInsets.only(bottom: 24),
-                  child: _isSaving
+                  child: _isSaving || _isUploading
                       ? const CircularProgressIndicator(
                           color: Color(0xFF8b5cf6),
                         )
                       : FloatingActionButton(
-                          onPressed: _saveProfileAndNavigate,
+                          onPressed: _uploadAudioAndSaveProfile,
                           backgroundColor: const Color(0xFF8b5cf6),
                           child: const Icon(
                             Icons.arrow_forward,
@@ -356,5 +456,12 @@ class _VoicePromptScreenState extends ConsumerState<VoicePromptScreen> {
         ),
       ),
     );
+  }
+  
+  @override
+  void dispose() {
+    _audioRecorder.dispose();
+    _audioPlayer.dispose();
+    super.dispose();
   }
 }

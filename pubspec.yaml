@@ -57,6 +57,7 @@ dependencies:
   path:
   mime:
   http_parser:
+  camera:
 
 
 

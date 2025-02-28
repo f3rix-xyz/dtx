@@ -8,7 +8,7 @@ import 'package:dtx/models/user_model.dart';
 
 class WriteAnswerScreen extends ConsumerStatefulWidget {
   final PromptCategory category;
-  final String question;
+  final PromptType question;
   final int? editIndex;
 
   const WriteAnswerScreen({
@@ -149,7 +149,7 @@ class _WriteAnswerScreenState extends ConsumerState<WriteAnswerScreen> {
               children: [
                 Expanded(
                   child: Text(
-                    widget.question,
+                    widget.question.label,
                     style: const TextStyle(
                       fontSize: 17,
                       fontWeight: FontWeight.w600,

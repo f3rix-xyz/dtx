@@ -130,7 +130,7 @@ class _TextSelectPromptScreenState extends State<TextSelectPromptScreen> {
                         MaterialPageRoute(
                           builder: (context) => WriteAnswerScreen(
                             category: category,
-                            question: promptType.label,
+                            question: promptType,
                             editIndex: widget.editIndex,
                           ),
                         ),

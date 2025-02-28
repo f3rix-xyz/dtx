@@ -76,4 +76,37 @@ Future<bool> updateProfile(UserModel userModel) async {
     throw ApiException('Failed to update profile: ${e.toString()}');
   }
 }
+
+Future<UserModel> fetchUserProfile() async {
+    try {
+      // Get the saved token
+      final token = await TokenStorage.getToken();
+      
+      if (token == null || token.isEmpty) {
+        throw ApiException('Authentication token is missing');
+      }
+      
+      // Create auth headers
+      final headers = {
+        'Authorization': 'Bearer $token',
+      };
+      
+      // Make the API request
+      final response = await _apiService.get(
+        '/get-profile',
+        headers: headers,
+      );
+      
+      if (response['success'] == true && response['user'] != null) {
+        return UserModel.fromJson(response['user']);
+      } else {
+        throw ApiException('Failed to fetch user profile');
+      }
+    } on ApiException {
+      rethrow;
+    } catch (e) {
+      throw ApiException('Error fetching user profile: ${e.toString()}');
+    }
+  }
+
 }

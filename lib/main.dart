@@ -1,3 +1,4 @@
+import 'package:dtx/views/audioprompt.dart';
 import 'package:dtx/views/gender.dart';
 import 'package:dtx/views/height.dart';
 import 'package:dtx/views/home.dart';
@@ -42,7 +43,7 @@ class MyApp extends ConsumerWidget {
       ),
       // You can change the home screen here based on your flow
       // For example, start with PhoneInputScreen for authentication flow
-      home: const SplashScreen(),
+      home: const SplashScreen() ,
     );
   }
 }

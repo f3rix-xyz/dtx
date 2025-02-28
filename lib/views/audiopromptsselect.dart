@@ -1,11 +1,16 @@
+// views/audiopromptsselect.dart
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:dtx/utils/app_enums.dart';
+import 'package:dtx/providers/audio_upload_provider.dart';
 
-class AudioSelectPromptScreen extends StatelessWidget {
+class AudioSelectPromptScreen extends ConsumerWidget {
   const AudioSelectPromptScreen({Key? key}) : super(key: key);
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
+    final currentPrompt = ref.watch(audioUploadProvider.notifier).selectedPrompt;
+
     return Scaffold(
       backgroundColor: Colors.white,
       body: SafeArea(
@@ -37,9 +42,11 @@ class AudioSelectPromptScreen extends StatelessWidget {
                 itemCount: AudioPrompt.values.length,
                 itemBuilder: (context, index) {
                   final prompt = AudioPrompt.values[index];
+                  final isSelected = prompt == currentPrompt;
+                  
                   return GestureDetector(
                     onTap: () {
-                      // Will handle selection later with provider
+                      ref.read(audioUploadProvider.notifier).setSelectedPrompt(prompt);
                       Navigator.pop(context);
                     },
                     child: Container(
@@ -51,13 +58,26 @@ class AudioSelectPromptScreen extends StatelessWidget {
                             width: 1,
                           ),
                         ),
+                        color: isSelected ? const Color(0xFFEDE9FE) : null,
                       ),
-                      child: Text(
-                        prompt.label,
-                        style: const TextStyle(
-                          fontSize: 18,
-                          color: Colors.black87,
-                        ),
+                      child: Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              prompt.label,
+                              style: TextStyle(
+                                fontSize: 18,
+                                color: isSelected ? const Color(0xFF8B5CF6) : Colors.black87,
+                                fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal,
+                              ),
+                            ),
+                          ),
+                          if (isSelected)
+                            const Icon(
+                              Icons.check_circle,
+                              color: Color(0xFF8B5CF6),
+                            ),
+                        ],
                       ),
                     ),
                   );

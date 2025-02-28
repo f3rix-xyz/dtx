@@ -146,7 +146,7 @@ class _ProfileAnswersScreenState extends ConsumerState<ProfileAnswersScreen> {
                   children: [
                     Expanded(
                       child: Text(
-                        prompt?.question ?? "Add a prompt",
+                        prompt?.question.label ?? "Add a prompt",
                         style: GoogleFonts.poppins(
                           fontSize: 18,
                           fontWeight: FontWeight.w500,

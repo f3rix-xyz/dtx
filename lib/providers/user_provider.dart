@@ -7,6 +7,9 @@ import '../models/error_model.dart';
 import '../models/user_model.dart';
 import '../utils/app_enums.dart';
 
+// Add this provider to track the loading state
+final userLoadingProvider = StateProvider<bool>((ref) => false);
+
 final userProvider = StateNotifierProvider<UserNotifier, UserModel>((ref) {
   return UserNotifier(ref);
 });
@@ -15,6 +18,34 @@ class UserNotifier extends StateNotifier<UserModel> {
   final Ref ref;
 
   UserNotifier(this.ref) : super(UserModel());
+
+  // New method to fetch user profile
+  Future<bool> fetchProfile() async {
+    try {
+      ref.read(userLoadingProvider.notifier).state = true;
+      ref.read(errorProvider.notifier).clearError();
+      
+      final userRepository = ref.read(userRepositoryProvider);
+      final userModel = await userRepository.fetchUserProfile();
+      
+      state = userModel;
+      
+      ref.read(userLoadingProvider.notifier).state = false;
+      return true;
+    } on ApiException catch (e) {
+      ref.read(userLoadingProvider.notifier).state = false;
+      ref.read(errorProvider.notifier).setError(
+        AppError.auth(e.message),
+      );
+      return false;
+    } catch (e) {
+      ref.read(userLoadingProvider.notifier).state = false;
+      ref.read(errorProvider.notifier).setError(
+        AppError.auth("Failed to load profile: ${e.toString()}"),
+      );
+      return false;
+    }
+  }
 
   void updateName(String firstName, String? lastName) {
     ref.read(errorProvider.notifier).clearError();
@@ -175,7 +206,7 @@ class UserNotifier extends StateNotifier<UserModel> {
     }
   }
 
-Future<bool> saveProfile() async {
+  Future<bool> saveProfile() async {
     try {
       // Clear any existing errors
       ref.read(errorProvider.notifier).clearError();
@@ -222,5 +253,11 @@ Future<bool> saveProfile() async {
            state.gender != null &&
            state.datingIntention != null &&
            isLocationValid();
+  }
+
+  void updateAudioPrompt(AudioPromptModel audioPrompt) {
+    state = state.copyWith(
+      audioPrompt: audioPrompt,
+    );
   }
 }

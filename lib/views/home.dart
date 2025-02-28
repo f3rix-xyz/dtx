@@ -1,4 +1,7 @@
+import 'package:dtx/views/profile_screens.dart';
+import 'package:dtx/views/verification_message_screen.dart';
 import 'package:flutter/material.dart';
+import 'package:google_fonts/google_fonts.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -25,7 +28,6 @@ class _HomeScreenState extends State<HomeScreen>
   void _onPanUpdate(DragUpdateDetails details) {
     setState(() {
       _dragOffset += details.delta;
-      // Reduced angle factor for more subtle rotation
       _angle = (_dragOffset.dx / 50).clamp(-0.3, 0.3);
     });
   }
@@ -33,18 +35,29 @@ class _HomeScreenState extends State<HomeScreen>
   void _onPanEnd(DragEndDetails details) {
     final screenWidth = MediaQuery.of(context).size.width;
     if (_dragOffset.dx.abs() > screenWidth * 0.4) {
-      // Swipe completed
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (context) => const VerificationMessageScreen(),
+        ),
+      );
       setState(() {
         _dragOffset = Offset.zero;
         _angle = 0;
       });
     } else {
-      // Return to center
       setState(() {
         _dragOffset = Offset.zero;
         _angle = 0;
       });
     }
+  }
+
+  void _navigateToProfile() {
+    Navigator.push(
+      context,
+      MaterialPageRoute(builder: (context) => const ProfileScreen()),
+    );
   }
 
   @override
@@ -54,29 +67,40 @@ class _HomeScreenState extends State<HomeScreen>
       body: SafeArea(
         child: Column(
           children: [
-            // Top Bar
-            Padding(
-              padding: const EdgeInsets.all(16.0),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 12.0),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withOpacity(0.05),
+                    blurRadius: 4,
+                    offset: const Offset(0, 2),
+                  ),
+                ],
+              ),
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  IconButton(
-                    icon: const Icon(Icons.person),
-                    onPressed: () {},
+                  Text(
+                    "Peeple",
+                    style: GoogleFonts.pacifico(
+                      fontSize: 24,
+                      color: const Color(0xFF8B5CF6),
+                      fontWeight: FontWeight.w500,
+                    ),
                   ),
-                  IconButton(
-                    icon: const Icon(Icons.local_fire_department),
-                    onPressed: () {},
-                  ),
-                  IconButton(
-                    icon: const Icon(Icons.chat_bubble),
-                    onPressed: () {},
+                  Row(
+                    children: [
+                      _buildTopBarIcon(Icons.person, "Profile", _navigateToProfile),
+                      const SizedBox(width: 16),
+                      _buildTopBarIcon(Icons.chat_bubble_outline_rounded, "Messages", () {}),
+                    ],
                   ),
                 ],
               ),
             ),
 
-            // Swipeable Card Area
             Expanded(
               child: Stack(
                 alignment: Alignment.bottomCenter,
@@ -84,7 +108,6 @@ class _HomeScreenState extends State<HomeScreen>
                   Transform.translate(
                     offset: _dragOffset,
                     child: Transform(
-                      // Set transform origin to bottom center
                       transform: Matrix4.identity()
                         ..setEntry(3, 2, 0.001)
                         ..rotateZ(_angle)
@@ -104,12 +127,10 @@ class _HomeScreenState extends State<HomeScreen>
                             child: Column(
                               mainAxisSize: MainAxisSize.min,
                               children: [
-                                // Profile Image Section
                                 Expanded(
                                   child: Stack(
                                     fit: StackFit.expand,
                                     children: [
-                                      // Profile Image
                                       Container(
                                         decoration: BoxDecoration(
                                           gradient: LinearGradient(
@@ -124,8 +145,6 @@ class _HomeScreenState extends State<HomeScreen>
                                         child: const Icon(Icons.person,
                                             size: 100, color: Colors.white),
                                       ),
-
-                                      // Gradient Overlay
                                       Positioned(
                                         bottom: 0,
                                         left: 0,
@@ -144,8 +163,6 @@ class _HomeScreenState extends State<HomeScreen>
                                           ),
                                         ),
                                       ),
-
-                                      // Profile Info Overlay
                                       Positioned(
                                         bottom: 16,
                                         left: 16,
@@ -154,7 +171,6 @@ class _HomeScreenState extends State<HomeScreen>
                                           crossAxisAlignment:
                                               CrossAxisAlignment.start,
                                           children: [
-                                            // Name and Age
                                             const Row(
                                               children: [
                                                 Text(
@@ -176,8 +192,6 @@ class _HomeScreenState extends State<HomeScreen>
                                               ],
                                             ),
                                             const SizedBox(height: 8),
-
-                                            // Job & Location
                                             Row(
                                               children: [
                                                 Icon(Icons.work,
@@ -210,22 +224,17 @@ class _HomeScreenState extends State<HomeScreen>
                                               ],
                                             ),
                                             const SizedBox(height: 12),
-
-                                            // Interests
                                             Wrap(
                                               spacing: 8,
                                               runSpacing: 8,
                                               children: [
                                                 _buildInterestChip('Travel'),
-                                                _buildInterestChip(
-                                                    'Photography'),
+                                                _buildInterestChip('Photography'),
                                                 _buildInterestChip('Cooking'),
                                                 _buildInterestChip('Reading'),
                                               ],
                                             ),
                                             const SizedBox(height: 12),
-
-                                            // Bio
                                             Text(
                                               'Coffee enthusiast. Adventure seeker. Book lover. Looking for someone to share adventures with! 🌟',
                                               style: TextStyle(
@@ -251,20 +260,33 @@ class _HomeScreenState extends State<HomeScreen>
               ),
             ),
 
-            // Bottom Action Buttons
             Padding(
               padding: const EdgeInsets.symmetric(vertical: 16),
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                 children: [
                   _buildActionButton(Icons.close, Colors.red),
-                  _buildActionButton(Icons.star, Colors.blue),
+                  _buildActionButton(Icons.star, const Color(0xFF8B5CF6)),
                   _buildActionButton(Icons.favorite, Colors.green),
                 ],
               ),
             ),
           ],
         ),
+      ),
+    );
+  }
+
+  Widget _buildTopBarIcon(IconData icon, String tooltip, VoidCallback onPressed) {
+    return Container(
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        color: Colors.grey[50],
+      ),
+      child: IconButton(
+        icon: Icon(icon, color: const Color(0xFF8B5CF6), size: 22),
+        tooltip: tooltip,
+        onPressed: onPressed,
       ),
     );
   }
@@ -287,21 +309,31 @@ class _HomeScreenState extends State<HomeScreen>
   }
 
   Widget _buildActionButton(IconData icon, Color color) {
-    return Container(
-      width: 60,
-      height: 60,
-      decoration: BoxDecoration(
-        shape: BoxShape.circle,
-        color: Colors.white,
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.1),
-            blurRadius: 8,
-            spreadRadius: 2,
+    return GestureDetector(
+      onTap: () {
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (context) => const VerificationMessageScreen(),
           ),
-        ],
+        );
+      },
+      child: Container(
+        width: 60,
+        height: 60,
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          color: Colors.white,
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withOpacity(0.1),
+              blurRadius: 8,
+              spreadRadius: 2,
+            ),
+          ],
+        ),
+        child: Icon(icon, color: color, size: 30),
       ),
-      child: Icon(icon, color: color, size: 30),
     );
   }
 
