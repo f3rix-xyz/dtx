@@ -1,5 +1,5 @@
-// providers/media_upload_provider.dart
 import 'dart:io';
+import 'package:dtx/services/api_service.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:path/path.dart' as path;
 import 'package:mime/mime.dart';
@@ -25,6 +25,94 @@ class MediaUploadNotifier extends StateNotifier<List<MediaUploadModel?>> {
   static const int _maxImageSizeBytes = 10 * 1024 * 1024; // 10 MB
   static const int _maxVideoSizeBytes = 50 * 1024 * 1024; // 50 MB
 
+  MediaUploadModel? _verificationImage;
+
+  MediaUploadModel? get verificationImage => _verificationImage;
+
+  void setVerificationImage(File file) {
+    // Validate file size
+    final fileSize = file.lengthSync();
+    final fileName = path.basename(file.path);
+    final mimeType = lookupMimeType(file.path) ?? 'image/jpeg';
+
+    final isImage = mimeType.startsWith('image/');
+
+    if (!isImage) {
+      ref.read(errorProvider.notifier).setError(
+        AppError.validation("Only image files are allowed."),
+      );
+      return;
+    }
+
+    if (fileSize > _maxImageSizeBytes) {
+      ref.read(errorProvider.notifier).setError(
+        AppError.validation("Image is too large. Maximum size is 10 MB."),
+      );
+      return;
+    }
+
+    // Update state
+    _verificationImage = MediaUploadModel(
+      file: file,
+      fileName: fileName,
+      fileType: mimeType,
+    );
+  }
+
+  void clearVerificationImage() {
+    _verificationImage = null;
+  }
+
+  Future<bool> uploadVerificationImage() async {
+    if (_verificationImage == null) return false;
+
+    try {
+      // Clear any existing errors
+      ref.read(errorProvider.notifier).clearError();
+
+      // Get presigned URL
+      final presignedUrl = await _mediaRepository.getVerificationPresignedUrl(
+        _verificationImage!.fileName,
+        _verificationImage!.fileType,
+      );
+
+      // Update verification image with presigned URL
+      _verificationImage = _verificationImage!.copyWith(
+        presignedUrl: () => presignedUrl,
+        status: UploadStatus.inProgress,
+      );
+
+      // Upload the file
+      final success = await _mediaRepository.uploadFileToS3(_verificationImage!);
+
+      // Update status
+      _verificationImage = _verificationImage!.copyWith(
+        status: success ? UploadStatus.success : UploadStatus.failed,
+        errorMessage: success ? () => null : () => 'Failed to upload verification image',
+      );
+
+      return success;
+    } on ApiException catch (e) {
+      _verificationImage = _verificationImage!.copyWith(
+        status: UploadStatus.failed,
+        errorMessage: () => e.message,
+      );
+      ref.read(errorProvider.notifier).setError(
+        AppError.auth(e.message),
+      );
+      return false;
+    } catch (e) {
+      _verificationImage = _verificationImage!.copyWith(
+        status: UploadStatus.failed,
+        errorMessage: () => 'An unexpected error occurred. Please try again.',
+      );
+      ref.read(errorProvider.notifier).setError(
+        AppError.auth("An unexpected error occurred. Please try again."),
+      );
+      return false;
+    }
+  }
+  
   // Add or update media at a specific index
   void setMediaFile(int index, File file) {
     // Validate file size
@@ -151,4 +239,3 @@ class MediaUploadNotifier extends StateNotifier<List<MediaUploadModel?>> {
     }
   }
 }
-

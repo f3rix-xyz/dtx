@@ -1,24 +1,28 @@
+// File: views/selfie_capture_screen.dart
 import 'dart:async';
 import 'dart:io';
+import 'package:dtx/providers/media_upload_provider.dart';
 import 'package:dtx/views/verification_pending_screen.dart';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:camera/camera.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-class SelfieCaptureScreen extends StatefulWidget {
+class SelfieCaptureScreen extends ConsumerStatefulWidget {
   const SelfieCaptureScreen({Key? key}) : super(key: key);
 
   @override
-  State<SelfieCaptureScreen> createState() => _SelfieCaptureScreenState();
+  ConsumerState<SelfieCaptureScreen> createState() => _SelfieCaptureScreenState();
 }
 
-class _SelfieCaptureScreenState extends State<SelfieCaptureScreen>
+class _SelfieCaptureScreenState extends ConsumerState<SelfieCaptureScreen>
     with WidgetsBindingObserver {
   CameraController? _cameraController;
   List<CameraDescription> _cameras = [];
   bool _isCameraInitialized = false;
   bool _hasError = false;
   double _aspectRatio = 1.0;
+  bool _isUploading = false; // Track uploading state
 
   @override
   void initState() {
@@ -90,33 +94,9 @@ class _SelfieCaptureScreenState extends State<SelfieCaptureScreen>
       );
     }
 
-    return Scaffold(
-      backgroundColor: Colors.black,
-      body: Stack(
-        children: [
-          // Fullscreen camera preview
-          Positioned.fill(
-            child: AspectRatio(
-              aspectRatio: _aspectRatio,
-              child: CameraPreview(_cameraController!),
-            ),
-          ),
-
-          // Capture button
-          Positioned(
-            bottom: 40,
-            left: 0,
-            right: 0,
-            child: Center(
-              child: FloatingActionButton(
-                backgroundColor: const Color(0xFF8B5CF6),
-                onPressed: _captureImage,
-                child: const Icon(Icons.camera_alt, color: Colors.white),
-              ),
-            ),
-          ),
-        ],
-      ),
+    return AspectRatio(
+      aspectRatio: _aspectRatio,
+      child: CameraPreview(_cameraController!),
     );
   }
 
@@ -124,18 +104,39 @@ class _SelfieCaptureScreenState extends State<SelfieCaptureScreen>
     if (!_isCameraInitialized || _cameraController == null) return;
 
     try {
+      setState(() => _isUploading = true);
+
       final image = await _cameraController!.takePicture();
-      // Handle navigation to next screen with the captured image
-      Navigator.push(
-        context,
-        MaterialPageRoute(
-          builder: (context) => VerificationPendingScreen(
-            selfieImage: File(image.path),
-          ),
-        ),
-      );
+      final imageFile = File(image.path);
+
+      // Set verification image in provider
+      ref.read(mediaUploadProvider.notifier).setVerificationImage(imageFile);
+
+      // Upload verification image
+      final success = await ref.read(mediaUploadProvider.notifier).uploadVerificationImage();
+
+      setState(() => _isUploading = false);
+
+      if (success) {
+        // Navigate to verification pending screen
+        if (mounted) {
+          Navigator.pushReplacement(
+            context,
+            MaterialPageRoute(builder: (context) => const VerificationPendingScreen()),
+          );
+        }
+      } else {
+        // Handle upload failure
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Failed to upload verification image. Please try again.')),
+        );
+      }
     } catch (e) {
+      setState(() => _isUploading = false);
       print('Capture Error: $e');
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Capture Error: ${e.toString()}')),
+      );
     }
   }
 
@@ -151,34 +152,55 @@ class _SelfieCaptureScreenState extends State<SelfieCaptureScreen>
     return Scaffold(
       backgroundColor: Colors.black,
       body: SafeArea(
-        child: Column(
+        child: Stack(
           children: [
-            // Header
-            Padding(
-              padding: const EdgeInsets.all(16.0),
-              child: Row(
-                children: [
-                  IconButton(
-                    icon: const Icon(Icons.arrow_back, color: Colors.white),
-                    onPressed: () => Navigator.pop(context),
+            Column(
+              children: [
+                // Header
+                Padding(
+                  padding: const EdgeInsets.all(16.0),
+                  child: Row(
+                    children: [
+                      IconButton(
+                        icon: const Icon(Icons.arrow_back, color: Colors.white),
+                        onPressed: () => Navigator.pop(context),
+                      ),
+                      Text(
+                        "Take Selfie",
+                        style: GoogleFonts.poppins(
+                          color: Colors.white,
+                          fontSize: 20,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ],
                   ),
-                  Text(
-                    "Take Selfie",
-                    style: GoogleFonts.poppins(
-                      color: Colors.white,
-                      fontSize: 20,
-                      fontWeight: FontWeight.w600,
-                    ),
+                ),
+                Expanded(
+                  child: _buildCameraPreview(),
+                ),
+              ],
+            ),
+
+            // Loading indicator overlay
+            if (_isUploading)
+              Container(
+                color: Colors.black.withOpacity(0.5),
+                child: const Center(
+                  child: CircularProgressIndicator(
+                    color: Color(0xFF8B5CF6),
                   ),
-                ],
+                ),
               ),
-            ),
-            Expanded(
-              child: _buildCameraPreview(),
-            ),
           ],
         ),
       ),
+      floatingActionButton: !_isUploading ? FloatingActionButton(
+        backgroundColor: const Color(0xFF8B5CF6),
+        onPressed: _captureImage,
+        child: const Icon(Icons.camera_alt, color: Colors.white),
+      ) : null,
+      floatingActionButtonLocation: FloatingActionButtonLocation.centerFloat,
     );
   }
 }

@@ -1,4 +1,4 @@
-// repositories/media_repository.dart
+// File: repositories/media_repository.dart
 import 'dart:io';
 import 'package:dio/dio.dart';
 import 'package:dtx/providers/auth_provider.dart';
@@ -99,6 +99,51 @@ class MediaRepository {
       rethrow;
     } catch (e) {
       throw ApiException('Error getting audio presigned URL: ${e.toString()}');
+    }
+  }
+
+    // Get presigned URL for verification photo upload
+  Future<String> getVerificationPresignedUrl(String filename, String fileType) async {
+    try {
+      // Get the token either from the provider or storage
+      String? token;
+      if (ref != null) {
+        final authState = ref!.read(authProvider);
+        token = authState.jwtToken;
+      }
+
+      if (token == null) {
+        // Fallback to token storage if not available from provider
+        token = await TokenStorage.getToken();
+      }
+
+      if (token == null) {
+        throw ApiException('Authentication token is missing');
+      }
+
+      // Create auth headers
+      final headers = {
+        'Authorization': 'Bearer $token',
+      };
+
+      final response = await _apiService.post(
+        '/verify',
+        body: {
+          'filename': filename,
+          'type': fileType,
+        },
+        headers: headers,
+      );
+
+      if (response['upload_url'] != null) {
+        return response['upload_url'];
+      } else {
+        throw ApiException('Failed to get verification presigned URL');
+      }
+    } on ApiException {
+      rethrow;
+    } catch (e) {
+      throw ApiException('Error getting verification presigned URL: ${e.toString()}');
     }
   }
   
