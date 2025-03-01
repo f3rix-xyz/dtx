@@ -1,4 +1,5 @@
 // File: repositories/media_repository.dart
+import 'dart:convert';
 import 'dart:io';
 import 'package:dio/dio.dart';
 import 'package:dtx/providers/auth_provider.dart';
@@ -148,48 +149,67 @@ class MediaRepository {
   }
   
   // Upload a file to S3 using presigned URL
-  Future<bool> uploadFileToS3(MediaUploadModel mediaUpload) async {
-    if (mediaUpload.presignedUrl == null) {
-      throw ApiException('Missing presigned URL for upload');
-    }
+// Upload a file to S3 using presigned URL
+Future<bool> uploadFileToS3(MediaUploadModel mediaUpload) async {
+  if (mediaUpload.presignedUrl == null) {
+    throw ApiException('Missing presigned URL for upload');
+  }
 
-    try {
-      final dio = Dio();
-      final file = mediaUpload.file;
-      final fileLength = await file.length();
-      final contentType = mediaUpload.fileType;
+  final file = mediaUpload.file;
+  final contentType = mediaUpload.fileType;
+  final filePath = file.path;
 
-      print('▶ Starting upload for: ${mediaUpload.fileName}');
-      print('ℹ Presigned URL: ${mediaUpload.presignedUrl}');
-      print('ℹ File size: ${fileLength / 1024} KB');
-      print('ℹ Content-Type: $contentType');
+  try {
+    print('⏫ Starting S3 upload for: ${mediaUpload.fileName}');
+    print('📁 File path: $filePath');
+    print('📦 Content-Type: $contentType');
+    print('📏 File size: ${(await file.length()) / 1024} KB');
+    print('🔗 Presigned URL: ${mediaUpload.presignedUrl}');
 
-      final response = await dio.put(
-        mediaUpload.presignedUrl!,
-        data: await file.openRead().toList().then((lists) => lists.expand((x) => x).toList()),
-        options: Options(
-          headers: {
-            'Content-Type': contentType,
-            'Content-Length': fileLength.toString(),
-          },
-          contentType: contentType,
-          receiveDataWhenStatusError: true,
-          validateStatus: (status) => true,
-          followRedirects: false,
-          maxRedirects: 0,
-          listFormat: ListFormat.multiCompatible,
-        ),
-      );
+    final client = HttpClient();
+    final request = await client.putUrl(Uri.parse(mediaUpload.presignedUrl!));
+    
+    // Set headers from curl example
+    request.headers.set(HttpHeaders.contentTypeHeader, contentType);
+    request.contentLength = await file.length();
 
-      print('◀ Response received');
-      print('ℹ Status code: ${response.statusCode}');
+    // Add debug headers
+    print('📨 Request headers:');
+    request.headers.forEach((name, values) {
+      print('   $name: ${values.join(', ')}');
+    });
 
-      return response.statusCode == 200;
-    } catch (e, stack) {
-      print('‼ Upload error: $e');
+    // Pipe file content directly
+    final fileStream = file.openRead();
+    await request.addStream(fileStream);
+    final response = await request.close();
+
+    // Get response details
+    final statusCode = response.statusCode;
+    final responseHeaders = response.headers;
+    final responseBody = await response.transform(utf8.decoder).join();
+
+    print('📩 Upload response:');
+    print('   Status: $statusCode');
+    print('   Headers:');
+    responseHeaders.forEach((name, values) {
+      print('     $name: ${values.join(', ')}');
+    });
+    print('   Body: $responseBody');
+
+    if (statusCode != HttpStatus.ok) {
+      print('❌ Upload failed with status $statusCode');
       return false;
     }
+
+    print('✅ Upload successful for ${mediaUpload.fileName}');
+    return true;
+  } catch (e, stack) {
+    print('‼️ Critical upload error: $e');
+    print('🛑 Stack trace: $stack');
+    return false;
   }
+}
 
   // Retry failed uploads with exponential backoff
   Future<bool> retryUpload(MediaUploadModel mediaUpload, {int maxRetries = 3}) async {
