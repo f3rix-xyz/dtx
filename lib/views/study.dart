@@ -8,11 +8,13 @@ class StudyLocationScreen extends ConsumerStatefulWidget {
   const StudyLocationScreen({super.key});
 
   @override
-  ConsumerState<StudyLocationScreen> createState() => _StudyLocationScreenState();
+  ConsumerState<StudyLocationScreen> createState() =>
+      _StudyLocationScreenState();
 }
 
 class _StudyLocationScreenState extends ConsumerState<StudyLocationScreen> {
-  final TextEditingController _studyLocationController = TextEditingController();
+  final TextEditingController _studyLocationController =
+      TextEditingController();
 
   @override
   void dispose() {
@@ -32,7 +34,8 @@ class _StudyLocationScreenState extends ConsumerState<StudyLocationScreen> {
           backgroundColor: const Color(0xFFF4F4F4),
           body: SafeArea(
             child: Padding(
-              padding: EdgeInsets.symmetric(horizontal: screenSize.width * 0.06),
+              padding:
+                  EdgeInsets.symmetric(horizontal: screenSize.width * 0.06),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
@@ -43,7 +46,8 @@ class _StudyLocationScreenState extends ConsumerState<StudyLocationScreen> {
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
                       IconButton(
-                        icon: const Icon(Icons.school_rounded, color: Color(0xFF8B5CF6), size: 32),
+                        icon: const Icon(Icons.school_rounded,
+                            color: Color(0xFF8B5CF6), size: 32),
                         onPressed: () {
                           // Handle home button action
                         },
@@ -51,12 +55,14 @@ class _StudyLocationScreenState extends ConsumerState<StudyLocationScreen> {
                       // Skip Button - Top Right
                       TextButton(
                         onPressed: () {
-                          FocusScope.of(context).unfocus(); // Close the keyboard
+                          FocusScope.of(context)
+                              .unfocus(); // Close the keyboard
                           ref.read(userProvider.notifier).updateEducation(null);
                           Navigator.push(
                               context,
-                              MaterialPageRoute(builder: (context) => const ReligionScreen())
-                          );
+                              MaterialPageRoute(
+                                  builder: (context) =>
+                                      const ReligionScreen()));
                         },
                         style: TextButton.styleFrom(
                           foregroundColor: Colors.grey.shade600,
@@ -92,7 +98,8 @@ class _StudyLocationScreenState extends ConsumerState<StudyLocationScreen> {
 
                   // Text Field
                   Padding(
-                    padding: EdgeInsets.symmetric(horizontal: screenSize.width * 0.02),
+                    padding: EdgeInsets.symmetric(
+                        horizontal: screenSize.width * 0.02),
                     child: TextField(
                       controller: _studyLocationController,
                       style: GoogleFonts.poppins(
@@ -100,16 +107,18 @@ class _StudyLocationScreenState extends ConsumerState<StudyLocationScreen> {
                         color: Colors.black87,
                       ),
                       decoration: InputDecoration(
-                        hintText: "Chut",
+                        hintText: "your college",
                         hintStyle: GoogleFonts.poppins(
                           fontSize: 22,
                           color: Colors.grey.shade500,
                         ),
                         border: const UnderlineInputBorder(
-                          borderSide: BorderSide(color: Colors.grey, width: 1.0),
+                          borderSide:
+                              BorderSide(color: Colors.grey, width: 1.0),
                         ),
                         focusedBorder: const UnderlineInputBorder(
-                          borderSide: BorderSide(color: Color(0xFF8B5CF6), width: 1.5),
+                          borderSide:
+                              BorderSide(color: Color(0xFF8B5CF6), width: 1.5),
                         ),
                       ),
                     ),
@@ -121,23 +130,28 @@ class _StudyLocationScreenState extends ConsumerState<StudyLocationScreen> {
                   Align(
                     alignment: Alignment.bottomRight,
                     child: Padding(
-                      padding: EdgeInsets.only(bottom: screenSize.height * 0.04),
+                      padding:
+                          EdgeInsets.only(bottom: screenSize.height * 0.04),
                       child: GestureDetector(
                         onTap: () {
-                          FocusScope.of(context).unfocus(); // Close the keyboard
+                          FocusScope.of(context)
+                              .unfocus(); // Close the keyboard
 
                           String? education;
                           if (_studyLocationController.text.isNotEmpty) {
                             education = _studyLocationController.text;
-                            ref.read(userProvider.notifier).updateEducation(education);
+                            ref
+                                .read(userProvider.notifier)
+                                .updateEducation(education);
                           } else {
                             education = null;
                           }
 
                           Navigator.push(
                               context,
-                              MaterialPageRoute(builder: (context) => const ReligionScreen())
-                          );
+                              MaterialPageRoute(
+                                  builder: (context) =>
+                                      const ReligionScreen()));
                         },
                         child: Container(
                           width: 70,
