@@ -58,6 +58,7 @@ dependencies:
   mime:
   http_parser:
   camera:
+  google_sign_in:
 
 
 

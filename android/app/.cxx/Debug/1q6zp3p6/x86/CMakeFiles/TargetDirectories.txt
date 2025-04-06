@@ -1,0 +1,2 @@
+/home/ayush/Desktop/code/dtx/android/app/.cxx/Debug/1q6zp3p6/x86/CMakeFiles/edit_cache.dir
+/home/ayush/Desktop/code/dtx/android/app/.cxx/Debug/1q6zp3p6/x86/CMakeFiles/rebuild_cache.dir

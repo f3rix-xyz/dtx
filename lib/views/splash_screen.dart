@@ -3,6 +3,7 @@ import 'package:dtx/models/auth_model.dart';
 import 'package:dtx/views/home.dart';
 import 'package:dtx/views/name.dart';
 import 'package:dtx/views/phone.dart';
+import 'package:dtx/views/youtube.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_fonts/google_fonts.dart';
@@ -59,7 +60,7 @@ class _SplashScreenState extends ConsumerState<SplashScreen>
     );
 
     _controller.forward();
-    
+
     // Mark animation as complete after 2.5 seconds
     Future.delayed(const Duration(milliseconds: 2500), () {
       if (mounted) {
@@ -70,40 +71,41 @@ class _SplashScreenState extends ConsumerState<SplashScreen>
       }
     });
   }
-  
-Future<void> _checkAuthStatus() async {
-  try {
-    // Get the status without updating the state during splash screen check
-    final status = await ref.read(authProvider.notifier)
-      .checkAuthStatus(updateState: false);
 
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) {
-        setState(() {
-          _authStatus = status;
-          _statusCheckComplete = true;
-        });
-        _navigateIfReady();
-      }
-    });
-  } catch (e) {
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) {
-        setState(() {
-          _authStatus = AuthStatus.login;
-          _statusCheckComplete = true;
-        });
-        _navigateIfReady();
-      }
-    });
+  Future<void> _checkAuthStatus() async {
+    try {
+      // Get the status without updating the state during splash screen check
+      final status = await ref
+          .read(authProvider.notifier)
+          .checkAuthStatus(updateState: false);
+
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) {
+          setState(() {
+            _authStatus = status;
+            _statusCheckComplete = true;
+          });
+          _navigateIfReady();
+        }
+      });
+    } catch (e) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) {
+          setState(() {
+            _authStatus = AuthStatus.login;
+            _statusCheckComplete = true;
+          });
+          _navigateIfReady();
+        }
+      });
+    }
   }
-}
-  
+
   void _navigateIfReady() {
     // Only navigate if both animation has played sufficiently and status check is done
     if (_animationComplete && _statusCheckComplete) {
       Widget destination;
-      
+
       switch (_authStatus) {
         case AuthStatus.home:
           destination = const HomeScreen();
@@ -115,9 +117,10 @@ Future<void> _checkAuthStatus() async {
         case AuthStatus.unknown:
         default:
           destination = const PhoneInputScreen();
+          // destination = const YoutubeSignInScreen();
           break;
       }
-      
+
       Navigator.of(context).pushReplacement(
         MaterialPageRoute(builder: (_) => destination),
       );
