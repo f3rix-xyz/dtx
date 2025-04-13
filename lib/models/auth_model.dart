@@ -1,52 +1,48 @@
 // File: models/auth_model.dart
+
+// --- UPDATED ENUM ---
 enum AuthStatus {
-  home,       // User authenticated with complete profile
-  onboarding, // User authenticated but profile incomplete
-  login,      // User not authenticated or invalid token
-  unknown     // Error or initial state
+  login, // Needs to log in (no valid token or check failed)
+  onboarding1, // Logged in, needs location/gender
+  onboarding2, // Logged in, location/gender set, needs main profile details
+  home, // Fully authenticated and onboarded
+  unknown, // Initial state or error during status check
 }
+// --- END UPDATED ENUM ---
 
 class AuthState {
-  final String? unverifiedPhone;
-  final String? verificationId;
+  // --- REMOVED FIELDS ---
+  // final String? unverifiedPhone;
+  // final String? verificationId;
+  // final int? resendTimer;
+  // --- END REMOVED FIELDS ---
+
   final bool isLoading;
-  final String? error;
-  final int? resendTimer;
+  final String? error; // Keep error for general auth errors
   final String? jwtToken;
   final AuthStatus authStatus;
 
   const AuthState({
-    this.unverifiedPhone,
-    this.verificationId,
     this.isLoading = false,
     this.error,
-    this.resendTimer,
     this.jwtToken,
-    this.authStatus = AuthStatus.unknown,
+    this.authStatus = AuthStatus.unknown, // Default to unknown
   });
 
   AuthState copyWith({
-    String? Function()? unverifiedPhone,
-    String? Function()? verificationId,
     bool? isLoading,
     String? Function()? error,
-    int? Function()? resendTimer,
-    String? Function()? jwtToken,
+    String? Function()? jwtToken, // Function to allow setting null
     AuthStatus? authStatus,
   }) {
     return AuthState(
-      unverifiedPhone:
-          unverifiedPhone != null ? unverifiedPhone() : this.unverifiedPhone,
-      verificationId:
-          verificationId != null ? verificationId() : this.verificationId,
       isLoading: isLoading ?? this.isLoading,
       error: error != null ? error() : this.error,
-      resendTimer: resendTimer != null ? resendTimer() : this.resendTimer,
       jwtToken: jwtToken != null ? jwtToken() : this.jwtToken,
       authStatus: authStatus ?? this.authStatus,
     );
   }
-  
-  // Check if user is authenticated
+
+  // Check if user is considered authenticated (has a token)
   bool get isAuthenticated => jwtToken != null && jwtToken!.isNotEmpty;
 }

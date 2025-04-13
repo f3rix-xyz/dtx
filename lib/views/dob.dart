@@ -1,6 +1,8 @@
 import 'package:dtx/models/error_model.dart';
 import 'package:dtx/providers/error_provider.dart';
 import 'package:dtx/providers/user_provider.dart';
+import 'package:dtx/utils/app_enums.dart';
+import 'package:dtx/views/dating_intentions.dart';
 import 'package:dtx/views/location.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -257,7 +259,7 @@ class _DateOfBirthScreenState extends ConsumerState<DateOfBirthScreen> {
     ref.read(userProvider.notifier).updateDateOfBirth(date);
     Navigator.push(
       context,
-      MaterialPageRoute(builder: (context) => const LocationInputScreen()),
+      MaterialPageRoute(builder: (context) => const DatingIntentionsScreen()),
     );
   }
 }

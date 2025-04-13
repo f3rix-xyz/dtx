@@ -4,7 +4,6 @@ import 'package:dtx/views/height.dart';
 import 'package:dtx/views/home.dart';
 import 'package:dtx/views/media.dart';
 import 'package:dtx/views/name.dart';
-import 'package:dtx/views/phone.dart';
 import 'package:dtx/views/profile_screens.dart';
 import 'package:dtx/views/prompt.dart';
 import 'package:flutter/material.dart';
@@ -16,10 +15,10 @@ import 'package:flutter_dotenv/flutter_dotenv.dart';
 void main() async {
   // Ensure Flutter is initialized
   WidgetsFlutterBinding.ensureInitialized();
-  
+
   // Load environment variables
   await dotenv.load(fileName: ".env");
-  
+
   runApp(
     // Adding ProviderScope at the root of the app
     const ProviderScope(
@@ -43,7 +42,7 @@ class MyApp extends ConsumerWidget {
       ),
       // You can change the home screen here based on your flow
       // For example, start with PhoneInputScreen for authentication flow
-      home: const SplashScreen() ,
+      home: const SplashScreen(),
     );
   }
 }

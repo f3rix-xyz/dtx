@@ -1,12 +1,13 @@
-
+// File: views/verification_pending_screen.dart
 import 'dart:io';
+import 'package:dtx/utils/app_enums.dart'; // *** ADDED: Import FeedType ***
 import 'package:dtx/views/home.dart';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 
 class VerificationPendingScreen extends StatelessWidget {
-  final File? selfieImage;
-  
+  final File? selfieImage; // Keep if you are passing the image
+
   const VerificationPendingScreen({
     Key? key,
     this.selfieImage,
@@ -23,9 +24,10 @@ class VerificationPendingScreen extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.center,
             children: [
               const SizedBox(height: 40),
-              
-              // Selfie preview in a circular frame
+
+              // Selfie preview (keep existing)
               Container(
+                /* ... Selfie preview container ... */
                 width: 180,
                 height: 180,
                 decoration: BoxDecoration(
@@ -58,10 +60,10 @@ class VerificationPendingScreen extends StatelessWidget {
                         ),
                 ),
               ),
-              
+
               const SizedBox(height: 32),
-              
-              // Title
+
+              // Title (keep existing)
               Text(
                 "Verification in Progress",
                 textAlign: TextAlign.center,
@@ -71,10 +73,10 @@ class VerificationPendingScreen extends StatelessWidget {
                   color: const Color(0xFF1A1A1A),
                 ),
               ),
-              
+
               const SizedBox(height: 16),
-              
-              // Description
+
+              // Description (keep existing)
               Text(
                 "We're verifying your profile to ensure no one else can use your photos. This helps keep our community safe and authentic.",
                 textAlign: TextAlign.center,
@@ -85,11 +87,12 @@ class VerificationPendingScreen extends StatelessWidget {
                   height: 1.5,
                 ),
               ),
-              
+
               const SizedBox(height: 24),
-              
-              // Status indicator
+
+              // Status indicator (keep existing)
               Container(
+                /* ... Status indicator container ... */
                 padding: const EdgeInsets.symmetric(
                   horizontal: 20,
                   vertical: 12,
@@ -123,21 +126,25 @@ class VerificationPendingScreen extends StatelessWidget {
                   ],
                 ),
               ),
-              
+
               const Spacer(),
-              
+
               // Continue Button
               GestureDetector(
                 onTap: () {
                   Navigator.pushAndRemoveUntil(
                     context,
                     MaterialPageRoute(
-                      builder: (context) => const HomeScreen(),
+                      // *** FIX: Pass initialFeedType ***
+                      builder: (context) =>
+                          const HomeScreen(initialFeedType: FeedType.home),
+                      // *** END FIX ***
                     ),
                     (route) => false,
                   );
                 },
                 child: Container(
+                  /* ... Button container ... */
                   width: double.infinity,
                   height: 56,
                   decoration: BoxDecoration(
@@ -163,7 +170,7 @@ class VerificationPendingScreen extends StatelessWidget {
                   ),
                 ),
               ),
-              
+
               const SizedBox(height: 32),
             ],
           ),

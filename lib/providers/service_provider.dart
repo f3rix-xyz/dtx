@@ -1,8 +1,7 @@
-
 // File: providers/service_provider.dart
-import 'package:dtx/models/media_upload_model.dart';
-import 'package:dtx/repositories/media_repository.dart';
 import 'package:dtx/repositories/user_repository.dart';
+import 'package:dtx/repositories/media_repository.dart';
+import 'package:dtx/repositories/like_repository.dart'; // *** ADDED Import ***
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../services/api_service.dart';
 import '../services/http_service.dart';
@@ -20,12 +19,21 @@ final authRepositoryProvider = Provider<AuthRepository>((ref) {
   return AuthRepository(apiService);
 });
 
+// Media Repository provider
 final mediaRepositoryProvider = Provider<MediaRepository>((ref) {
   final apiService = ref.watch(apiServiceProvider);
-  return MediaRepository(apiService, ref);  // Pass the ref here
+  return MediaRepository(apiService, ref);
 });
 
+// User Repository provider
 final userRepositoryProvider = Provider<UserRepository>((ref) {
   final apiService = ref.watch(apiServiceProvider);
   return UserRepository(apiService);
 });
+
+// *** ADDED: Like Repository Provider ***
+final likeRepositoryProvider = Provider<LikeRepository>((ref) {
+  final apiService = ref.watch(apiServiceProvider);
+  return LikeRepository(apiService);
+});
+// *** END ADDED ***
