@@ -1,12 +1,10 @@
 // File: lib/utils/app_enums.dart
-// --- ADDED: Import ContentLikeType ---
-import 'package:dtx/models/like_models.dart';
-// --- END ADDED ---
+// Import the correct location of ContentLikeType
+import 'package:dtx/models/like_models.dart' show ContentLikeType;
 
 enum Gender {
   man('man', 'Man'),
   woman('woman', 'Woman');
-  // Removed bisexual, lesbian, gay based on backend schema update
 
   final String value;
   final String label;
@@ -67,6 +65,7 @@ enum PromptCategory {
   const PromptCategory(this.value, this.label);
 
   // --- ADDED: contentType Getter ---
+  // This getter uses the ContentLikeType defined in like_models.dart
   ContentLikeType get contentType {
     switch (this) {
       case PromptCategory.storyTime:
@@ -124,9 +123,11 @@ enum PromptCategory {
         ];
       case PromptCategory.dateVibes:
         return [
-          PromptType.togetherWeCould, PromptType.firstRoundIsOnMeIf,
-          PromptType.whatIOrderForTheTable, // Corrected typo in definition
-          PromptType.bestSpotInTown, PromptType.bestWayToAskMeOut,
+          PromptType.togetherWeCould,
+          PromptType.firstRoundIsOnMeIf,
+          PromptType.whatIOrderForTheTable,
+          PromptType.bestSpotInTown,
+          PromptType.bestWayToAskMeOut,
         ];
     }
   }
@@ -245,5 +246,3 @@ enum AudioPrompt {
   final String label;
   const AudioPrompt(this.value, this.label);
 }
-
-enum FeedType { quick, home }

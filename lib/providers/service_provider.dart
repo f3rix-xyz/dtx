@@ -1,4 +1,5 @@
 // File: providers/service_provider.dart
+import 'package:dtx/repositories/filter_repository.dart';
 import 'package:dtx/repositories/user_repository.dart';
 import 'package:dtx/repositories/media_repository.dart';
 import 'package:dtx/repositories/like_repository.dart'; // *** ADDED Import ***
@@ -35,5 +36,10 @@ final userRepositoryProvider = Provider<UserRepository>((ref) {
 final likeRepositoryProvider = Provider<LikeRepository>((ref) {
   final apiService = ref.watch(apiServiceProvider);
   return LikeRepository(apiService);
+});
+
+final filterRepositoryProvider = Provider<FilterRepository>((ref) {
+  final apiService = ref.watch(apiServiceProvider);
+  return FilterRepository(apiService);
 });
 // *** END ADDED ***

@@ -1,18 +1,16 @@
-// File: models/feed_models.dart
-import 'package:dtx/utils/app_enums.dart'; // For GenderEnum if needed
+import 'package:dtx/utils/app_enums.dart';
 
-// --- Base Profile Info (Common fields) ---
-// We can reuse UserModel partially, but separate models might be cleaner
-// for feed-specific data like distance. Let's define simple ones for now.
+// --- REMOVED QuickFeedProfile ---
 
+// --- FeedProfile (Kept for potential reuse, but not directly used by HomeScreen anymore) ---
+// Consider removing if truly unused later.
 class FeedProfile {
   final int id;
-  final String? name; // Use String? for null safety
+  final String? name;
   final String? lastName;
   final DateTime? dateOfBirth;
   final List<String>? mediaUrls;
-  final Gender? gender; // Use Gender enum
-  // Add other fields displayed on cards if necessary
+  final Gender? gender;
   final double? distanceKm;
 
   FeedProfile({
@@ -25,10 +23,8 @@ class FeedProfile {
     this.distanceKm,
   });
 
-  // Helper to get the first name safely
   String get firstName => name ?? '';
 
-  // Helper to calculate age
   int? get age {
     if (dateOfBirth == null) return null;
     final now = DateTime.now();
@@ -37,10 +33,9 @@ class FeedProfile {
         (now.month == dateOfBirth!.month && now.day < dateOfBirth!.day)) {
       age--;
     }
-    return age < 18 ? null : age; // Return null if under 18 or dob invalid
+    return age < 18 ? null : age;
   }
 
-  // Helper to get the first media URL safely
   String? get firstMediaUrl {
     if (mediaUrls != null &&
         mediaUrls!.isNotEmpty &&
@@ -50,8 +45,6 @@ class FeedProfile {
     return null;
   }
 
-  // Factory constructor to parse common fields from API response map
-  // Note: Backend uses pgtype which marshals to {"Type": value, "Valid": bool}
   factory FeedProfile.fromJson(Map<String, dynamic> json) {
     DateTime? parseDate(dynamic dateField) {
       if (dateField is Map &&
@@ -59,6 +52,13 @@ class FeedProfile {
           dateField['Time'] != null) {
         try {
           return DateTime.parse(dateField['Time'] as String);
+        } catch (e) {
+          return null;
+        }
+      } else if (dateField is String) {
+        // Handle direct string date
+        try {
+          return DateTime.parse(dateField);
         } catch (e) {
           return null;
         }
@@ -75,10 +75,16 @@ class FeedProfile {
     }
 
     Gender? parseGender(dynamic genderField) {
+      String? genderStr;
       if (genderField is Map &&
           genderField['Valid'] == true &&
           genderField['GenderEnum'] != null) {
-        final genderStr = genderField['GenderEnum'] as String;
+        genderStr = genderField['GenderEnum'] as String?;
+      } else if (genderField is String) {
+        genderStr = genderField;
+      }
+
+      if (genderStr != null) {
         if (genderStr == 'man') return Gender.man;
         if (genderStr == 'woman') return Gender.woman;
       }
@@ -86,94 +92,16 @@ class FeedProfile {
     }
 
     return FeedProfile(
-      id: json['id'] as int? ?? 0, // Provide default or handle error
+      id: json['id'] as int? ?? 0,
       name: (json['name'] is Map && json['name']['Valid'])
           ? json['name']['String'] as String?
-          : null,
+          : json['name'] as String?, // Handle direct string
       lastName: (json['last_name'] is Map && json['last_name']['Valid'])
           ? json['last_name']['String'] as String?
-          : null,
+          : json['last_name'] as String?, // Handle direct string
       dateOfBirth: parseDate(json['date_of_birth']),
       mediaUrls: parseMediaUrls(json['media_urls']),
       gender: parseGender(json['gender']),
-      distanceKm:
-          (json['distance_km'] as num?)?.toDouble(), // Safely cast distance
-    );
-  }
-}
-
-// --- Quick Feed Specific Model ---
-// Can inherit or compose if more fields are needed later
-class QuickFeedProfile extends FeedProfile {
-  // Add any fields specific to QuickFeedRow if they exist
-  // Currently, it seems GetQuickFeedRow in Go just returns User + distance_km
-
-  QuickFeedProfile({
-    required super.id,
-    super.name,
-    super.lastName,
-    super.dateOfBirth,
-    super.mediaUrls,
-    super.gender,
-    super.distanceKm,
-  });
-
-  // Factory to create from the specific API response structure
-  // Assuming GetQuickFeedRow directly maps to FeedProfile fields
-  factory QuickFeedProfile.fromJson(Map<String, dynamic> json) {
-    // Directly use the base FeedProfile parser
-    return QuickFeedProfile(
-      id: json['id'] as int? ?? 0,
-      name: (json['name'] is Map && json['name']['Valid'])
-          ? json['name']['String'] as String?
-          : null,
-      lastName: (json['last_name'] is Map && json['last_name']['Valid'])
-          ? json['last_name']['String'] as String?
-          : null,
-      dateOfBirth: FeedProfile.fromJson(json)
-          .dateOfBirth, // Reuse base parsing logic for date
-      mediaUrls:
-          FeedProfile.fromJson(json).mediaUrls, // Reuse base parsing logic
-      gender: FeedProfile.fromJson(json).gender, // Reuse base parsing logic
-      distanceKm: (json['distance_km'] as num?)?.toDouble(),
-    );
-  }
-}
-
-// --- Home Feed Specific Model ---
-class HomeFeedProfile extends FeedProfile {
-  // Add other fields returned by GetHomeFeedRow if needed (e.g., prompts, full details)
-  // For now, it seems GetHomeFeedRow also just returns User + distance_km
-  // If you need prompts etc., add them here and update the factory.
-
-  HomeFeedProfile({
-    required super.id,
-    super.name,
-    super.lastName,
-    super.dateOfBirth,
-    super.mediaUrls,
-    super.gender,
-    super.distanceKm,
-    // Add other fields here
-  });
-
-  // Factory to create from the specific API response structure
-  // Assuming GetHomeFeedRow directly maps to FeedProfile fields
-  factory HomeFeedProfile.fromJson(Map<String, dynamic> json) {
-    // Directly use the base FeedProfile parser
-    return HomeFeedProfile(
-      id: json['id'] as int? ?? 0,
-      name: (json['name'] is Map && json['name']['Valid'])
-          ? json['name']['String'] as String?
-          : null,
-      lastName: (json['last_name'] is Map && json['last_name']['Valid'])
-          ? json['last_name']['String'] as String?
-          : null,
-      dateOfBirth: FeedProfile.fromJson(json)
-          .dateOfBirth, // Reuse base parsing logic for date
-      mediaUrls:
-          FeedProfile.fromJson(json).mediaUrls, // Reuse base parsing logic
-      gender: FeedProfile.fromJson(json).gender, // Reuse base parsing logic
       distanceKm: (json['distance_km'] as num?)?.toDouble(),
     );
   }

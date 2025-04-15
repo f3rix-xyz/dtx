@@ -1,10 +1,11 @@
-// File: views/gender.dart
-import 'package:dtx/models/auth_model.dart'; // Import AuthStatus
-import 'package:dtx/providers/auth_provider.dart'; // Import AuthProvider
-import 'package:dtx/services/api_service.dart'; // *** ADDED: Import ApiException ***
+import 'package:dtx/models/auth_model.dart';
+import 'package:dtx/providers/auth_provider.dart';
+import 'package:dtx/providers/feed_provider.dart'; // Import FeedProvider
+import 'package:dtx/providers/filter_provider.dart'; // Import FilterProvider
+import 'package:dtx/services/api_service.dart';
 import 'package:dtx/utils/app_enums.dart';
 import 'package:dtx/views/google_sign_in_screen.dart';
-import 'package:dtx/views/home.dart';
+import 'package:dtx/views/main_navigation_screen.dart'; // Import MainNavigationScreen
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_fonts/google_fonts.dart';
@@ -12,6 +13,7 @@ import '../models/error_model.dart';
 import '../providers/user_provider.dart';
 import '../providers/error_provider.dart';
 import '../providers/service_provider.dart';
+// Removed Home import
 
 class GenderSelectionScreen extends ConsumerStatefulWidget {
   const GenderSelectionScreen({super.key});
@@ -24,9 +26,16 @@ class GenderSelectionScreen extends ConsumerStatefulWidget {
 class _GenderSelectionScreenState extends ConsumerState<GenderSelectionScreen> {
   bool _isSubmitting = false;
 
+  void _initiateEarlyFetches() {
+    print(
+        "[GenderSelectionScreen] Initiating early data fetches (Filters, HomeFeed).");
+    // Don't await, let them run in background
+    ref.read(filterProvider.notifier).loadFilters();
+    ref.read(feedProvider.notifier).fetchFeed();
+  }
+
   Future<void> _submitLocationAndGender() async {
     final userState = ref.read(userProvider);
-    // final userNotifier = ref.read(userProvider.notifier); // *** REMOVED: Unused ***
     final errorNotifier = ref.read(errorProvider.notifier);
     final authNotifier = ref.read(authProvider.notifier);
 
@@ -60,13 +69,20 @@ class _GenderSelectionScreenState extends ConsumerState<GenderSelectionScreen> {
         print("[GenderSelectionScreen] Auth status updated to: $finalStatus");
 
         if (mounted) {
-          // Expect onboarding2, navigate to HomeScreen with QuickFeed
-          Widget nextScreen = (finalStatus == AuthStatus.onboarding2)
-              ? const HomeScreen(initialFeedType: FeedType.quick)
-              // If status is somehow already home or login, handle appropriately
-              : (finalStatus == AuthStatus.home)
-                  ? const HomeScreen(initialFeedType: FeedType.home)
-                  : const GoogleSignInScreen(); // Fallback
+          Widget nextScreen;
+          // Navigate to MainNavigationScreen if onboarding is complete (status onboarding2 or home)
+          if (finalStatus == AuthStatus.onboarding2 ||
+              finalStatus == AuthStatus.home) {
+            print(
+                "[GenderSelectionScreen] Navigating to MainNavigationScreen.");
+            _initiateEarlyFetches(); // Start loading data
+            nextScreen = const MainNavigationScreen();
+          } else {
+            // Fallback to GoogleSignInScreen if status is unexpectedly login/unknown
+            print(
+                "[GenderSelectionScreen] Unexpected status ($finalStatus), navigating to GoogleSignInScreen.");
+            nextScreen = const GoogleSignInScreen();
+          }
 
           Navigator.pushAndRemoveUntil(
             context,
@@ -77,14 +93,11 @@ class _GenderSelectionScreenState extends ConsumerState<GenderSelectionScreen> {
       } else {
         print(
             "[GenderSelectionScreen] Location/Gender submission failed (API returned false).");
-        // Error should be set by repo/api layer if specific message available
         if (ref.read(errorProvider) == null) {
-          // Set a generic one if not already set
           errorNotifier
               .setError(AppError.server("Failed to update location/gender."));
         }
       }
-      // *** FIX: Catch specific ApiException ***
     } on ApiException catch (e) {
       print(
           "[GenderSelectionScreen] API Exception during submit: ${e.message}");
@@ -92,10 +105,8 @@ class _GenderSelectionScreenState extends ConsumerState<GenderSelectionScreen> {
     } catch (e) {
       print(
           "[GenderSelectionScreen] Unexpected error during submit: ${e.toString()}");
-      // *** FIX: Use correct AppError constructor ***
       errorNotifier.setError(
           AppError.generic("An unexpected error occurred. Please try again."));
-      // *** END FIX ***
     } finally {
       if (mounted) {
         setState(() => _isSubmitting = false);
@@ -105,7 +116,7 @@ class _GenderSelectionScreenState extends ConsumerState<GenderSelectionScreen> {
 
   @override
   Widget build(BuildContext context) {
-    // ... (rest of build method is likely okay, ensure GoogleFonts import) ...
+    // Build method remains largely the same, only navigation logic changed
     final screenSize = MediaQuery.of(context).size;
     final userState = ref.watch(userProvider);
     final errorState = ref.watch(errorProvider);
@@ -143,7 +154,7 @@ class _GenderSelectionScreenState extends ConsumerState<GenderSelectionScreen> {
                     .toList(),
               ),
               const Spacer(),
-              if (errorState != null) // Display any error
+              if (errorState != null)
                 Padding(
                   padding: const EdgeInsets.only(bottom: 10.0),
                   child: Text(
@@ -182,7 +193,7 @@ class _GenderSelectionScreenState extends ConsumerState<GenderSelectionScreen> {
   }
 
   Widget _buildOption(Gender gender) {
-    // ... (buildOption implementation likely okay) ...
+    // _buildOption implementation remains the same
     final bool isSelected = ref.watch(userProvider).gender == gender;
     final errorNotifier = ref.read(errorProvider.notifier);
 

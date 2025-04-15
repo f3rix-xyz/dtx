@@ -1,16 +1,16 @@
 // File: views/audioprompt.dart
-import 'dart:async'; // Import async for Timer
-import 'package:dtx/models/error_model.dart'; // Import AppError
+import 'dart:async';
+import 'package:dtx/models/error_model.dart';
 import 'package:dtx/models/media_upload_model.dart';
 import 'package:dtx/providers/audio_upload_provider.dart';
-import 'package:dtx/providers/error_provider.dart'; // Import ErrorProvider
-import 'package:dtx/providers/service_provider.dart'; // Import ServiceProvider for repo
-import 'package:dtx/services/api_service.dart'; // Import ApiException
+import 'package:dtx/providers/error_provider.dart';
+import 'package:dtx/providers/service_provider.dart';
+import 'package:dtx/services/api_service.dart';
 import 'package:dtx/utils/app_enums.dart';
 import 'package:dtx/views/audiopromptsselect.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:google_fonts/google_fonts.dart'; // Import GoogleFonts
+import 'package:google_fonts/google_fonts.dart';
 import 'package:record/record.dart';
 import 'package:audioplayers/audioplayers.dart';
 import 'package:path_provider/path_provider.dart';
@@ -19,7 +19,10 @@ import 'dart:io';
 import '../models/auth_model.dart';
 import '../providers/auth_provider.dart';
 import '../providers/user_provider.dart';
-import '../views/home.dart';
+// Import MainNavigationScreen
+import 'package:dtx/views/main_navigation_screen.dart';
+// Removed Home import
+// Removed FeedType import
 
 class VoicePromptScreen extends ConsumerStatefulWidget {
   const VoicePromptScreen({Key? key}) : super(key: key);
@@ -29,6 +32,7 @@ class VoicePromptScreen extends ConsumerStatefulWidget {
 }
 
 class _VoicePromptScreenState extends ConsumerState<VoicePromptScreen> {
+  // ... (initState, _initializeAudioSession, _startRecording, _stopRecording, _playRecording, _selectPrompt remain the same) ...
   final AudioRecorder _audioRecorder = AudioRecorder();
   final AudioPlayer _audioPlayer = AudioPlayer();
   bool _isRecording = false;
@@ -50,7 +54,6 @@ class _VoicePromptScreenState extends ConsumerState<VoicePromptScreen> {
     });
     _audioPlayer.onPlayerStateChanged.listen((state) {
       if (mounted && state != PlayerState.playing) {
-        // Update UI if player stops for any reason other than pause/resume handled elsewhere
         if (_isPlaying && state != PlayerState.paused) {
           setState(() => _isPlaying = false);
         }
@@ -64,7 +67,6 @@ class _VoicePromptScreenState extends ConsumerState<VoicePromptScreen> {
     print("[VoicePromptScreen] Microphone permission status: $status");
     if (!status.isGranted) {
       if (mounted) {
-        // Check if mounted before showing SnackBar
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Microphone permission is required.')),
         );
@@ -82,46 +84,36 @@ class _VoicePromptScreenState extends ConsumerState<VoicePromptScreen> {
       }
       return;
     }
-    // Stop playback if it's ongoing
     if (_isPlaying) {
       await _audioPlayer.stop();
       setState(() => _isPlaying = false);
     }
-    // Clear previous path immediately
     setState(() {
       _audioPath = null;
-      _recordingTime = "0:00 / 0:30"; // Reset timer display
+      _recordingTime = "0:00 / 0:30";
     });
-    ref
-        .read(audioUploadProvider.notifier)
-        .clearAudio(); // Clear provider state too
+    ref.read(audioUploadProvider.notifier).clearAudio();
 
     try {
       print("[VoicePromptScreen] Starting recording...");
       final directory = await getApplicationDocumentsDirectory();
-      // Ensure the path uses a compatible extension, e.g., .m4a for aacLc
       final newPath =
           '${directory.path}/voice_prompt_${DateTime.now().millisecondsSinceEpoch}.m4a';
       print("[VoicePromptScreen] Recording path set to: $newPath");
 
-      // --- FIX: Use correct AudioEncoder constant (aacLc) ---
       await _audioRecorder.start(
-        const RecordConfig(encoder: AudioEncoder.aacLc), // Corrected constant
-        path: newPath, // Use the new path directly
+        const RecordConfig(encoder: AudioEncoder.aacLc),
+        path: newPath,
       );
-      // --- END FIX ---
 
-      _audioPath = newPath; // Set path only after start succeeds
+      _audioPath = newPath;
       _startTime = DateTime.now();
       if (!mounted) return;
       setState(() => _isRecording = true);
       print("[VoicePromptScreen] Recording started.");
 
-      // Cancel previous timer if exists
       _recordingTimer?.cancel();
-      // Start new timer
       _recordingTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
-        // Use Timer here
         if (!_isRecording || !mounted || _startTime == null) {
           timer.cancel();
           return;
@@ -151,13 +143,12 @@ class _VoicePromptScreenState extends ConsumerState<VoicePromptScreen> {
 
   Future<void> _stopRecording() async {
     if (!_isRecording) return;
-    _recordingTimer?.cancel(); // Stop the timer
+    _recordingTimer?.cancel();
 
     try {
       final path = await _audioRecorder.stop();
       print('[VoicePromptScreen] Recording stopped. Path from recorder: $path');
       if (path != null) {
-        // Verify file exists after stopping
         final file = File(path);
         if (!await file.exists() || await file.length() == 0) {
           print(
@@ -169,17 +160,16 @@ class _VoicePromptScreenState extends ConsumerState<VoicePromptScreen> {
             );
             setState(() {
               _isRecording = false;
-              _audioPath = null; // Clear invalid path
+              _audioPath = null;
               _recordingTime = "0:00 / 0:30";
             });
           }
-          return; // Exit early
+          return;
         }
         _audioPath = path;
         if (mounted) {
           setState(() {
             _isRecording = false;
-            // Recording time is reset visually, actual duration is in the file
           });
           ref.read(audioUploadProvider.notifier).setRecordingPath(_audioPath!);
           print(
@@ -226,7 +216,7 @@ class _VoicePromptScreenState extends ConsumerState<VoicePromptScreen> {
               content: Text('Recording file not found. Please record again.')),
         );
       }
-      setState(() => _audioPath = null); // Clear invalid path
+      setState(() => _audioPath = null);
       return;
     }
     if (await file.length() == 0) {
@@ -237,23 +227,21 @@ class _VoicePromptScreenState extends ConsumerState<VoicePromptScreen> {
               content: Text('Recording file is empty. Please record again.')),
         );
       }
-      setState(() => _audioPath = null); // Clear invalid path
+      setState(() => _audioPath = null);
       return;
     }
 
     try {
       if (_isPlaying) {
         print("[VoicePromptScreen] Pausing playback.");
-        await _audioPlayer.pause(); // Use pause instead of stop
+        await _audioPlayer.pause();
         if (mounted) setState(() => _isPlaying = false);
       } else {
-        // Check if already playing something else, stop first
         if (_audioPlayer.state == PlayerState.playing) {
           await _audioPlayer.stop();
         }
         print("[VoicePromptScreen] Starting playback from: $_audioPath");
         await _audioPlayer.play(DeviceFileSource(_audioPath!));
-        // Listener will update state to playing, but set here for immediate feedback maybe?
         if (mounted) setState(() => _isPlaying = true);
       }
     } catch (e) {
@@ -269,7 +257,7 @@ class _VoicePromptScreenState extends ConsumerState<VoicePromptScreen> {
 
   void _selectPrompt() {
     if (_isPlaying) {
-      _audioPlayer.pause(); // Pause instead of stop when navigating
+      _audioPlayer.pause();
       if (mounted) setState(() => _isPlaying = false);
     }
     print("[VoicePromptScreen] Navigating to select audio prompt.");
@@ -289,7 +277,7 @@ class _VoicePromptScreenState extends ConsumerState<VoicePromptScreen> {
     print('[VoicePromptScreen] Starting _saveProfileAndNavigate');
     final errorNotifier = ref.read(errorProvider.notifier);
     final authNotifier = ref.read(authProvider.notifier);
-    final userNotifier = ref.read(userProvider.notifier); // Get user notifier
+    final userNotifier = ref.read(userProvider.notifier);
     errorNotifier.clearError();
 
     final selectedPrompt =
@@ -301,24 +289,19 @@ class _VoicePromptScreenState extends ConsumerState<VoicePromptScreen> {
       return;
     }
 
-    // --- Prepare Audio ONLY IF _audioPath is set ---
     bool audioNeedsUpload =
         _audioPath != null && File(_audioPath!).existsSync();
     bool audioPrepared = false;
     MediaUploadModel? audioUploadModel;
 
     if (audioNeedsUpload) {
-      ref
-          .read(audioUploadProvider.notifier)
-          .setRecordingPath(_audioPath!); // Ensure provider has latest path
+      ref.read(audioUploadProvider.notifier).setRecordingPath(_audioPath!);
       audioPrepared = ref.read(audioUploadProvider.notifier).prepareAudioFile();
       if (!audioPrepared) {
         print('[VoicePromptScreen] Audio file preparation/validation failed.');
-        // Error should already be set by the provider
         return;
       }
-      audioUploadModel =
-          ref.read(audioUploadProvider); // Get the prepared model
+      audioUploadModel = ref.read(audioUploadProvider);
       if (audioUploadModel == null) {
         print('[VoicePromptScreen] Error: Audio prepared but model is null.');
         errorNotifier
@@ -327,33 +310,25 @@ class _VoicePromptScreenState extends ConsumerState<VoicePromptScreen> {
       }
     } else {
       print('[VoicePromptScreen] No audio recording found or needed.');
-      // If audio is optional and not recorded, ensure it's removed from user model before saving profile
-      userNotifier
-          .updateAudioPrompt(null); // Clear audio prompt if none was recorded
+      userNotifier.updateAudioPrompt(null);
     }
-    // --- End Audio Prep ---
 
     setState(() => _isSaving = true);
 
     try {
-      // 3. Upload Audio (if prepared)
-      bool audioUploadedSuccessfully =
-          true; // Assume success if no audio needed
+      bool audioUploadedSuccessfully = true;
       if (audioNeedsUpload && audioPrepared && audioUploadModel != null) {
         print('[VoicePromptScreen] Audio model exists, attempting upload...');
-        // The upload provider now updates the user model internally on success
         audioUploadedSuccessfully = await ref
             .read(audioUploadProvider.notifier)
             .uploadAudioAndSaveToProfile();
         if (!audioUploadedSuccessfully) {
           print('[VoicePromptScreen] Audio upload failed.');
-          // Error should be set by upload provider
           setState(() => _isSaving = false);
           return;
         }
         print('[VoicePromptScreen] Audio upload successful.');
       } else if (audioNeedsUpload && !audioPrepared) {
-        // This case should ideally be caught earlier by prepareAudioFile return value
         print(
             '[VoicePromptScreen] Error: Audio needed upload but was not prepared.');
         errorNotifier.setError(
@@ -364,13 +339,10 @@ class _VoicePromptScreenState extends ConsumerState<VoicePromptScreen> {
         print('[VoicePromptScreen] No audio to upload.');
       }
 
-      // 4. Prepare Main Profile Data (user model is already updated by upload provider if needed)
-      final userModel =
-          ref.read(userProvider); // Read the potentially updated user model
+      final userModel = ref.read(userProvider);
       final profileData = userModel.toJsonForProfileUpdate();
       print('[VoicePromptScreen] Profile data prepared for API: $profileData');
 
-      // 5. Call Repository to Save Profile Details
       final userRepository = ref.read(userRepositoryProvider);
       print(
           '[VoicePromptScreen] Calling userRepository.updateProfileDetails...');
@@ -379,30 +351,23 @@ class _VoicePromptScreenState extends ConsumerState<VoicePromptScreen> {
 
       if (profileSaved) {
         print('[VoicePromptScreen] Profile details saved successfully.');
-        // 6. Update Auth Status and Navigate Home
         final finalStatus =
             await authNotifier.checkAuthStatus(updateState: true);
         if (mounted) {
           print(
-              '[VoicePromptScreen] Navigating to HomeScreen (Home Feed). Status: $finalStatus');
-          // Navigate to home
+              '[VoicePromptScreen] Navigating to MainNavigationScreen. Status: $finalStatus');
+          // FIXED NAVIGATION: Navigate to MainNavigationScreen
           Navigator.of(context).pushAndRemoveUntil(
-            MaterialPageRoute(
-                builder: (_) => const HomeScreen(
-                    initialFeedType: FeedType
-                        .home)), // Assuming home feed after profile completion
+            MaterialPageRoute(builder: (_) => const MainNavigationScreen()),
             (route) => false,
           );
         }
       } else {
         print(
             '[VoicePromptScreen] Profile details save failed (API returned false).');
-        if (mounted) {
-          // Check if error provider already has a more specific error from API
-          if (ref.read(errorProvider) == null) {
-            errorNotifier.setError(
-                AppError.server("Failed to save profile. Please try again."));
-          }
+        if (mounted && ref.read(errorProvider) == null) {
+          errorNotifier.setError(
+              AppError.server("Failed to save profile. Please try again."));
         }
       }
     } on ApiException catch (e) {
@@ -421,12 +386,12 @@ class _VoicePromptScreenState extends ConsumerState<VoicePromptScreen> {
     }
   }
 
+  // ... (build method remains the same) ...
   @override
   Widget build(BuildContext context) {
     final selectedPrompt =
         ref.watch(audioUploadProvider.notifier).selectedPrompt;
     final errorState = ref.watch(errorProvider);
-    // Use user provider to check if audio prompt is already set
     final existingAudioPrompt = ref.watch(userProvider).audioPrompt;
     final bool canSave = selectedPrompt != null &&
         (_audioPath != null || existingAudioPrompt != null);
@@ -443,13 +408,13 @@ class _VoicePromptScreenState extends ConsumerState<VoicePromptScreen> {
               Row(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: List.generate(
-                    3, // Assuming this is the last step of onboarding part 2
+                    3,
                     (index) => Container(
                           margin: const EdgeInsets.symmetric(horizontal: 4),
                           height: 10,
                           width: 10,
                           decoration: BoxDecoration(
-                            color: index < 2 // Example logic
+                            color: index < 2
                                 ? Colors.grey[300]
                                 : const Color(0xFF8b5cf6),
                             shape: BoxShape.circle,
@@ -521,8 +486,7 @@ class _VoicePromptScreenState extends ConsumerState<VoicePromptScreen> {
               const SizedBox(height: 24),
               Expanded(
                 child: GestureDetector(
-                  onTap:
-                      _isRecording ? null : _startRecording, // Allow starting
+                  onTap: _isRecording ? null : _startRecording,
                   child: Container(
                     width: double.infinity,
                     padding: const EdgeInsets.all(24),
@@ -556,9 +520,8 @@ class _VoicePromptScreenState extends ConsumerState<VoicePromptScreen> {
                         ),
                         const Spacer(),
                         GestureDetector(
-                          onTap: _isRecording
-                              ? _stopRecording
-                              : _startRecording, // Allow stopping too
+                          onTap:
+                              _isRecording ? _stopRecording : _startRecording,
                           child: Container(
                             padding: const EdgeInsets.all(24),
                             decoration: BoxDecoration(
@@ -588,25 +551,23 @@ class _VoicePromptScreenState extends ConsumerState<VoicePromptScreen> {
                         ),
                         const Spacer(),
                         if (_audioPath != null &&
-                            File(_audioPath!).existsSync()) // Check exists
+                            File(_audioPath!).existsSync())
                           TextButton.icon(
                             onPressed: _playRecording,
                             style: TextButton.styleFrom(
                               foregroundColor: const Color(0xFF8b5cf6),
                             ),
                             icon: Icon(_isPlaying
-                                ? Icons.pause_rounded // Changed to pause icon
+                                ? Icons.pause_rounded
                                 : Icons.play_arrow_rounded),
                             label: Text(
-                              _isPlaying
-                                  ? 'Pause'
-                                  : 'Play recording', // Changed label
+                              _isPlaying ? 'Pause' : 'Play recording',
                               style: GoogleFonts.poppins(
                                   fontSize: 16, fontWeight: FontWeight.w500),
                             ),
                           )
                         else
-                          const SizedBox(height: 48), // Keep placeholder space
+                          const SizedBox(height: 48),
                       ],
                     ),
                   ),
@@ -651,14 +612,13 @@ class _VoicePromptScreenState extends ConsumerState<VoicePromptScreen> {
   @override
   void dispose() {
     print("[VoicePromptScreen] Disposing screen...");
-    _recordingTimer?.cancel(); // Cancel timer on dispose
+    _recordingTimer?.cancel();
     try {
       _audioRecorder.dispose();
     } catch (e) {
       print("Error disposing recorder: $e");
     }
     try {
-      // Stop player if playing before dispose
       if (_audioPlayer.state == PlayerState.playing ||
           _audioPlayer.state == PlayerState.paused) {
         _audioPlayer.stop();

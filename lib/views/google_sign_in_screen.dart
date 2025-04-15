@@ -1,56 +1,62 @@
-// File: views/google_sign_in_screen.dart
 import 'package:dtx/providers/auth_provider.dart';
 import 'package:dtx/providers/error_provider.dart';
-import 'package:dtx/utils/app_enums.dart'; // *** ADDED: Import FeedType ***
-import 'package:dtx/views/home.dart';
+import 'package:dtx/providers/feed_provider.dart'; // Import FeedProvider
+import 'package:dtx/providers/filter_provider.dart'; // Import FilterProvider
 import 'package:dtx/views/location.dart';
-import 'package:dtx/views/name.dart';
+import 'package:dtx/views/main_navigation_screen.dart'; // Import MainNavigationScreen
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:dtx/models/auth_model.dart';
+// Removed FeedType import
+// Removed Home import
+// Removed NameInputScreen import
 
 class GoogleSignInScreen extends ConsumerWidget {
   const GoogleSignInScreen({super.key});
+
+  void _initiateEarlyFetches(WidgetRef ref) {
+    print(
+        "[GoogleSignInScreen] Initiating early data fetches (Filters, HomeFeed).");
+    // Don't await, let them run in background
+    ref.read(filterProvider.notifier).loadFilters();
+    ref.read(feedProvider.notifier).fetchFeed();
+  }
 
   Future<void> _handleSignIn(BuildContext context, WidgetRef ref) async {
     final status = await ref.read(authProvider.notifier).signInWithGoogle();
     if (!context.mounted) return;
 
-    // --- FIX: Pass initialFeedType to HomeScreen ---
     Widget destination;
     switch (status) {
       case AuthStatus.home:
-        destination =
-            const HomeScreen(initialFeedType: FeedType.home); // Pass home
+      case AuthStatus.onboarding2: // Both go to main screen now
+        print('[GoogleSignInScreen] Navigating to MainNavigationScreen');
+        _initiateEarlyFetches(ref); // Start loading data
+        destination = const MainNavigationScreen();
         break;
       case AuthStatus.onboarding1:
+        print('[GoogleSignInScreen] Navigating to LocationInputScreen');
         destination = const LocationInputScreen();
-        break;
-      case AuthStatus.onboarding2:
-        // If logic dictates going straight to quick feed after step 1:
-        destination =
-            const HomeScreen(initialFeedType: FeedType.quick); // Pass quick
-        // If logic dictates going to step 2 screens first:
-        // destination = const NameInputScreen();
         break;
       case AuthStatus.login:
       case AuthStatus.unknown:
-        // Default case removed as it's unreachable if all AuthStatus values are handled
-        // default:
-        // Stay on this screen, error provider handles message
-        return; // Don't navigate if sign-in failed or status is unexpected login/unknown
+      default:
+        // Stay on this screen if sign-in failed or status is unexpected
+        print(
+            '[GoogleSignInScreen] Sign in failed or status unknown/login. Staying on screen.');
+        return;
     }
+    // Use pushReplacement to prevent going back to the sign-in screen
     Navigator.pushReplacement(
       context,
       MaterialPageRoute(builder: (context) => destination),
     );
-    // --- END FIX ---
   }
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    // ... (rest of build method likely okay, ensure GoogleFonts import) ...
+    // Build method remains largely the same, only navigation logic changed
     final authState = ref.watch(authProvider);
     final errorState = ref.watch(errorProvider);
     final screenSize = MediaQuery.of(context).size;
@@ -100,7 +106,6 @@ class GoogleSignInScreen extends ConsumerWidget {
                     const CircularProgressIndicator(color: Colors.white)
                   else
                     ElevatedButton.icon(
-                      // Ensure you have 'assets/google_logo.png' or handle missing asset
                       icon: Image.asset('assets/google_logo.png',
                           height: 24.0,
                           errorBuilder: (context, error, stackTrace) =>
