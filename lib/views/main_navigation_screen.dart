@@ -1,3 +1,4 @@
+// File: lib/views/main_navigation_screen.dart
 import 'package:dtx/providers/recieved_likes_provider.dart';
 import 'package:dtx/providers/user_provider.dart';
 import 'package:dtx/views/chat_screen.dart';
@@ -17,40 +18,56 @@ class MainNavigationScreen extends ConsumerStatefulWidget {
 }
 
 class _MainNavigationScreenState extends ConsumerState<MainNavigationScreen> {
-  int _selectedIndex = 0; // Default to Home Feed (index 0)
+  int _selectedIndex = 0;
 
-  // Define the pages corresponding to the navigation items
   static const List<Widget> _widgetOptions = <Widget>[
-    HomeScreen(), // Home Feed Tab (index 0)
-    WhoLikedYouScreen(), // Likes Tab (index 1)
-    ChatPlaceholderScreen(), // Chat Tab (index 2)
-    ProfileScreen(), // Profile Tab (index 3)
+    HomeScreen(),
+    WhoLikedYouScreen(),
+    ChatPlaceholderScreen(),
+    ProfileScreen(),
   ];
 
   void _onItemTapped(int index) {
     setState(() {
       _selectedIndex = index;
     });
-    // Optionally trigger fetches when a tab is selected for the first time
-    // or if data is considered stale, but initial load is handled in initState.
   }
 
   @override
   void initState() {
     super.initState();
-    // Initiate later data loads when MainNavigationScreen is first built
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      print("[MainNavigationScreen] Initiating Likes and Profile fetches.");
-      // Check if fetches are already in progress or data exists to avoid redundant calls
-      if (ref.read(receivedLikesProvider).fullProfiles.isEmpty &&
-          ref.read(receivedLikesProvider).otherLikers.isEmpty &&
-          !ref.read(receivedLikesProvider).isLoading) {
+      print(
+          "[MainNavigationScreen] Post-frame callback: Initiating Likes and Profile fetches if needed.");
+
+      // --- Simplified Fetch Logic ---
+      // Fetch Likes only if data is empty (initial load)
+      final likesState = ref.read(receivedLikesProvider);
+      if (likesState.fullProfiles.isEmpty && likesState.otherLikers.isEmpty) {
+        print(
+            "[MainNavigationScreen] Likes data is empty, calling fetchLikes.");
+        // We don't check isLoading here, let the notifier handle it if needed.
+        // Adding a direct read+call might be slightly risky if the user switches tabs
+        // VERY fast, but generally okay for initial load. A safer pattern might
+        // involve listening or using FutureProvider if concurrent calls are a major concern.
         ref.read(receivedLikesProvider.notifier).fetchLikes();
+      } else {
+        print(
+            "[MainNavigationScreen] Likes data already present, skipping fetchLikes call.");
       }
-      if (ref.read(userProvider).name == null &&
-          !ref.read(userLoadingProvider)) {
+
+      // Fetch Profile only if data is missing (initial load)
+      final userState = ref.read(userProvider);
+      if (userState.name == null) {
+        print(
+            "[MainNavigationScreen] User profile data is empty, calling fetchProfile.");
+        // Same note as above regarding potential concurrency.
         ref.read(userProvider.notifier).fetchProfile();
+      } else {
+        print(
+            "[MainNavigationScreen] User profile data already present, skipping fetchProfile call.");
       }
+      // --- End Simplified Fetch Logic ---
     });
   }
 
@@ -58,9 +75,7 @@ class _MainNavigationScreenState extends ConsumerState<MainNavigationScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       body: Center(
-        // Display the selected page
         child: IndexedStack(
-          // Use IndexedStack to keep state of pages
           index: _selectedIndex,
           children: _widgetOptions,
         ),
@@ -89,13 +104,13 @@ class _MainNavigationScreenState extends ConsumerState<MainNavigationScreen> {
           ),
         ],
         currentIndex: _selectedIndex,
-        selectedItemColor: const Color(0xFF8B5CF6), // Theme color for selected
-        unselectedItemColor: Colors.grey[600], // Grey for unselected
+        selectedItemColor: const Color(0xFF8B5CF6),
+        unselectedItemColor: Colors.grey[600],
         onTap: _onItemTapped,
-        type: BottomNavigationBarType.fixed, // Ensures all items are visible
-        showUnselectedLabels: true, // Show labels for unselected items
-        backgroundColor: Colors.white, // Background color of the bar
-        elevation: 5.0, // Add some shadow
+        type: BottomNavigationBarType.fixed,
+        showUnselectedLabels: true,
+        backgroundColor: Colors.white,
+        elevation: 5.0,
         selectedLabelStyle:
             GoogleFonts.poppins(fontSize: 12, fontWeight: FontWeight.w500),
         unselectedLabelStyle: GoogleFonts.poppins(fontSize: 12),

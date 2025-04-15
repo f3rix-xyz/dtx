@@ -20,13 +20,10 @@ class _WhoLikedYouScreenState extends ConsumerState<WhoLikedYouScreen> {
   @override
   void initState() {
     super.initState();
-    // Fetching is now initiated in MainNavigationScreen initState
-    // WidgetsBinding.instance.addPostFrameCallback((_) {
-    //   print("[WhoLikedYouScreen] Initial fetch triggered.");
-    //   ref.read(receivedLikesProvider.notifier).fetchLikes();
-    // });
+    // Fetching is initiated in MainNavigationScreen initState now
   }
 
+  // _navigateToLikerProfile remains the same...
   void _navigateToLikerProfile(int likerUserId) {
     print(
         "[WhoLikedYouScreen] Navigating to profile for liker ID: $likerUserId");
@@ -42,39 +39,38 @@ class _WhoLikedYouScreenState extends ConsumerState<WhoLikedYouScreen> {
   @override
   Widget build(BuildContext context) {
     final state = ref.watch(receivedLikesProvider);
-    // Watch general errors *as well*, but prioritize state.error
+    // Error watching remains the same
     final generalError = ref.watch(errorProvider);
     final displayError = state.error ?? generalError;
 
     return Scaffold(
       backgroundColor: Colors.grey[50],
       appBar: AppBar(
-        title: Text(
-          "Likes You've Received",
-          style: GoogleFonts.poppins(fontWeight: FontWeight.w600),
-        ),
+        title: Text("Likes You've Received",
+            style: GoogleFonts.poppins(fontWeight: FontWeight.w600)),
         elevation: 1,
         backgroundColor: Colors.white,
         foregroundColor: Colors.black,
-        automaticallyImplyLeading: false, // No back button in a tab screen
+        automaticallyImplyLeading: false,
       ),
       body: RefreshIndicator(
         color: const Color(0xFF8B5CF6),
-        onRefresh: () => ref.read(receivedLikesProvider.notifier).fetchLikes(),
-        // Add Loading Check Here
-        child: state.isLoading &&
-                state.fullProfiles.isEmpty &&
-                state.otherLikers.isEmpty
+        onRefresh: () async {
+          // Clear previous error before refresh if needed
+          ref.read(errorProvider.notifier).clearError();
+          await ref.read(receivedLikesProvider.notifier).fetchLikes();
+        },
+        // *** Check isLoading state from the provider ***
+        child: state.isLoading // Check the provider's loading state directly
             ? const Center(
                 child: CircularProgressIndicator(color: Color(0xFF8B5CF6)))
-            : _buildBody(state, displayError), // Pass combined error
+            : _buildBody(state, displayError), // Pass state and combined error
       ),
     );
   }
 
+  // _buildBody should now assume isLoading is false when called
   Widget _buildBody(ReceivedLikesState state, AppError? error) {
-    // Loading is handled before calling _buildBody now
-
     if (error != null) {
       return _buildErrorState(error.message);
     }
@@ -83,10 +79,9 @@ class _WhoLikedYouScreenState extends ConsumerState<WhoLikedYouScreen> {
       return _buildEmptyState();
     }
 
-    // CustomScrollView remains the same
+    // CustomScrollView structure remains the same
     return CustomScrollView(
       slivers: [
-        // Section Header for Full Profiles
         if (state.fullProfiles.isNotEmpty)
           SliverToBoxAdapter(
             child: Padding(
@@ -101,8 +96,6 @@ class _WhoLikedYouScreenState extends ConsumerState<WhoLikedYouScreen> {
               ),
             ),
           ),
-
-        // Grid for Full Profiles
         if (state.fullProfiles.isNotEmpty)
           SliverPadding(
             padding: const EdgeInsets.symmetric(horizontal: 16),
@@ -125,8 +118,6 @@ class _WhoLikedYouScreenState extends ConsumerState<WhoLikedYouScreen> {
               ),
             ),
           ),
-
-        // Section Header for Other Likers
         if (state.otherLikers.isNotEmpty)
           SliverToBoxAdapter(
             child: Padding(
@@ -142,8 +133,6 @@ class _WhoLikedYouScreenState extends ConsumerState<WhoLikedYouScreen> {
               ),
             ),
           ),
-
-        // List for Other Likers
         if (state.otherLikers.isNotEmpty)
           SliverPadding(
             padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
