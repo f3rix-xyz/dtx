@@ -3,6 +3,7 @@ import 'dart:math';
 import 'package:dtx/models/user_model.dart';
 import 'package:dtx/models/like_models.dart';
 import 'package:dtx/providers/audio_player_provider.dart'; // Ensure this is imported
+// Removed auth provider/model imports from here - check should be in HomeScreen
 import 'package:dtx/utils/app_enums.dart';
 import 'package:dtx/providers/user_provider.dart'; // Needed for gender check
 import 'package:flutter/material.dart';
@@ -34,46 +35,93 @@ class HomeProfileCard extends ConsumerWidget {
   // --- METHOD TO SHOW INTERACTION DIALOG ---
   Future<void> _showInteractionDialog(
     BuildContext context,
-    WidgetRef ref,
+    WidgetRef ref, // Keep ref for gender check etc.
     ContentLikeType contentType,
     String contentIdentifier,
     String? previewImageUrl,
   ) async {
+    // --- No Auth Status Check HERE ---
+    // The check is now done in HomeScreen's _callLikeRepository callback
+
+    // --- Variables with late final and FocusNode ---
     final currentUserGender = ref.read(userProvider).gender;
     final isMale = currentUserGender == Gender.man;
-    final commentController = TextEditingController();
-    final sendLikeEnabledNotifier = ValueNotifier<bool>(!isMale);
+    // Use late final to ensure they are initialized before use within showDialog
+    // Introduce a FocusNode
+    final FocusNode commentFocusNode = FocusNode();
+    late final TextEditingController commentController;
+    late final ValueNotifier<bool> sendLikeEnabledNotifier;
+    VoidCallback? listenerCallback;
 
+    // Initialize controllers immediately before showDialog
+    commentController = TextEditingController();
+    sendLikeEnabledNotifier = ValueNotifier<bool>(!isMale);
+
+    // --- Only add listener if male ---
     if (isMale) {
-      commentController.addListener(() {
-        // Check mounted before accessing notifier state inside listener
+      listenerCallback = () {
+        // Check mounted *inside* listener to be safe
         if (context.mounted) {
-          sendLikeEnabledNotifier.value =
-              commentController.text.trim().isNotEmpty;
+          try {
+            // Check if controller/notifier are still valid
+            if (commentController.text.trim().isNotEmpty !=
+                sendLikeEnabledNotifier.value) {
+              sendLikeEnabledNotifier.value =
+                  commentController.text.trim().isNotEmpty;
+            }
+          } catch (e) {
+            // This catch block handles the case where the controller might be disposed
+            // during the listener callback execution (less likely now but good practice).
+            print("Error accessing controller/notifier in listener: $e");
+          }
         }
-      });
+      };
+      // Use null assertion operator (!) as we are sure it's assigned here
+      commentController.addListener(listenerCallback!);
     }
+    // --- End listener addition ---
 
     Future<void> _handleInteraction(LikeInteractionType interactionType) async {
-      final comment = commentController.text.trim();
-      // Ensure context is still valid before popping
-      if (context.mounted) {
-        Navigator.of(context).pop();
+      String comment = "";
+      try {
+        comment = commentController.text.trim();
+      } catch (e) {
+        print("Error reading commentController text: $e");
+        // Optionally return or show error if controller is already disposed
+        return;
       }
+
+      // --- FIX: Unfocus before calling API/Popping ---
+      // Use the FocusNode created earlier
+      commentFocusNode.unfocus();
+      // Give a very brief moment for unfocus to process before proceeding
+      await Future.delayed(const Duration(milliseconds: 50));
+      // --- END FIX ---
+
+      // --- Call the callback FIRST ---
       bool success = await performLikeApiCall(
         contentType: contentType,
         contentIdentifier: contentIdentifier,
         interactionType: interactionType,
         comment: comment.isNotEmpty ? comment : null,
       );
-      if (success) {
+
+      // --- Pop the dialog ONLY if the interaction was successful ---
+      if (success && context.mounted) {
+        try {
+          Navigator.of(context, rootNavigator: true).pop();
+        } catch (e) {
+          print("Error popping dialog: $e");
+          if (context.mounted) Navigator.of(context).pop();
+        }
         onInteractionComplete();
       }
+      // If !success, the dialog remains open. HomeScreen handles other dialogs/errors.
     }
 
     await showDialog<void>(
       context: context,
-      barrierDismissible: true,
+      barrierDismissible: true, // Allow dismissing by tapping outside
       builder: (BuildContext dialogContext) {
         // Use a different context name inside builder
         return AlertDialog(
@@ -81,11 +129,11 @@ class HomeProfileCard extends ConsumerWidget {
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(20.0),
           ),
-          // *** Wrap content in a SizedBox to provide a constraint ***
           content: SizedBox(
-            width: MediaQuery.of(dialogContext).size.width *
-                0.8, // Constrain width
+            // Constrain width
+            width: MediaQuery.of(dialogContext).size.width * 0.8,
             child: SingleChildScrollView(
+              // Make content scrollable if needed
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
@@ -109,7 +157,7 @@ class HomeProfileCard extends ConsumerWidget {
                       contentType == ContentLikeType.audioPrompt)
                     Container(
                       height: 100,
-                      width: double.infinity, // Ensure it takes width
+                      width: double.infinity,
                       decoration: BoxDecoration(
                         color: Colors.grey[100],
                         borderRadius: BorderRadius.circular(12.0),
@@ -122,7 +170,7 @@ class HomeProfileCard extends ConsumerWidget {
                       contentType != ContentLikeType.audioPrompt)
                     Container(
                       height: 100,
-                      width: double.infinity, // Ensure it takes width
+                      width: double.infinity,
                       decoration: BoxDecoration(
                         color: Colors.grey[100],
                         borderRadius: BorderRadius.circular(12.0),
@@ -134,9 +182,10 @@ class HomeProfileCard extends ConsumerWidget {
 
                   const SizedBox(height: 16),
 
-                  // Comment Text Field
+                  // Comment Text Field with FocusNode
                   TextField(
                     controller: commentController,
+                    focusNode: commentFocusNode, // Assign the focus node
                     decoration: InputDecoration(
                       hintText: "Add a comment...",
                       border: OutlineInputBorder(
@@ -158,9 +207,7 @@ class HomeProfileCard extends ConsumerWidget {
                   const SizedBox(height: 16),
 
                   // Action Buttons Row
-                  // *** REMOVED Expanded widgets ***
                   Row(
-                    // Changed from spaceBetween to spaceEvenly for better spacing without Expanded
                     mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                     children: [
                       // Send Rose Button
@@ -172,9 +219,8 @@ class HomeProfileCard extends ConsumerWidget {
                           style: GoogleFonts.poppins(
                               fontWeight: FontWeight.w500,
                               color: Colors.purple.shade400,
-                              fontSize: 13 // Adjust font size if needed
-                              ),
-                          overflow: TextOverflow.ellipsis, // Prevent overflow
+                              fontSize: 13),
+                          overflow: TextOverflow.ellipsis,
                         ),
                         style: OutlinedButton.styleFrom(
                           foregroundColor: Colors.purple.shade400,
@@ -183,7 +229,7 @@ class HomeProfileCard extends ConsumerWidget {
                             borderRadius: BorderRadius.circular(25),
                           ),
                           padding: const EdgeInsets.symmetric(
-                              vertical: 10, horizontal: 12), // Adjust padding
+                              vertical: 10, horizontal: 12),
                         ),
                         onPressed: () =>
                             _handleInteraction(LikeInteractionType.rose),
@@ -198,7 +244,7 @@ class HomeProfileCard extends ConsumerWidget {
                               color: isEnabled
                                   ? Colors.white
                                   : Colors.grey.shade400,
-                              size: 18, // Adjust size
+                              size: 18,
                             ),
                             label: Text(
                               "Send Like",
@@ -207,10 +253,8 @@ class HomeProfileCard extends ConsumerWidget {
                                   color: isEnabled
                                       ? Colors.white
                                       : Colors.grey.shade500,
-                                  fontSize: 13 // Adjust font size if needed
-                                  ),
-                              overflow:
-                                  TextOverflow.ellipsis, // Prevent overflow
+                                  fontSize: 13),
+                              overflow: TextOverflow.ellipsis,
                             ),
                             style: ElevatedButton.styleFrom(
                               backgroundColor: isEnabled
@@ -221,8 +265,7 @@ class HomeProfileCard extends ConsumerWidget {
                                 borderRadius: BorderRadius.circular(25),
                               ),
                               padding: const EdgeInsets.symmetric(
-                                  vertical: 10,
-                                  horizontal: 12), // Adjust padding
+                                  vertical: 10, horizontal: 12),
                               elevation: isEnabled ? 2 : 0,
                             ),
                             onPressed: isEnabled
@@ -234,7 +277,6 @@ class HomeProfileCard extends ConsumerWidget {
                       ),
                     ],
                   ),
-
                   // Cancel Button
                   TextButton(
                     child: Text("Cancel",
@@ -248,21 +290,24 @@ class HomeProfileCard extends ConsumerWidget {
         );
       },
     ).whenComplete(() {
-      if (isMale) {
+      // --- Disposal Logic ---
+      // Always try to remove listener if it was potentially added
+      if (listenerCallback != null) {
         try {
-          commentController.removeListener(() {});
+          commentController.removeListener(listenerCallback!);
+          listenerCallback = null;
         } catch (e) {}
       }
+      // Always dispose controllers/notifiers/focus node safely
       try {
         sendLikeEnabledNotifier.dispose();
-      } catch (e) {
-        print("Error disposing sendLikeEnabledNotifier: $e");
-      }
+      } catch (e) {}
       try {
         commentController.dispose();
-      } catch (e) {
-        print("Error disposing commentController: $e");
-      }
+      } catch (e) {}
+      try {
+        commentFocusNode.dispose();
+      } catch (e) {} // Dispose the focus node
     });
   }
   // --- END INTERACTION DIALOG METHOD ---
@@ -339,7 +384,7 @@ class HomeProfileCard extends ConsumerWidget {
     );
   }
 
-  // --- Block Builder Widgets ---
+  // --- Block Builder Widgets (remain the same) ---
   Widget _buildHeaderBlock(UserModel profile) {
     final age = profile.age;
     return Column(
@@ -453,7 +498,6 @@ class HomeProfileCard extends ConsumerWidget {
     );
   }
 
-  // --- Item Builders ---
   Widget _buildMediaItem(
       BuildContext context, WidgetRef ref, String url, int index) {
     return ClipRRect(
@@ -482,9 +526,10 @@ class HomeProfileCard extends ConsumerWidget {
               Positioned(
                   bottom: 10,
                   right: 10,
-                  child: _buildSmallLikeButton(() => _showInteractionDialog(
-                        context,
-                        ref,
+                  child: _buildSmallLikeButton(() => // Pass context/ref here
+                      _showInteractionDialog(
+                        context, // Use context from builder
+                        ref, // Use ref from builder
                         ContentLikeType.media,
                         index.toString(), // Use index as identifier for media
                         url,
@@ -497,6 +542,8 @@ class HomeProfileCard extends ConsumerWidget {
   }
 
   Widget _buildPromptItem(BuildContext context, WidgetRef ref, Prompt prompt) {
+    if (prompt.answer.trim().isEmpty)
+      return const SizedBox.shrink(); // Check if prompt answer is empty
     return Container(
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
@@ -531,9 +578,10 @@ class HomeProfileCard extends ConsumerWidget {
             ),
           ),
           const SizedBox(width: 12),
-          _buildSmallLikeButton(() => _showInteractionDialog(
-                context,
-                ref,
+          _buildSmallLikeButton(() => // Pass context/ref here
+              _showInteractionDialog(
+                context, // Use context from builder
+                ref, // Use ref from builder
                 prompt.category.contentType, // Use correct ContentLikeType
                 prompt.question.value, // Use question value as identifier
                 null,
@@ -545,21 +593,15 @@ class HomeProfileCard extends ConsumerWidget {
 
   Widget _buildAudioItem(
       BuildContext context, WidgetRef ref, AudioPromptModel audio) {
-    // --- WATCH THE STATE PROVIDER (like ProfileScreen) ---
     final audioState = ref.watch(audioPlayerStateProvider);
-    // --- END WATCH ---
     final currentPlayerUrl = ref.watch(currentAudioUrlProvider);
-
-    // --- Derive booleans (like ProfileScreen) ---
     final bool isThisPlaying = currentPlayerUrl == audio.audioUrl &&
         audioState == AudioPlayerState.playing;
     final bool isThisLoading = currentPlayerUrl == audio.audioUrl &&
         audioState == AudioPlayerState.loading;
     final bool isThisPaused = currentPlayerUrl == audio.audioUrl &&
         audioState == AudioPlayerState.paused;
-    // --- End Derive booleans ---
 
-    // Build the UI structure similar to ProfileScreen
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
@@ -574,10 +616,8 @@ class HomeProfileCard extends ConsumerWidget {
           ]),
       child: Row(
         children: [
-          // Play/Pause Button
           InkWell(
             onTap: () {
-              // Use the derived booleans for logic
               if (isThisLoading) return;
               final playerNotifier =
                   ref.read(audioPlayerControllerProvider.notifier);
@@ -603,22 +643,19 @@ class HomeProfileCard extends ConsumerWidget {
                         offset: const Offset(0, 2))
                   ],
                 ),
-                // Use derived booleans for UI state
                 child: isThisLoading
                     ? const Padding(
                         padding: EdgeInsets.all(12.0),
                         child: CircularProgressIndicator(
                             strokeWidth: 2, color: Colors.white))
                     : Icon(
-                        isThisPlaying // Use boolean
+                        isThisPlaying
                             ? Icons.pause_rounded
                             : Icons.play_arrow_rounded,
                         color: Colors.white,
                         size: 28)),
           ),
           const SizedBox(width: 16),
-
-          // Text Column (Prompt Label and Status)
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -630,7 +667,6 @@ class HomeProfileCard extends ConsumerWidget {
                         color: const Color(0xFF1A1A1A))),
                 const SizedBox(height: 4),
                 Text(
-                    // Use derived booleans for status text
                     isThisLoading
                         ? "Loading..."
                         : isThisPlaying
@@ -643,11 +679,11 @@ class HomeProfileCard extends ConsumerWidget {
               ],
             ),
           ),
-          // Like Button
           const SizedBox(width: 16),
-          _buildSmallLikeButton(() => _showInteractionDialog(
-                context,
-                ref,
+          _buildSmallLikeButton(() => // Pass context/ref here
+              _showInteractionDialog(
+                context, // Use context from builder
+                ref, // Use ref from builder
                 ContentLikeType.audioPrompt,
                 audio.prompt.value,
                 null,

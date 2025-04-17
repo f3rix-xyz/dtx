@@ -967,27 +967,40 @@ class AudioPromptModel {
       };
 
   factory AudioPromptModel.fromJson(Map<String, dynamic> json) {
+    // Parse Question (assuming it's always a map)
     final promptValue =
         json['audio_prompt_question']?['AudioPrompt'] as String?;
-    final audioUrlValue = json['audio_prompt_answer']?['String'] as String?;
     final bool isPromptValid =
         json['audio_prompt_question']?['Valid'] as bool? ?? false;
-    final bool isUrlValid =
-        json['audio_prompt_answer']?['Valid'] as bool? ?? false;
 
-    if (!isPromptValid ||
-        !isUrlValid ||
-        promptValue == null ||
-        audioUrlValue == null) {
+    if (!isPromptValid || promptValue == null) {
       throw const FormatException(
-          'Invalid or missing audio prompt data in JSON');
+          'Invalid or missing audio prompt question data in JSON');
     }
 
     AudioPrompt prompt = AudioPrompt.values
         .firstWhere((e) => e.value == promptValue, orElse: () {
-      print("Warning: Unknown audio prompt '$promptValue', defaulting.");
+      print(
+          "Warning: Unknown audio prompt '$promptValue', defaulting to aBoundaryOfMineIs.");
       return AudioPrompt.aBoundaryOfMineIs;
     });
+
+    // Parse Answer (handle both String and Map)
+    String? audioUrlValue;
+    dynamic answerField = json['audio_prompt_answer'];
+
+    if (answerField is String) {
+      audioUrlValue = answerField;
+    } else if (answerField is Map) {
+      if (answerField['Valid'] == true && answerField['String'] is String) {
+        audioUrlValue = answerField['String'] as String;
+      }
+    }
+
+    if (audioUrlValue == null || audioUrlValue.isEmpty) {
+      throw const FormatException(
+          'Invalid or missing audio prompt answer data in JSON');
+    }
 
     return AudioPromptModel(
       prompt: prompt,
@@ -1008,7 +1021,7 @@ class UserModel {
   final double? longitude;
   final Gender? gender;
   final DatingIntention? datingIntention;
-  final String? height; // Keep as String for formatted value
+  final String? height;
   final String? hometown;
   final String? jobTitle;
   final String? education;
@@ -1079,7 +1092,7 @@ class UserModel {
         'longitude': longitude,
         'gender': gender?.value,
         'dating_intention': datingIntention?.value,
-        'height': height, // Send formatted string back if needed
+        'height': height,
         'hometown': hometown,
         'job_title': jobTitle,
         'education': education,
@@ -1100,11 +1113,8 @@ class UserModel {
       return "${dt.year}-${dt.month.toString().padLeft(2, '0')}-${dt.day.toString().padLeft(2, '0')}";
     }
 
-    // Height might need conversion back to number/specific format if backend expects it
     String? formattedHeight(String? h) {
-      // Example: Convert "5' 10\"" back to inches or cm if needed
-      // Or just send the string if backend accepts it
-      return h?.replaceAll("' ", "'"); // Basic cleanup
+      return h?.replaceAll("' ", "'");
     }
 
     final Map<String, dynamic> data = {};
@@ -1123,8 +1133,6 @@ class UserModel {
     if (smokingHabit != null) data['smoking_habit'] = smokingHabit!.value;
     if (prompts.isNotEmpty)
       data['prompts'] = prompts.map((p) => p.toJson()).toList();
-    // Audio prompt is updated separately
-
     return data;
   }
 
@@ -1208,8 +1216,7 @@ class UserModel {
             print("Error accessing '.value' for enum ${T.toString()}: $e");
           }
         }
-        print(
-            "Warning: Enum value '$valueStr' not found in ${T.toString()}. Returning null.");
+        print("Warning: Enum value '$valueStr' not found in ${T.toString()}.");
         return null;
       }
       return null;
@@ -1224,18 +1231,6 @@ class UserModel {
         return urls.isNotEmpty ? urls : null;
       } else if (field is List<String>) {
         return field.isNotEmpty ? field : null;
-      }
-      return null;
-    }
-
-    AudioPromptModel? getAudioPrompt(Map<String, dynamic> json) {
-      if (json['audio_prompt_question'] is Map &&
-          json['audio_prompt_answer'] is Map) {
-        try {
-          return AudioPromptModel.fromJson(json);
-        } catch (e) {
-          /* print("Error parsing AudioPrompt: $e"); */ return null;
-        }
       }
       return null;
     }
@@ -1257,47 +1252,124 @@ class UserModel {
       return null;
     }
 
-    // --- *** UPDATED getPrompts Helper *** ---
     List<Prompt> getPrompts(Map<String, dynamic> json) {
       List<Prompt> parsedPrompts = [];
-      // **Primary Check:** Look for the unified 'prompts' array first
       if (json['prompts'] is List) {
         final List<dynamic> promptList = json['prompts'];
-        print(
-            "[UserModel fromJson] Parsing prompts from unified 'prompts' field: ${promptList.length} items");
         for (var promptData in promptList) {
           if (promptData is Map<String, dynamic>) {
             try {
               final parsedPrompt = Prompt.fromJson(promptData);
               if (parsedPrompt.answer.trim().isNotEmpty) {
                 parsedPrompts.add(parsedPrompt);
-              } else {
-                print(
-                    "[UserModel fromJson] Parsed prompt from unified list has empty answer: $promptData");
               }
             } catch (e) {
               print(
-                  "[UserModel fromJson] Error parsing prompt from unified list: $e, data: $promptData");
+                  "[UserModel fromJson] Error parsing prompt: $e, data: $promptData");
             }
-          } else {
-            print(
-                "[UserModel fromJson] Item in unified 'prompts' is not a Map: $promptData");
           }
         }
-        print(
-            "[UserModel fromJson] Finished parsing from unified 'prompts'. Count: ${parsedPrompts.length}");
-      } else {
-        print(
-            "[UserModel fromJson] Unified 'prompts' field not found or not a List.");
-        // Fallback logic removed assuming backend consistency
       }
       return parsedPrompts;
     }
-    // --- *** END UPDATED getPrompts Helper *** ---
+
+    // --- *** REVISED getAudioPrompt Helper with LOGGING *** ---
+    AudioPromptModel? getAudioPrompt(Map<String, dynamic> json, int? userId) {
+      // Added userId for logging
+      final questionData =
+          json['AudioPromptQuestion'] ?? json['audio_prompt_question'];
+      final answerData =
+          json['AudioPromptAnswer'] ?? json['audio_prompt_answer'];
+
+      // --- LOGGING START ---
+      if (userId == 2) {
+        // Log only for the problematic profile ID
+        print("--- [DEBUG getAudioPrompt ID: $userId] ---");
+        print(
+            "Raw Question Data: $questionData (Type: ${questionData?.runtimeType})");
+        print(
+            "Raw Answer Data: $answerData (Type: ${answerData?.runtimeType})");
+      }
+      // --- LOGGING END ---
+
+      // 1. Check Question Validity
+      bool isQuestionValid = questionData is Map &&
+          questionData['Valid'] == true &&
+          questionData['AudioPrompt'] is String &&
+          (questionData['AudioPrompt'] as String)
+              .isNotEmpty; // Ensure prompt value is not empty
+
+      // --- LOGGING ---
+      if (userId == 2) print("isQuestionValid Check Result: $isQuestionValid");
+      // --- LOGGING ---
+
+      if (!isQuestionValid) {
+        if (userId == 2)
+          print(
+              "[DEBUG getAudioPrompt ID: $userId] Returning null due to invalid question.");
+        return null;
+      }
+
+      // 2. Check Answer Validity (String or Valid Map)
+      bool isAnswerValid = false;
+      if (answerData is String && answerData.isNotEmpty) {
+        isAnswerValid = true;
+        if (userId == 2)
+          print(
+              "[DEBUG getAudioPrompt ID: $userId] Answer is a non-empty String.");
+      } else if (answerData is Map &&
+          answerData['Valid'] == true &&
+          answerData['String'] is String &&
+          (answerData['String'] as String).isNotEmpty) {
+        isAnswerValid = true;
+        if (userId == 2)
+          print(
+              "[DEBUG getAudioPrompt ID: $userId] Answer is a valid Map with String.");
+      }
+
+      // --- LOGGING ---
+      if (userId == 2) print("isAnswerValid Check Result: $isAnswerValid");
+      // --- LOGGING ---
+
+      if (!isAnswerValid) {
+        if (userId == 2)
+          print(
+              "[DEBUG getAudioPrompt ID: $userId] Returning null due to invalid answer.");
+        return null;
+      }
+
+      // 3. If BOTH are valid, attempt to create the model
+      if (userId == 2)
+        print(
+            "[DEBUG getAudioPrompt ID: $userId] Both valid. Attempting AudioPromptModel.fromJson...");
+      try {
+        // Pass the original data structures to the flexible factory
+        final model = AudioPromptModel.fromJson({
+          'audio_prompt_question': questionData,
+          'audio_prompt_answer': answerData,
+        });
+        if (userId == 2)
+          print(
+              "[DEBUG getAudioPrompt ID: $userId] AudioPromptModel created successfully.");
+        return model;
+      } catch (e) {
+        print(
+            "[UserModel fromJson getAudioPrompt ID: $userId] Error creating AudioPromptModel: $e");
+        print(" -> Question Data: $questionData");
+        print(" -> Answer Data: $answerData");
+        if (userId == 2)
+          print(
+              "[DEBUG getAudioPrompt ID: $userId] Returning null due to exception.");
+        return null;
+      }
+    }
+    // --- *** END REVISED getAudioPrompt Helper with LOGGING *** ---
 
     // --- Parse using helpers ---
+    final int? currentUserId =
+        getId(json['id'] ?? json['ID']); // Get ID for logging
     final parsedUser = UserModel(
-      id: getId(json['id'] ?? json['ID']), // Check both cases for robustness
+      id: currentUserId, // Use the extracted ID
       name: getString(json['name'] ?? json['Name']),
       lastName: getString(json['last_name'] ?? json['LastName']),
       email: json['email'] as String? ?? json['Email'] as String?,
@@ -1311,8 +1383,7 @@ class UserModel {
           DatingIntention.values,
           json['dating_intention'] ?? json['DatingIntention'],
           'DatingIntention'),
-      height:
-          getHeight(json['height'] ?? json['Height']), // Use specific helper
+      height: getHeight(json['height'] ?? json['Height']),
       hometown: getString(json['hometown'] ?? json['Hometown']),
       jobTitle: getString(json['job_title'] ?? json['JobTitle']),
       education: getString(json['education'] ?? json['Education']),
@@ -1332,22 +1403,21 @@ class UserModel {
       verificationPic:
           getString(json['verification_pic'] ?? json['VerificationPic']),
       role: json['role'] as String? ?? json['Role'] as String?,
-      audioPrompt: getAudioPrompt(json),
-      prompts: getPrompts(json), // Use updated helper
+      audioPrompt: getAudioPrompt(json, currentUserId), // Pass ID to helper
+      prompts: getPrompts(json),
     );
 
-    // --- DEBUGGING Print (keep temporarily) ---
-    print("--- Parsed UserModel (After Prompt Fix v2) ---");
+    // --- Original Debugging Print (Still Useful) ---
+    print("--- Parsed UserModel (Audio Prompt Check - Logging Added) ---");
     print("ID: ${parsedUser.id}");
     print("Name: ${parsedUser.name}");
-    print("Media URLs: ${parsedUser.mediaUrls}");
-    print("Prompts Count: ${parsedUser.prompts.length}"); // Crucial check
-    if (parsedUser.prompts.isNotEmpty) {
-      print("First Prompt Q: ${parsedUser.prompts[0].question.label}");
+    print("Audio Prompt Parsed: ${parsedUser.audioPrompt != null}");
+    if (parsedUser.audioPrompt != null) {
+      print("  -> Question: ${parsedUser.audioPrompt!.prompt.label}");
+      print("  -> URL: ${parsedUser.audioPrompt!.audioUrl}");
     }
-    print("Audio Prompt: ${parsedUser.audioPrompt != null}");
     print("------------------------------------------");
-    // --- END DEBUGGING ---
+    // --- END Debugging ---
 
     return parsedUser;
   }
@@ -7027,7 +7097,7 @@ import 'package:dtx/providers/error_provider.dart';
 import 'package:dtx/providers/feed_provider.dart';
 import 'package:dtx/providers/filter_provider.dart';
 import 'package:dtx/providers/service_provider.dart';
-import 'package:dtx/providers/user_provider.dart';
+import 'package:dtx/providers/user_provider.dart'; // Keep user provider for gender check if needed here (though moved to card)
 import 'package:dtx/services/api_service.dart';
 import 'package:dtx/views/filter_settings_dialog.dart';
 import 'package:dtx/views/name.dart';
@@ -7050,12 +7120,10 @@ class HomeScreen extends ConsumerStatefulWidget {
 
 class _HomeScreenState extends ConsumerState<HomeScreen> {
   List<UserModel> _feedProfiles = [];
-  bool _isInteracting = false;
+  bool _isInteracting = false; // To show overlay during API call
 
-  // --- Unchanged Methods ---
   @override
   void initState() {
-    /* ... */
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       final feedState = ref.read(feedProvider);
@@ -7085,14 +7153,13 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
   }
 
   Future<void> _fetchFeed({bool force = false}) async {
-    /* ... */
     print("[HomeScreen _fetchFeed] Fetching home feed. Force: $force");
     ref.read(errorProvider.notifier).clearError();
     await ref.read(feedProvider.notifier).fetchFeed(forceRefresh: force);
   }
 
+  // Dialog shown if user tries to interact before completing onboarding step 2
   void _showCompleteProfileDialog() {
-    /* ... */
     showDialog(
       context: context,
       barrierDismissible: false,
@@ -7114,6 +7181,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                   style: GoogleFonts.poppins(color: Color(0xFF8B5CF6))),
               onPressed: () {
                 Navigator.of(dialogContext).pop();
+                // Navigate to the first screen of the remaining onboarding flow
                 Navigator.push(context,
                     MaterialPageRoute(builder: (_) => const NameInputScreen()));
               },
@@ -7124,211 +7192,109 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     );
   }
 
+  // Called by HomeProfileCard after a successful interaction
   void _removeTopCard() {
-    /* ... */
     print("[HomeScreen _removeTopCard] Removing top card.");
     if (!mounted) return;
     if (_feedProfiles.isNotEmpty) {
       ref.read(feedProvider.notifier).removeProfile(_feedProfiles[0].id!);
     }
-    _isInteracting = false;
+    // The loading overlay (_isInteracting) is handled in _callLikeRepository
   }
 
-  Future<void> _handleLikeInteraction(
-      {required int targetUserId,
-      required ContentLikeType contentType,
-      required String contentIdentifier,
-      required LikeInteractionType interactionType,
-      String? comment}) async {
-    /* ... */
+  // This method is passed to the card to handle the actual API call
+  // It allows HomeScreen to manage the loading overlay (_isInteracting)
+  Future<bool> _callLikeRepository({
+    required int targetUserId,
+    required ContentLikeType contentType,
+    required String contentIdentifier,
+    required LikeInteractionType interactionType,
+    String? comment,
+  }) async {
+    // Check if profile is complete before allowing interaction
     final authStatus = ref.read(authProvider).authStatus;
     if (authStatus == AuthStatus.onboarding2) {
       print(
-          "[HomeScreen] Interaction blocked: Profile incomplete (onboarding2).");
+          "[HomeScreen _callLikeRepository] Interaction blocked: Profile incomplete (onboarding2).");
       _showCompleteProfileDialog();
-      return;
+      return false; // Indicate failure
     }
-    if (_isInteracting) return;
-    setState(() => _isInteracting = true);
+
+    if (_isInteracting) return false; // Prevent double taps during API call
+    if (mounted) setState(() => _isInteracting = true); // Show overlay
+
     final errorNotifier = ref.read(errorProvider.notifier)..clearError();
     bool success = false;
     try {
       final likeRepo = ref.read(likeRepositoryProvider);
+      print(
+          "[HomeScreen _callLikeRepository] Calling API: Target $targetUserId, Type: $contentType, ID: $contentIdentifier, Interaction: $interactionType, Comment: ${comment != null}");
       success = await likeRepo.likeContent(
           likedUserId: targetUserId,
           contentType: contentType,
           contentIdentifier: contentIdentifier,
           interactionType: interactionType,
           comment: comment);
-      if (success) {
-        _removeTopCard();
-      } else {
-        if (ref.read(errorProvider) == null)
+
+      if (!success) {
+        // If API returns false, check if an error was already set by repo/service
+        if (mounted && ref.read(errorProvider) == null) {
+          print(
+              "[HomeScreen _callLikeRepository] API returned false, setting generic error.");
           errorNotifier.setError(
               AppError.server("Could not send ${interactionType.value}."));
-        if (mounted) setState(() => _isInteracting = false);
+        }
+      } else {
+        print("[HomeScreen _callLikeRepository] API call successful.");
       }
     } on LikeLimitExceededException catch (e) {
+      print("[HomeScreen _callLikeRepository] Like Limit Error: ${e.message}");
       errorNotifier.setError(AppError.validation(e.message));
-      _showErrorSnackbar(e.message);
-      if (mounted) setState(() => _isInteracting = false);
+      _showErrorSnackbar(e.message); // Show specific feedback
     } on InsufficientRosesException catch (e) {
-      errorNotifier.setError(AppError.validation(e.message));
-      _showErrorSnackbar(e.message);
-      if (mounted) setState(() => _isInteracting = false);
-    } on ApiException catch (e) {
-      errorNotifier.setError(AppError.server(e.message));
-      if (mounted) setState(() => _isInteracting = false);
-    } catch (e) {
-      errorNotifier.setError(AppError.generic("An unexpected error occurred."));
-      if (mounted) setState(() => _isInteracting = false);
-    }
-  }
-
-  Future<void> _performDislike(int targetUserId) async {
-    /* ... */
-    final authStatus = ref.read(authProvider).authStatus;
-    if (authStatus == AuthStatus.onboarding2) {
       print(
-          "[HomeScreen] Interaction blocked: Profile incomplete (onboarding2).");
-      _showCompleteProfileDialog();
-      return;
-    }
-    if (_isInteracting) return;
-    setState(() => _isInteracting = true);
-    final errorNotifier = ref.read(errorProvider.notifier)..clearError();
-    bool success = false;
-    try {
-      final likeRepo = ref.read(likeRepositoryProvider);
-      success = await likeRepo.dislikeUser(dislikedUserId: targetUserId);
-      if (success) {
-        _removeTopCard();
-      } else {
-        if (ref.read(errorProvider) == null)
-          errorNotifier.setError(AppError.server("Could not dislike profile."));
-        if (mounted) setState(() => _isInteracting = false);
-      }
+          "[HomeScreen _callLikeRepository] Insufficient Roses: ${e.message}");
+      errorNotifier.setError(AppError.validation(e.message));
+      _showErrorSnackbar(e.message); // Show specific feedback
     } on ApiException catch (e) {
+      print("[HomeScreen _callLikeRepository] API Exception: ${e.message}");
       errorNotifier.setError(AppError.server(e.message));
-      if (mounted) setState(() => _isInteracting = false);
+      _showErrorSnackbar(e.message); // Show API error message
     } catch (e) {
+      print(
+          "[HomeScreen _callLikeRepository] Unexpected Error: ${e.toString()}");
       errorNotifier.setError(AppError.generic("An unexpected error occurred."));
-      if (mounted) setState(() => _isInteracting = false);
+      _showErrorSnackbar("An unexpected error occurred.");
+    } finally {
+      if (mounted) setState(() => _isInteracting = false); // Hide overlay
     }
-  }
-
-  Future<void> _handleDislikeButtonPressed() async {
-    /* ... */
-    print("[HomeScreen _handleDislikeButtonPressed] Dislike button tapped.");
-    if (_feedProfiles.isEmpty || _isInteracting) return;
-    final targetProfile = _feedProfiles[0];
-    if (targetProfile.id == null) return;
-    await _performDislike(targetProfile.id!);
+    print("[HomeScreen _callLikeRepository] Returning success: $success");
+    return success; // Return the outcome
   }
 
   void _showErrorSnackbar(String message) {
-    /* ... */
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(message, style: GoogleFonts.poppins())),
+      SnackBar(
+          content: Text(message, style: GoogleFonts.poppins()),
+          backgroundColor: Colors.redAccent), // Use red for errors
     );
-  }
-
-  Future<String?> _showCommentDialog(BuildContext context,
-      {bool isOptional = false}) async {
-    /* ... */
-    final TextEditingController commentController = TextEditingController();
-    String title =
-        isOptional ? "Add a Comment? (Optional)" : "Add a Comment (Required)";
-    ValueNotifier<bool> sendEnabledNotifier = ValueNotifier<bool>(isOptional);
-
-    if (!isOptional) {
-      commentController.addListener(() {
-        if (mounted) {
-          sendEnabledNotifier.value = commentController.text.trim().isNotEmpty;
-        }
-      });
-    }
-
-    final result = await showDialog<String>(
-      context: context,
-      barrierDismissible: isOptional,
-      builder: (BuildContext dialogContext) {
-        return AlertDialog(
-          shape:
-              RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
-          title: Text(title,
-              style: GoogleFonts.poppins(fontWeight: FontWeight.w600)),
-          content: TextField(
-            controller: commentController,
-            decoration: InputDecoration(
-              hintText: "Your comment...",
-              border:
-                  OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
-              counterText: "",
-            ),
-            maxLength: 140,
-            maxLines: 3,
-            minLines: 1,
-            autofocus: true,
-            onChanged: (text) {
-              if (!isOptional) {
-                sendEnabledNotifier.value = text.trim().isNotEmpty;
-              }
-            },
-          ),
-          actions: <Widget>[
-            TextButton(
-              child: Text("Cancel",
-                  style: GoogleFonts.poppins(color: Colors.grey)),
-              onPressed: () => Navigator.of(dialogContext).pop(null),
-            ),
-            ValueListenableBuilder<bool>(
-                valueListenable: sendEnabledNotifier,
-                builder: (context, isEnabled, child) {
-                  return TextButton(
-                    child: Text("Send",
-                        style: GoogleFonts.poppins(
-                            color: isEnabled
-                                ? const Color(0xFF8B5CF6)
-                                : Colors.grey,
-                            fontWeight: FontWeight.w600)),
-                    onPressed: isEnabled
-                        ? () => Navigator.of(dialogContext)
-                            .pop(commentController.text.trim())
-                        : null,
-                  );
-                }),
-          ],
-        );
-      },
-    );
-
-    try {
-      if (!isOptional) commentController.removeListener(() {});
-      sendEnabledNotifier.dispose();
-      commentController.dispose();
-    } catch (e) {
-      print("Error disposing comment dialog resources: $e");
-    }
-    return result;
   }
 
   Future<void> _openFilterDialog() async {
-    /* ... */
     print("[HomeScreen] Opening Filter Dialog.");
     await showDialog<bool>(
       context: context,
       builder: (context) => const FilterSettingsDialog(),
     );
   }
-  // --- End Unchanged Methods ---
 
   @override
   Widget build(BuildContext context) {
     final feedState = ref.watch(feedProvider);
     final filters = ref.watch(filterProvider);
 
+    // Update local profile list when provider changes
     ref.listen<HomeFeedState>(feedProvider, (_, next) {
       if (mounted) {
         setState(() {
@@ -7348,7 +7314,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
             style: GoogleFonts.poppins(fontWeight: FontWeight.w600)),
         backgroundColor: Colors.white,
         foregroundColor: Colors.black,
-        elevation: 0, // Flat AppBar
+        elevation: 0,
         automaticallyImplyLeading: false,
         actions: [
           IconButton(
@@ -7360,7 +7326,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
       ),
       body: Column(
         children: [
-          // Filter Chips Row
+          // Filter Chips Row (remains the same)
           Padding(
             padding:
                 const EdgeInsets.symmetric(horizontal: 12.0, vertical: 10.0),
@@ -7368,7 +7334,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                 onTap: _openFilterDialog,
                 child: Container(
                   color: Colors.transparent,
-                  height: 34, // Adjust height if needed
+                  height: 34,
                   child: SingleChildScrollView(
                     scrollDirection: Axis.horizontal,
                     physics: const BouncingScrollPhysics(),
@@ -7378,92 +7344,46 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                   ),
                 )),
           ),
-          // Removed Divider
 
-          // Feed Area (Expanded) - Unchanged
+          // Feed Area (Expanded)
           Expanded(
             child: Stack(
+              alignment: Alignment.center, // Center children like indicators
               children: [
-                if (hasProfilesToShow) _buildProfileCardAtIndex(0),
                 if (isLoadingFeed)
-                  const Center(
-                      child:
-                          CircularProgressIndicator(color: Color(0xFF8B5CF6))),
-                if (!isLoadingFeed && error != null && !hasProfilesToShow)
-                  _buildErrorState(error),
-                if (!isLoadingFeed && error == null && !hasProfilesToShow)
-                  _buildEmptyState(),
+                  const CircularProgressIndicator(color: Color(0xFF8B5CF6))
+                // Show loading only if initial fetch AND no profiles loaded yet
+                else if (error != null && !hasProfilesToShow)
+                  _buildErrorState(error) // Show error only if no profiles
+                else if (!hasProfilesToShow)
+                  _buildEmptyState() // Show empty state if no profiles and no error
+                else // Only build the card if there are profiles
+                  _buildProfileCardAtIndex(0),
+
+                // General interaction loading overlay (covers everything)
                 if (_isInteracting)
                   Positioned.fill(
-                      child: Container(
-                    color: Colors.white.withOpacity(0.5),
-                    child: const Center(
-                        child: CircularProgressIndicator(
-                            color: Color(0xFF8B5CF6))),
-                  )),
+                    child: Container(
+                      color: Colors.white.withOpacity(0.5),
+                      child: const Center(
+                          child: CircularProgressIndicator(
+                              color: Color(0xFF8B5CF6))),
+                    ),
+                  ),
               ],
             ),
           ),
 
-          // Bottom Action Buttons - Unchanged
-          if (!isLoadingFeed && hasProfilesToShow)
-            Padding(
-              padding:
-                  const EdgeInsets.symmetric(vertical: 16.0, horizontal: 20.0),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                children: [
-                  _buildActionButton(Icons.close_rounded, Colors.red.shade400,
-                      _isInteracting ? null : _handleDislikeButtonPressed),
-                  _buildActionButton(
-                      Icons.favorite_rounded,
-                      Colors.pink.shade300,
-                      _isInteracting
-                          ? null
-                          : () {
-                              if (_feedProfiles.isNotEmpty &&
-                                  _feedProfiles[0].id != null) {
-                                _handleLikeInteraction(
-                                    targetUserId: _feedProfiles[0].id!,
-                                    contentType: ContentLikeType.media,
-                                    contentIdentifier: "0",
-                                    interactionType:
-                                        LikeInteractionType.standard,
-                                    comment: null);
-                              }
-                            }),
-                  _buildActionButton(
-                      Icons.star_rounded,
-                      Colors.purple.shade300,
-                      _isInteracting
-                          ? null
-                          : () async {
-                              if (_feedProfiles.isNotEmpty &&
-                                  _feedProfiles[0].id != null) {
-                                final comment = await _showCommentDialog(
-                                    context,
-                                    isOptional: true);
-                                _handleLikeInteraction(
-                                    targetUserId: _feedProfiles[0].id!,
-                                    contentType: ContentLikeType.media,
-                                    contentIdentifier: "0",
-                                    interactionType: LikeInteractionType.rose,
-                                    comment: comment);
-                              }
-                            }),
-                ],
-              ),
-            ),
+          // --- REMOVED BOTTOM ACTION BUTTONS ---
+          // Padding(...) // Removed the entire Padding widget with action buttons
         ],
       ),
     );
   }
 
-  // Build Filter Chips dynamically - Removed isActive logic from call
+  // --- Helper methods (_buildFilterChips, _buildFilterChip, _buildEmptyState, _buildErrorState) remain the same ---
   List<Widget> _buildFilterChips(FilterSettings filters) {
     List<Widget> chips = [];
-
-    // Gender Preference Chip
     chips.add(_buildFilterChip(
         Icons.wc_rounded,
         filters.whoYouWantToSee?.value.replaceFirst(
@@ -7472,16 +7392,10 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
             FilterSettings.defaultGenderPref.value.replaceFirst(
                 FilterSettings.defaultGenderPref.value[0],
                 FilterSettings.defaultGenderPref.value[0].toUpperCase())));
-
-    // Age Range Chip
     chips.add(_buildFilterChip(Icons.cake_outlined,
         '${filters.ageMin ?? FilterSettings.defaultAgeMin}-${filters.ageMax ?? FilterSettings.defaultAgeMax}'));
-
-    // Distance Chip
     chips.add(_buildFilterChip(Icons.social_distance_outlined,
         '${filters.radiusKm ?? FilterSettings.defaultRadius} km'));
-
-    // Active Today Chip - Use value to determine label/icon
     bool activeTodayValue =
         filters.activeToday ?? FilterSettings.defaultActiveToday;
     chips.add(_buildFilterChip(
@@ -7490,64 +7404,53 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
           : Icons.access_time_rounded,
       activeTodayValue ? 'Active Today' : 'Active: Any',
     ));
-
     return chips;
   }
 
-  // Helper for individual filter chip - ALWAYS use purple theme
   Widget _buildFilterChip(IconData icon, String label) {
-    final Color themeColor = const Color(0xFF8B5CF6); // Purple theme
-    final Color themeBgColor =
-        const Color(0xFFEDE9FE); // Light purple background
-    final Color themeTextColor = themeColor; // Use main theme color for text
+    const Color themeColor = Color(0xFF8B5CF6);
+    const Color themeBgColor = Color(0xFFEDE9FE);
+    const Color themeTextColor = themeColor;
 
     return Padding(
       padding: const EdgeInsets.only(right: 8.0),
       child: Chip(
-        avatar: Icon(icon, size: 16, color: themeColor), // Use theme color
+        avatar: Icon(icon, size: 16, color: themeColor),
         label: Text(label),
         labelStyle: GoogleFonts.poppins(
-            fontSize: 12,
-            color: themeTextColor, // Use theme text color
-            fontWeight: FontWeight.w500),
-        backgroundColor: themeBgColor, // Use theme background color
+            fontSize: 12, color: themeTextColor, fontWeight: FontWeight.w500),
+        backgroundColor: themeBgColor,
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
         materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
         visualDensity: const VisualDensity(horizontal: 0.0, vertical: -2),
-        side: BorderSide.none, // No border
-        elevation: 0.5, // Optional: small consistent elevation
-        shadowColor: themeColor.withOpacity(0.2), // Optional: subtle shadow
+        side: BorderSide.none,
+        elevation: 0.5,
+        shadowColor: themeColor.withOpacity(0.2),
       ),
     );
   }
 
-  // --- Unchanged Methods ---
   Widget _buildProfileCardAtIndex(int index) {
-    /* ... */
     if (index >= 0 && index < _feedProfiles.length) {
       final currentProfile = _feedProfiles[index];
       return HomeProfileCard(
         profile: currentProfile,
-        onLikeContent: (type, identifier, comment) {
-          if (currentProfile.id == null) return;
-          _handleLikeInteraction(
+        // Pass the callback function to handle the API call
+        performLikeApiCall: (
+            {required contentType,
+            required contentIdentifier,
+            required interactionType,
+            comment}) async {
+          if (currentProfile.id == null) return false;
+          return await _callLikeRepository(
               targetUserId: currentProfile.id!,
-              contentType: type,
-              contentIdentifier: identifier,
-              interactionType: LikeInteractionType.standard,
+              contentType: contentType,
+              contentIdentifier: contentIdentifier,
+              interactionType: interactionType,
               comment: comment);
         },
-        onSendRose: (comment) async {
-          if (currentProfile.id == null) return;
-          final roseComment =
-              await _showCommentDialog(context, isOptional: true);
-          _handleLikeInteraction(
-              targetUserId: currentProfile.id!,
-              contentType: ContentLikeType.media,
-              contentIdentifier: "0",
-              interactionType: LikeInteractionType.rose,
-              comment: roseComment);
-        },
+        // Callback to remove the card after success
+        onInteractionComplete: _removeTopCard,
       );
     }
     return Container(
@@ -7555,37 +7458,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
         child: const Text("Error loading profile."));
   }
 
-  Widget _buildActionButton(
-      IconData icon, Color color, VoidCallback? onPressed) {
-    /* ... */
-    return InkWell(
-      onTap: onPressed,
-      borderRadius: BorderRadius.circular(35),
-      child: Container(
-        width: 70,
-        height: 70,
-        decoration: BoxDecoration(
-          shape: BoxShape.circle,
-          color: Colors.white,
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withOpacity(0.08),
-              blurRadius: 10,
-              spreadRadius: 1,
-            ),
-          ],
-          border: onPressed == null
-              ? Border.all(color: Colors.grey.shade300, width: 1)
-              : null,
-        ),
-        child: Icon(icon,
-            color: onPressed == null ? Colors.grey.shade400 : color, size: 35),
-      ),
-    );
-  }
-
   Widget _buildEmptyState() {
-    /* ... */
     return Center(
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
@@ -7621,7 +7494,6 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
   }
 
   Widget _buildErrorState(AppError error) {
-    /* ... */
     return Center(
       child: Padding(
         padding: const EdgeInsets.all(20.0),
@@ -7664,8 +7536,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
       ),
     );
   }
-  // --- End Unchanged Methods ---
-} // End of _HomeScreenState
+}
 
 
 
@@ -9802,13 +9673,17 @@ class _NameInputScreenState extends ConsumerState<NameInputScreen> {
 ================================================
 File: views/profile_screens.dart
 ================================================
+// File: views/profile_screens.dart
+import 'dart:math'; // Needed for interleaving logic
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_fonts/google_fonts.dart';
-import 'package:audioplayers/audioplayers.dart';
+import 'package:audioplayers/audioplayers.dart'; // Keep for local player
+
 import 'package:dtx/models/user_model.dart';
 import 'package:dtx/providers/user_provider.dart';
-import 'package:dtx/utils/app_enums.dart'; // Import for enums if used in helpers
+import 'package:dtx/utils/app_enums.dart';
 import 'package:dtx/views/settings_screen.dart';
 
 class ProfileScreen extends ConsumerStatefulWidget {
@@ -9819,26 +9694,29 @@ class ProfileScreen extends ConsumerStatefulWidget {
 }
 
 class _ProfileScreenState extends ConsumerState<ProfileScreen> {
+  // --- Retained State for Local Audio Player ---
   final AudioPlayer _audioPlayer = AudioPlayer();
   bool _isPlaying = false;
   String? _currentAudioUrl;
+  // --- End Retained State ---
+
   final PageController _pageController = PageController();
   int _currentImageIndex = 0;
 
   @override
   void initState() {
     super.initState();
-    // Fetching is now initiated in MainNavigationScreen initState
-    // WidgetsBinding.instance.addPostFrameCallback((_) {
-    //   if (ref.read(userProvider).name == null && !ref.read(userLoadingProvider)) {
-    //      ref.read(userProvider.notifier).fetchProfile();
-    //   }
-    // });
+    // Fetching initiated in MainNavigationScreen initState
 
+    // --- Retained Audio Player Listeners ---
     _audioPlayer.onPlayerStateChanged.listen((state) {
       if (mounted) {
         setState(() {
           _isPlaying = state == PlayerState.playing;
+          // Reset URL if stopped/completed unexpectedly
+          if (state == PlayerState.stopped || state == PlayerState.completed) {
+            _currentAudioUrl = null;
+          }
         });
       }
     });
@@ -9851,11 +9729,13 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
         });
       }
     });
+    // --- End Retained Listeners ---
   }
 
   @override
   void dispose() {
     try {
+      // Stop and dispose the local audio player
       if (_audioPlayer.state == PlayerState.playing ||
           _audioPlayer.state == PlayerState.paused) {
         _audioPlayer.stop();
@@ -9868,11 +9748,7 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
     super.dispose();
   }
 
-  String capitalizeFirstLetter(String text) {
-    if (text.isEmpty) return text;
-    return text[0].toUpperCase() + text.substring(1);
-  }
-
+  // --- Retained Local Audio Control ---
   Future<void> _playOrPauseAudio(String audioUrl) async {
     if (!mounted) return;
 
@@ -9885,14 +9761,17 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
           _currentAudioUrl == audioUrl) {
         await _audioPlayer.resume();
       } else {
+        // Stop any previously playing audio before starting new
         if (currentState == PlayerState.playing ||
             currentState == PlayerState.paused) {
           await _audioPlayer.stop();
         }
+        // Play the new URL
         await _audioPlayer.play(UrlSource(audioUrl));
         if (mounted) {
           setState(() {
-            _currentAudioUrl = audioUrl;
+            _currentAudioUrl =
+                audioUrl; // Update current URL only when playing starts
           });
         }
       }
@@ -9908,130 +9787,20 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
       }
     }
   }
+  // --- End Retained Local Audio Control ---
 
-  @override
-  Widget build(BuildContext context) {
-    final user = ref.watch(userProvider);
-    final isLoading = ref.watch(userLoadingProvider);
+  // --- Helper Methods (some adapted from HomeProfileCard) ---
 
-    // Show loading indicator only if fetching initially (user.name is null)
-    // Loading state now handled by checking provider state directly
-    if (isLoading && user.name == null) {
-      return Scaffold(
-        backgroundColor: Colors.white,
-        // Add AppBar here for consistency during loading
-        appBar: AppBar(
-          title: Text("Profile",
-              style: GoogleFonts.poppins(fontWeight: FontWeight.w600)),
-          backgroundColor: Colors.white,
-          foregroundColor: Colors.black,
-          elevation: 0, // No shadow when loading
-          automaticallyImplyLeading: false,
-          actions: [
-            _buildTopIconButton(
-                icon: Icons.edit_outlined,
-                tooltip: 'Edit Profile',
-                onPressed: () {}), // Placeholder actions
-            const SizedBox(width: 8),
-            _buildTopIconButton(
-                icon: Icons.settings_outlined,
-                tooltip: 'Settings',
-                onPressed: () {}),
-          ],
-        ),
-        body: const Center(
-          child: CircularProgressIndicator(color: Color(0xFF8B5CF6)),
-        ),
-      );
-    }
-
-    final age = user.age;
-    final capitalizedName =
-        user.name != null ? capitalizeFirstLetter(user.name!) : null;
-    final capitalizedLastName =
-        user.lastName != null && user.lastName!.isNotEmpty
-            ? capitalizeFirstLetter(user.lastName!)
-            : null;
-
-    return Scaffold(
-      backgroundColor: Colors.white,
-      // Use SliverAppBar for integrated scrolling behavior
-      body: RefreshIndicator(
-        color: const Color(0xFF8B5CF6),
-        onRefresh: () => ref.read(userProvider.notifier).fetchProfile(),
-        child: CustomScrollView(
-          physics: const BouncingScrollPhysics(
-              parent: AlwaysScrollableScrollPhysics()),
-          slivers: [
-            SliverAppBar(
-              pinned: true, // Keep visible while scrolling down
-              floating: false, // Don't reappear immediately on scroll up
-              elevation: 1, // Subtle shadow
-              backgroundColor: Colors.white,
-              foregroundColor: Colors.black,
-              automaticallyImplyLeading: false, // No back button in tab screen
-              title: Text("Profile",
-                  style: GoogleFonts.poppins(fontWeight: FontWeight.w600)),
-              actions: [
-                _buildTopIconButton(
-                  icon: Icons.edit_outlined,
-                  tooltip: 'Edit Profile',
-                  onPressed: () {
-                    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-                        content: Text("Edit Profile (Not Implemented)")));
-                  },
-                ),
-                const SizedBox(width: 8),
-                _buildTopIconButton(
-                  icon: Icons.settings_outlined,
-                  tooltip: 'Settings',
-                  onPressed: () {
-                    Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                            builder: (context) => const SettingsScreen()));
-                  },
-                ),
-                const SizedBox(width: 8), // Add padding to the right edge
-              ],
-            ),
-
-            // Add some padding below the AppBar
-            const SliverToBoxAdapter(child: SizedBox(height: 16)),
-
-            SliverPadding(
-              padding: const EdgeInsets.symmetric(horizontal: 24),
-              sliver: SliverList(
-                delegate: SliverChildListDelegate([
-                  // Removed Row for buttons, handled by SliverAppBar actions
-                  _buildProfileHeader(
-                      capitalizedName, capitalizedLastName, age, user),
-                  const SizedBox(height: 24),
-                  _buildMediaGallery(user.mediaUrls ?? []),
-                  const SizedBox(height: 32),
-                  _buildInfoSection(
-                      "Looking for", user.datingIntention?.label ?? ""),
-                  const SizedBox(height: 24),
-                  _buildPromptSection(user.prompts),
-                  const SizedBox(height: 32),
-                  _buildAudioPrompt(user.audioPrompt),
-                  const SizedBox(height: 32),
-                  _buildPersonalDetailsSection(user),
-                  const SizedBox(height: 40), // Bottom padding
-                ]),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
+  String capitalizeFirstLetter(String text) {
+    if (text.isEmpty) return text;
+    return text[0].toUpperCase() + text.substring(1);
   }
 
-  // _buildTopIconButton remains the same
   Widget _buildTopIconButton(
       {required IconData icon,
       required String tooltip,
       required VoidCallback onPressed}) {
+    // (Keep this helper as is)
     return IconButton(
       icon: Container(
         padding: const EdgeInsets.all(8),
@@ -10046,386 +9815,40 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
     );
   }
 
-  // _buildProfileHeader remains the same
-  Widget _buildProfileHeader(
-      String? name, String? lastName, int? age, UserModel user) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          '${name ?? "Your Name"} ${lastName ?? ""} ${age != null ? "• $age" : ""}', // Provide default for name
-          style: GoogleFonts.poppins(
-            fontSize: 32,
-            fontWeight: FontWeight.w700,
-            color: const Color(0xFF1A1A1A),
-            height: 1.2,
-          ),
-        ),
-        const SizedBox(height: 12),
-        Container(
-          // Themed divider
-          width: 50, height: 3,
-          decoration: BoxDecoration(
-              color: const Color(0xFF8B5CF6),
-              borderRadius: BorderRadius.circular(1.5)),
-        ),
-        const SizedBox(height: 16),
-        if (user.gender != null ||
-            (user.hometown != null && user.hometown!.isNotEmpty))
-          Wrap(
-            spacing: 10,
-            runSpacing: 8,
-            children: [
-              if (user.gender != null)
-                _buildDetailChip(
-                    Icons.person_outline_rounded, user.gender!.label,
-                    subtle: true),
-              if (user.hometown != null && user.hometown!.isNotEmpty)
-                _buildDetailChip(Icons.location_on_outlined, user.hometown!,
-                    subtle: true),
-            ],
-          ),
-      ],
-    );
-  }
-
-  // _buildMediaGallery remains the same
-  Widget _buildMediaGallery(List<String> images) {
-    if (images.isEmpty) {
-      return _buildEmptySection(
-          "Photos & Videos",
-          "Add photos and videos to show off your personality!",
-          Icons.add_photo_alternate_outlined);
-    }
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Container(
-          height: MediaQuery.of(context).size.height * 0.5,
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(24),
-            boxShadow: [
-              BoxShadow(
-                  color: Colors.black.withOpacity(0.08),
-                  blurRadius: 15,
-                  offset: const Offset(0, 5))
-            ],
-          ),
-          child: ClipRRect(
-            borderRadius: BorderRadius.circular(24),
-            child: Stack(
-              children: [
-                PageView.builder(
-                  controller: _pageController,
-                  itemCount: images.length,
-                  onPageChanged: (index) {
-                    if (mounted) {
-                      setState(() {
-                        _currentImageIndex = index;
-                      });
-                    }
-                  },
-                  itemBuilder: (context, index) {
-                    bool isVideo =
-                        images[index].toLowerCase().contains('.mp4') ||
-                            images[index].toLowerCase().contains('.mov');
-                    return Container(
-                      color: Colors.grey[200],
-                      child: Stack(
-                        fit: StackFit.expand,
-                        children: [
-                          Image.network(
-                            images[index],
-                            fit: BoxFit.cover,
-                            errorBuilder: (context, error, stackTrace) =>
-                                Container(
-                                    color: Colors.grey[200],
-                                    child: Center(
-                                        child: Icon(Icons.broken_image_outlined,
-                                            color: Colors.grey[400],
-                                            size: 48))),
-                            loadingBuilder: (context, child, loadingProgress) {
-                              if (loadingProgress == null) return child;
-                              return Center(
-                                child: CircularProgressIndicator(
-                                  color: const Color(0xFF8B5CF6),
-                                  value: loadingProgress.expectedTotalBytes !=
-                                          null
-                                      ? loadingProgress.cumulativeBytesLoaded /
-                                          loadingProgress.expectedTotalBytes!
-                                      : null,
-                                ),
-                              );
-                            },
-                          ),
-                          if (isVideo)
-                            Center(
-                              child: Container(
-                                padding: const EdgeInsets.all(12),
-                                decoration: BoxDecoration(
-                                    color: Colors.black.withOpacity(0.5),
-                                    shape: BoxShape.circle),
-                                child: Icon(Icons.play_arrow_rounded,
-                                    color: Colors.white, size: 40),
-                              ),
-                            ),
-                        ],
-                      ),
-                    );
-                  },
-                ),
-                if (images.length > 1)
-                  Positioned(
-                    bottom: 20,
-                    left: 0,
-                    right: 0,
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: List.generate(
-                        images.length,
-                        (index) => AnimatedContainer(
-                          duration: const Duration(milliseconds: 200),
-                          width: _currentImageIndex == index ? 24 : 8,
-                          height: 8,
-                          margin: const EdgeInsets.symmetric(horizontal: 4),
-                          decoration: BoxDecoration(
-                            borderRadius: BorderRadius.circular(4),
-                            color: _currentImageIndex == index
-                                ? const Color(0xFF8B5CF6)
-                                : Colors.white.withOpacity(0.6),
-                          ),
-                        ),
-                      ),
-                    ),
-                  ),
-              ],
-            ),
-          ),
-        ),
-      ],
-    );
-  }
-
-  // _buildInfoSection remains the same
-  Widget _buildInfoSection(String title, String content) {
-    if (content.isEmpty) {
-      return _buildEmptySection(
-          title,
-          "Add your dating intention to tell others what you're looking for.",
-          Icons.favorite_border_rounded);
-    }
+  Widget _buildEmptySection(String title, String message, IconData icon) {
+    // (Keep this helper as is)
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.symmetric(vertical: 16),
+      padding: const EdgeInsets.symmetric(vertical: 30, horizontal: 20),
+      margin: const EdgeInsets.symmetric(vertical: 16),
       decoration: BoxDecoration(
-          border:
-              Border(bottom: BorderSide(color: Colors.grey[200]!, width: 1))),
+          color: Colors.grey[50],
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: Colors.grey[200]!)),
       child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Text(title,
-              style: GoogleFonts.poppins(
-                  fontSize: 14,
-                  fontWeight: FontWeight.w500,
-                  color: Colors.grey[600])),
-          const SizedBox(height: 6),
-          Text(content,
-              style: GoogleFonts.poppins(
-                  fontSize: 16,
-                  fontWeight: FontWeight.w500,
-                  color: const Color(0xFF1A1A1A))),
-        ],
-      ),
-    );
-  }
-
-  // _buildPromptSection remains the same
-  Widget _buildPromptSection(List<Prompt> prompts) {
-    if (prompts.isEmpty) {
-      return _buildEmptySection(
-          "About Me",
-          "Add prompt answers to share more about yourself!",
-          Icons.chat_bubble_outline);
-    }
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Padding(
-          padding: const EdgeInsets.only(top: 16.0, bottom: 8.0),
-          child: Text("About Me",
-              style: GoogleFonts.poppins(
-                  fontSize: 20,
-                  fontWeight: FontWeight.w600,
-                  color: const Color(0xFF1A1A1A))),
-        ),
-        ...prompts.map((prompt) => _buildPromptCard(prompt)).toList(),
-      ],
-    );
-  }
-
-  // _buildPromptCard remains the same
-  Widget _buildPromptCard(Prompt prompt) {
-    if (prompt.answer.trim().isEmpty) return const SizedBox.shrink();
-    return Container(
-      width: double.infinity,
-      margin: const EdgeInsets.only(bottom: 16),
-      padding: const EdgeInsets.all(20),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: Colors.grey[200]!),
-        boxShadow: [
-          BoxShadow(
-              color: Colors.grey.withOpacity(0.06),
-              blurRadius: 10,
-              offset: const Offset(0, 3))
-        ],
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(prompt.question.label,
-              style: GoogleFonts.poppins(
-                  fontSize: 15,
-                  fontWeight: FontWeight.w600,
-                  color: const Color(0xFF8B5CF6))),
-          const SizedBox(height: 10),
-          Text(prompt.answer,
-              style: GoogleFonts.poppins(
-                  fontSize: 15, color: Colors.grey[800], height: 1.5)),
-        ],
-      ),
-    );
-  }
-
-  // _buildAudioPrompt remains the same
-  Widget _buildAudioPrompt(AudioPromptModel? audio) {
-    if (audio == null || audio.audioUrl.isEmpty) {
-      return _buildEmptySection(
-          "Voice Prompt",
-          "Record a voice prompt to let matches hear your voice!",
-          Icons.mic_none_rounded);
-    }
-    final bool isThisPlaying = _currentAudioUrl == audio.audioUrl && _isPlaying;
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Padding(
-          padding: const EdgeInsets.only(top: 16.0, bottom: 8.0),
-          child: Text("Voice Prompt",
-              style: GoogleFonts.poppins(
-                  fontSize: 20,
-                  fontWeight: FontWeight.w600,
-                  color: const Color(0xFF1A1A1A))),
-        ),
-        GestureDetector(
-          onTap: () => _playOrPauseAudio(audio.audioUrl),
-          child: Container(
-            padding: const EdgeInsets.all(16),
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(16),
-              border: Border.all(color: Colors.grey[200]!),
-              boxShadow: [
-                BoxShadow(
-                    color: Colors.grey.withOpacity(0.06),
-                    blurRadius: 10,
-                    offset: const Offset(0, 3))
-              ],
-            ),
-            child: Row(
-              children: [
-                Container(
-                  width: 48,
-                  height: 48,
-                  decoration: BoxDecoration(
-                    color: const Color(0xFF8B5CF6),
-                    borderRadius: BorderRadius.circular(24),
-                    boxShadow: [
-                      BoxShadow(
-                          color: const Color(0xFF8B5CF6).withOpacity(0.3),
-                          blurRadius: 8,
-                          offset: const Offset(0, 2))
-                    ],
-                  ),
-                  child: Icon(
-                      isThisPlaying
-                          ? Icons.pause_rounded
-                          : Icons.play_arrow_rounded,
-                      color: Colors.white,
-                      size: 28),
-                ),
-                const SizedBox(width: 16),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(audio.prompt.label,
-                          style: GoogleFonts.poppins(
-                              fontSize: 15,
-                              fontWeight: FontWeight.w500,
-                              color: const Color(0xFF1A1A1A))),
-                      const SizedBox(height: 4),
-                      Text(isThisPlaying ? "Playing..." : "Tap to listen",
-                          style: GoogleFonts.poppins(
-                              fontSize: 13, color: Colors.grey[600])),
-                    ],
-                  ),
-                ),
-              ],
-            ),
+          Padding(
+            padding: const EdgeInsets.only(bottom: 16.0),
+            child: Text(title,
+                style: GoogleFonts.poppins(
+                    fontSize: 18,
+                    fontWeight: FontWeight.w600,
+                    color: Colors.grey[800])),
           ),
-        ),
-      ],
+          Icon(icon, size: 40, color: Colors.grey[400]),
+          const SizedBox(height: 12),
+          Text(message,
+              textAlign: TextAlign.center,
+              style:
+                  GoogleFonts.poppins(fontSize: 14, color: Colors.grey[600])),
+        ],
+      ),
     );
   }
 
-  // _buildPersonalDetailsSection remains the same
-  Widget _buildPersonalDetailsSection(UserModel user) {
-    final details = <Widget>[];
-    if (user.height != null && user.height!.isNotEmpty)
-      details.add(_buildDetailChip(Icons.height_rounded, user.height!));
-    if (user.religiousBeliefs != null)
-      details.add(_buildDetailChip(
-          Icons.church_outlined, user.religiousBeliefs!.label));
-    if (user.jobTitle != null && user.jobTitle!.isNotEmpty)
-      details.add(_buildDetailChip(Icons.work_outline_rounded, user.jobTitle!));
-    if (user.education != null && user.education!.isNotEmpty)
-      details.add(_buildDetailChip(Icons.school_outlined, user.education!));
-    if (user.drinkingHabit != null)
-      details.add(_buildDetailChip(
-          Icons.local_bar_outlined, "Drinks: ${user.drinkingHabit!.label}"));
-    if (user.smokingHabit != null)
-      details.add(_buildDetailChip(
-          Icons.smoking_rooms_outlined, "Smokes: ${user.smokingHabit!.label}"));
-
-    if (details.isEmpty) {
-      return _buildEmptySection(
-          "Vitals & Habits",
-          "Add more details like your height, job, habits, etc.",
-          Icons.list_alt_rounded);
-    }
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Padding(
-          padding: const EdgeInsets.only(top: 16.0, bottom: 12.0),
-          child: Text("Vitals & Habits",
-              style: GoogleFonts.poppins(
-                  fontSize: 20,
-                  fontWeight: FontWeight.w600,
-                  color: const Color(0xFF1A1A1A))),
-        ),
-        Wrap(spacing: 10, runSpacing: 10, children: details),
-      ],
-    );
-  }
-
-  // _buildDetailChip remains the same
   Widget _buildDetailChip(IconData icon, String label, {bool subtle = false}) {
+    // (Keep this helper as is)
     if (label.isEmpty) return const SizedBox.shrink();
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
@@ -10455,33 +9878,527 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
     );
   }
 
-  // _buildEmptySection remains the same
-  Widget _buildEmptySection(String title, String message, IconData icon) {
+  @override
+  Widget build(BuildContext context) {
+    final user = ref.watch(userProvider);
+    final isLoading = ref.watch(userLoadingProvider);
+
+    // --- Loading State ---
+    if (isLoading && user.name == null) {
+      return Scaffold(
+        backgroundColor: Colors.white,
+        appBar: AppBar(
+          title: Text("Profile",
+              style: GoogleFonts.poppins(fontWeight: FontWeight.w600)),
+          backgroundColor: Colors.white,
+          foregroundColor: Colors.black,
+          elevation: 0,
+          automaticallyImplyLeading: false,
+          actions: [
+            // Keep actions visible but disabled during load
+            _buildTopIconButton(
+                icon: Icons.edit_outlined,
+                tooltip: 'Edit Profile',
+                onPressed: () {}),
+            const SizedBox(width: 8),
+            _buildTopIconButton(
+                icon: Icons.settings_outlined,
+                tooltip: 'Settings',
+                onPressed: () {}),
+            const SizedBox(width: 8),
+          ],
+        ),
+        body: const Center(
+          child: CircularProgressIndicator(color: Color(0xFF8B5CF6)),
+        ),
+      );
+    }
+
+    // --- Prepare Content Blocks (Logic from HomeProfileCard) ---
+    final List<dynamic> contentBlocks = [];
+    final mediaUrls = user.mediaUrls ?? [];
+    final prompts = user.prompts;
+
+    // 1. Header
+    contentBlocks.add("header_section");
+
+    // 2. First Photo (if available)
+    if (mediaUrls.isNotEmpty) {
+      contentBlocks.add(mediaUrls[0]);
+    } else {
+      // Add empty section if no photos
+      contentBlocks.add("empty_media_section");
+    }
+
+    // 3. First Prompt (if available)
+    if (prompts.isNotEmpty) {
+      contentBlocks.add(prompts[0]);
+    } else {
+      // Add empty section if no prompts
+      contentBlocks.add("empty_prompt_section");
+    }
+
+    // 4. Vitals Section
+    contentBlocks.add("vitals_section");
+
+    // 5. Interleave remaining media and prompts
+    int mediaIndex = 1;
+    int promptIndex = 1;
+    int maxRemaining = max(mediaUrls.length, prompts.length);
+
+    for (int i = 1; i < maxRemaining; i++) {
+      if (mediaIndex < mediaUrls.length) {
+        contentBlocks.add(mediaUrls[mediaIndex]);
+        mediaIndex++;
+      }
+      if (promptIndex < prompts.length) {
+        contentBlocks.add(prompts[promptIndex]);
+        promptIndex++;
+      }
+    }
+
+    // 6. Add Audio Prompt (if available)
+    if (user.audioPrompt != null) {
+      contentBlocks.add(user.audioPrompt!);
+    } else {
+      contentBlocks.add("empty_audio_section");
+    }
+    // --- End Content Block Preparation ---
+
+    // --- Build UI using SliverAppBar and ListView ---
+    return Scaffold(
+      backgroundColor: Colors.white,
+      body: RefreshIndicator(
+        color: const Color(0xFF8B5CF6),
+        onRefresh: () => ref.read(userProvider.notifier).fetchProfile(),
+        child: CustomScrollView(
+          physics: const BouncingScrollPhysics(
+              parent: AlwaysScrollableScrollPhysics()),
+          slivers: [
+            SliverAppBar(
+              pinned: true,
+              floating: false,
+              elevation: 1,
+              backgroundColor: Colors.white,
+              foregroundColor: Colors.black,
+              automaticallyImplyLeading: false,
+              title: Text("Profile",
+                  style: GoogleFonts.poppins(fontWeight: FontWeight.w600)),
+              actions: [
+                _buildTopIconButton(
+                  icon: Icons.edit_outlined,
+                  tooltip: 'Edit Profile',
+                  onPressed: () {
+                    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+                        content: Text("Edit Profile (Not Implemented)")));
+                    // TODO: Navigate to Edit Profile Screen
+                  },
+                ),
+                const SizedBox(width: 8),
+                _buildTopIconButton(
+                  icon: Icons.settings_outlined,
+                  tooltip: 'Settings',
+                  onPressed: () {
+                    Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                            builder: (context) => const SettingsScreen()));
+                  },
+                ),
+                const SizedBox(width: 8),
+              ],
+            ),
+
+            // Use SliverList with ListView.builder equivalent logic
+            SliverPadding(
+              padding:
+                  const EdgeInsets.only(top: 8.0), // Add padding below AppBar
+              sliver: SliverList(
+                delegate: SliverChildBuilderDelegate(
+                  (context, index) {
+                    final item = contentBlocks[index];
+                    final double topPadding =
+                        0; // No top padding needed per item
+                    final double bottomPadding = 24.0; // Consistent spacing
+                    final double horizontalPadding =
+                        16.0; // Consistent horizontal padding
+
+                    Widget contentWidget;
+
+                    // Build content based on type
+                    if (item is String && item == "header_section") {
+                      contentWidget =
+                          _buildHeaderBlock(user); // Use user directly
+                    } else if (item is String &&
+                        item == "empty_media_section") {
+                      contentWidget = _buildEmptySection(
+                          "Photos & Videos",
+                          "Add photos and videos to show off your personality!",
+                          Icons.add_photo_alternate_outlined);
+                    } else if (item is String &&
+                        item == "empty_prompt_section") {
+                      contentWidget = _buildEmptySection(
+                          "About Me",
+                          "Add prompt answers to share more about yourself!",
+                          Icons.chat_bubble_outline);
+                    } else if (item is String &&
+                        item == "empty_audio_section") {
+                      contentWidget = _buildEmptySection(
+                          "Voice Prompt",
+                          "Record a voice prompt to let matches hear your voice!",
+                          Icons.mic_none_rounded);
+                    } else if (item is String && item.startsWith('http')) {
+                      contentWidget =
+                          _buildMediaItem(item); // Removed context/ref/index
+                    } else if (item is Prompt) {
+                      contentWidget =
+                          _buildPromptItem(item); // Removed context/ref
+                    } else if (item is AudioPromptModel) {
+                      contentWidget = _buildAudioItem(
+                          item); // Use THIS screen's audio builder, removed context/ref
+                    } else if (item is String && item == "vitals_section") {
+                      contentWidget =
+                          _buildVitalsBlock(user); // Use user directly
+                    } else {
+                      contentWidget = const SizedBox.shrink();
+                    }
+
+                    // Wrap content with Padding
+                    return Padding(
+                      padding: EdgeInsets.fromLTRB(horizontalPadding,
+                          topPadding, horizontalPadding, bottomPadding),
+                      child: contentWidget,
+                    );
+                  },
+                  childCount: contentBlocks.length,
+                ),
+              ),
+            ),
+            // Add final padding at the bottom if needed
+            const SliverToBoxAdapter(child: SizedBox(height: 20)),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // --- Block Builder Widgets (Adapted for ProfileScreen) ---
+
+  Widget _buildHeaderBlock(UserModel user) {
+    // Adapted from HomeProfileCard, uses user directly
+    final age = user.age;
+    final capitalizedName =
+        user.name != null ? capitalizeFirstLetter(user.name!) : "Your Name";
+    final capitalizedLastName =
+        user.lastName != null && user.lastName!.isNotEmpty
+            ? capitalizeFirstLetter(user.lastName!)
+            : "";
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          '$capitalizedName $capitalizedLastName ${age != null ? "• $age" : ""}',
+          style: GoogleFonts.poppins(
+            fontSize: 28, // Adjusted size for profile page
+            fontWeight: FontWeight.w700,
+            color: const Color(0xFF1A1A1A),
+            height: 1.2,
+          ),
+        ),
+        const SizedBox(height: 12),
+        if (user.gender != null ||
+            (user.hometown != null && user.hometown!.isNotEmpty))
+          Wrap(
+            spacing: 10,
+            runSpacing: 8,
+            children: [
+              if (user.gender != null)
+                _buildDetailChip(
+                    Icons.person_outline_rounded, user.gender!.label,
+                    subtle: true),
+              if (user.hometown != null && user.hometown!.isNotEmpty)
+                _buildDetailChip(Icons.location_on_outlined, user.hometown!,
+                    subtle: true),
+            ],
+          ),
+      ],
+    );
+  }
+
+  Widget _buildMediaItem(String url) {
+    // Adapted from HomeProfileCard - NO LIKE BUTTON
+    bool isVideo = url.toLowerCase().contains('.mp4') ||
+        url.toLowerCase().contains('.mov'); // Basic check
+    int imageIndex = (ref.read(userProvider).mediaUrls ?? [])
+        .indexOf(url); // Find index for PageView sync
+
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(16), // More rounded
+      child: AspectRatio(
+        aspectRatio: 9 / 13, // Profile aspect ratio
+        child: Container(
+          decoration: BoxDecoration(
+            color: Colors.grey[200], // Placeholder bg
+            boxShadow: [
+              // Subtle shadow
+              BoxShadow(
+                color: Colors.black.withOpacity(0.08),
+                blurRadius: 15,
+                offset: const Offset(0, 5),
+              )
+            ],
+          ),
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              Image.network(
+                url,
+                fit: BoxFit.cover,
+                loadingBuilder: (ctx, child, prog) => prog == null
+                    ? child
+                    : Center(
+                        child: CircularProgressIndicator(
+                            value: prog.expectedTotalBytes != null
+                                ? prog.cumulativeBytesLoaded /
+                                    prog.expectedTotalBytes!
+                                : null,
+                            color: const Color(0xFF8B5CF6))),
+                errorBuilder: (ctx, err, st) => Center(
+                    child: Icon(Icons.broken_image_outlined,
+                        color: Colors.grey[400], size: 40)),
+              ),
+              if (isVideo) // Video indicator
+                Center(
+                  child: Container(
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: Colors.black.withOpacity(0.5),
+                      shape: BoxShape.circle,
+                    ),
+                    child: const Icon(Icons.play_arrow_rounded,
+                        color: Colors.white, size: 40),
+                  ),
+                ),
+              // NO LIKE BUTTON HERE
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildPromptItem(Prompt prompt) {
+    // Adapted from HomeProfileCard - NO LIKE BUTTON
+    if (prompt.answer.trim().isEmpty) return const SizedBox.shrink();
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.symmetric(vertical: 30, horizontal: 20),
-      margin: const EdgeInsets.symmetric(vertical: 16),
+      padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
-          color: Colors.grey[50],
-          borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: Colors.grey[200]!)),
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: Colors.grey[200]!),
+        boxShadow: [
+          BoxShadow(
+              color: Colors.grey.withOpacity(0.06),
+              blurRadius: 10,
+              offset: const Offset(0, 3))
+        ],
+      ),
       child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
+        // Use Column, no need for Row without button
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Padding(
-            padding: const EdgeInsets.only(bottom: 16.0),
-            child: Text(title,
-                style: GoogleFonts.poppins(
-                    fontSize: 18,
-                    fontWeight: FontWeight.w600,
-                    color: Colors.grey[800])),
+          Text(prompt.question.label,
+              style: GoogleFonts.poppins(
+                  fontSize: 15,
+                  fontWeight: FontWeight.w600,
+                  color: const Color(0xFF8B5CF6))), // Themed question
+          const SizedBox(height: 10),
+          Text(prompt.answer,
+              style: GoogleFonts.poppins(
+                  fontSize: 16, // Slightly larger answer
+                  color: Colors.grey[850], // Darker answer text
+                  height: 1.5)),
+          // NO LIKE BUTTON HERE
+        ],
+      ),
+    );
+  }
+
+  // THIS USES THE LOCAL AUDIO PLAYER LOGIC
+  Widget _buildAudioItem(AudioPromptModel audio) {
+    // Uses THIS screen's audio player state
+    final bool isThisPlaying = _currentAudioUrl == audio.audioUrl && _isPlaying;
+    final bool isThisPaused = _currentAudioUrl == audio.audioUrl &&
+        !_isPlaying &&
+        _audioPlayer.state ==
+            PlayerState.paused; // Check if paused state matches URL
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.only(bottom: 8.0), // Add padding only above
+          child: Text("Voice Prompt",
+              style: GoogleFonts.poppins(
+                  fontSize: 20,
+                  fontWeight: FontWeight.w600,
+                  color: const Color(0xFF1A1A1A))),
+        ),
+        GestureDetector(
+          // Make the whole container tappable to play/pause
+          onTap: () => _playOrPauseAudio(audio.audioUrl),
+          child: Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(color: Colors.grey[200]!),
+              boxShadow: [
+                BoxShadow(
+                    color: Colors.grey.withOpacity(0.06),
+                    blurRadius: 10,
+                    offset: const Offset(0, 3))
+              ],
+            ),
+            child: Row(
+              children: [
+                // Play/Pause Button
+                Container(
+                  width: 48,
+                  height: 48,
+                  decoration: BoxDecoration(
+                      color: const Color(0xFF8B5CF6),
+                      borderRadius: BorderRadius.circular(24),
+                      boxShadow: [
+                        BoxShadow(
+                            color: const Color(0xFF8B5CF6).withOpacity(0.3),
+                            blurRadius: 8,
+                            offset: const Offset(0, 2))
+                      ]),
+                  child: Icon(
+                    isThisPlaying
+                        ? Icons.pause_rounded
+                        : Icons.play_arrow_rounded,
+                    color: Colors.white,
+                    size: 28,
+                  ),
+                ),
+                const SizedBox(width: 16),
+                // Prompt Text
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        audio.prompt.label,
+                        style: GoogleFonts.poppins(
+                            fontSize: 15,
+                            fontWeight: FontWeight.w500,
+                            color: const Color(0xFF1A1A1A)),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        // Indicate state
+                        isThisPlaying
+                            ? "Playing..."
+                            : (isThisPaused ? "Paused" : "Tap to listen"),
+                        style: GoogleFonts.poppins(
+                            fontSize: 13, color: Colors.grey[600]),
+                      ),
+                    ],
+                  ),
+                ),
+                // NO LIKE BUTTON HERE
+              ],
+            ),
           ),
-          Icon(icon, size: 40, color: Colors.grey[400]),
-          const SizedBox(height: 12),
-          Text(message,
-              textAlign: TextAlign.center,
-              style:
-                  GoogleFonts.poppins(fontSize: 14, color: Colors.grey[600])),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildVitalsBlock(UserModel user) {
+    // Adapted from HomeProfileCard
+    final List<Widget> vitals = [];
+    if (user.height != null && user.height!.isNotEmpty)
+      vitals.add(_buildVitalRow(Icons.height_rounded, user.height!));
+    if (user.religiousBeliefs != null)
+      vitals.add(
+          _buildVitalRow(Icons.church_outlined, user.religiousBeliefs!.label));
+    if (user.jobTitle != null && user.jobTitle!.isNotEmpty)
+      vitals.add(_buildVitalRow(Icons.work_outline_rounded, user.jobTitle!));
+    if (user.education != null && user.education!.isNotEmpty)
+      vitals.add(_buildVitalRow(Icons.school_outlined, user.education!));
+    if (user.drinkingHabit != null)
+      vitals.add(_buildVitalRow(
+          Icons.local_bar_outlined, "Drinks: ${user.drinkingHabit!.label}"));
+    if (user.smokingHabit != null)
+      vitals.add(_buildVitalRow(
+          Icons.smoking_rooms_outlined, "Smokes: ${user.smokingHabit!.label}"));
+
+    if (vitals.isEmpty) {
+      return _buildEmptySection(
+          "Vitals & Habits",
+          "Add more details like your height, job, habits, etc.",
+          Icons.list_alt_rounded);
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.only(bottom: 12.0),
+          child: Text("Vitals & Habits",
+              style: GoogleFonts.poppins(
+                  fontSize: 20,
+                  fontWeight: FontWeight.w600,
+                  color: const Color(0xFF1A1A1A))),
+        ),
+        Container(
+            padding: const EdgeInsets.symmetric(
+                horizontal: 16, vertical: 8), // Adjusted padding
+            width: double.infinity,
+            decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: Colors.grey[200]!),
+                boxShadow: [
+                  BoxShadow(
+                      color: Colors.grey.withOpacity(0.06),
+                      blurRadius: 10,
+                      offset: const Offset(0, 3))
+                ]),
+            child: Column(
+              children: List.generate(vitals.length * 2 - 1, (index) {
+                if (index.isEven) {
+                  return vitals[index ~/ 2];
+                } else {
+                  return Divider(
+                      height: 20,
+                      thickness: 1,
+                      color: Colors.grey[200]); // Thicker divider
+                }
+              }),
+            )),
+      ],
+    );
+  }
+
+  Widget _buildVitalRow(IconData icon, String label) {
+    // Adapted from HomeProfileCard
+    return Padding(
+      padding: const EdgeInsets.symmetric(
+          vertical: 8.0), // Consistent vertical padding
+      child: Row(
+        children: [
+          Icon(icon, size: 20, color: const Color(0xFF8B5CF6)), // Themed icon
+          const SizedBox(width: 12),
+          Expanded(
+              child: Text(label,
+                  style: GoogleFonts.poppins(
+                      fontSize: 15, color: Colors.grey[800]))),
         ],
       ),
     );
@@ -13509,186 +13426,291 @@ class FullLikerProfileCard extends StatelessWidget {
 File: widgets/home_profile_card.dart
 ================================================
 // File: widgets/home_profile_card.dart
-import 'dart:math'; // Needed for interleaving logic
-
+import 'dart:math';
 import 'package:dtx/models/user_model.dart';
 import 'package:dtx/models/like_models.dart';
-import 'package:dtx/providers/audio_player_provider.dart';
+import 'package:dtx/providers/audio_player_provider.dart'; // Ensure this is imported
 import 'package:dtx/utils/app_enums.dart';
-import 'package:dtx/providers/user_provider.dart';
+import 'package:dtx/providers/user_provider.dart'; // Needed for gender check
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_fonts/google_fonts.dart';
 
 // Function Type Definitions
-typedef LikeContentCallback = void Function(
-    ContentLikeType type, String identifier, String? comment);
-typedef SendRoseCallback = void Function(String? comment);
+typedef PerformLikeApiCall = Future<bool> Function({
+  required ContentLikeType contentType,
+  required String contentIdentifier,
+  required LikeInteractionType interactionType,
+  String? comment,
+});
+
+typedef InteractionCompleteCallback = void Function();
 
 class HomeProfileCard extends ConsumerWidget {
   final UserModel profile;
-  final LikeContentCallback onLikeContent;
-  final SendRoseCallback onSendRose;
+  final PerformLikeApiCall performLikeApiCall;
+  final InteractionCompleteCallback onInteractionComplete;
 
   const HomeProfileCard({
     super.key,
     required this.profile,
-    required this.onLikeContent,
-    required this.onSendRose,
+    required this.performLikeApiCall,
+    required this.onInteractionComplete,
   });
 
-  // Helper to trigger standard like with comment dialog
-  void _triggerStandardLike(BuildContext context, WidgetRef ref,
-      ContentLikeType contentType, String contentIdentifier) async {
-    print(
-        "[HomeProfileCard] Standard Like tapped for $contentType:$contentIdentifier");
-
-    final currentUser = ref.read(userProvider);
-    final bool isMale = currentUser.gender == Gender.man;
-    print(
-        "[HomeProfileCard] Current user gender: ${currentUser.gender?.value ?? 'Unknown'}, IsMale: $isMale");
-
-    String? comment;
-    bool proceedWithLike = false;
-
-    comment = await _showCommentDialog(context, isOptional: !isMale);
+  // --- METHOD TO SHOW INTERACTION DIALOG ---
+  Future<void> _showInteractionDialog(
+    BuildContext context,
+    WidgetRef ref,
+    ContentLikeType contentType,
+    String contentIdentifier,
+    String? previewImageUrl,
+  ) async {
+    final currentUserGender = ref.read(userProvider).gender;
+    final isMale = currentUserGender == Gender.man;
+    final commentController = TextEditingController();
+    final sendLikeEnabledNotifier = ValueNotifier<bool>(!isMale);
 
     if (isMale) {
-      if (comment != null && comment.trim().isNotEmpty) {
-        proceedWithLike = true;
-        print("[HomeProfileCard] Male user provided required comment.");
-      } else {
-        print(
-            "[HomeProfileCard] Male user cancelled or left comment empty. Like aborted.");
-        if (context.mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-                content: Text('A comment is required to send a like.',
-                    style: GoogleFonts.poppins()),
-                backgroundColor: Colors.orange[700]),
-          );
-        }
-      }
-    } else {
-      proceedWithLike = true;
-      print(
-          "[HomeProfileCard] Non-male user like attempt. Comment: ${comment ?? 'None'}. Proceeding.");
-    }
-
-    if (proceedWithLike) {
-      onLikeContent(contentType, contentIdentifier, comment);
-    }
-  }
-
-  // Comment Dialog (Keep as is)
-  Future<String?> _showCommentDialog(BuildContext context,
-      {bool isOptional = false}) async {
-    final TextEditingController commentController = TextEditingController();
-    String title =
-        isOptional ? "Add a Comment? (Optional)" : "Add a Comment (Required)";
-    ValueNotifier<bool> sendEnabledNotifier = ValueNotifier<bool>(isOptional);
-
-    if (!isOptional) {
       commentController.addListener(() {
+        // Check mounted before accessing notifier state inside listener
         if (context.mounted) {
-          sendEnabledNotifier.value = commentController.text.trim().isNotEmpty;
+          sendLikeEnabledNotifier.value =
+              commentController.text.trim().isNotEmpty;
         }
       });
     }
 
-    return showDialog<String>(
+    Future<void> _handleInteraction(LikeInteractionType interactionType) async {
+      final comment = commentController.text.trim();
+      // Ensure context is still valid before popping
+      if (context.mounted) {
+        Navigator.of(context).pop();
+      }
+      bool success = await performLikeApiCall(
+        contentType: contentType,
+        contentIdentifier: contentIdentifier,
+        interactionType: interactionType,
+        comment: comment.isNotEmpty ? comment : null,
+      );
+      if (success) {
+        onInteractionComplete();
+      }
+    }
+
+    await showDialog<void>(
       context: context,
-      barrierDismissible: isOptional,
+      barrierDismissible: true,
       builder: (BuildContext dialogContext) {
-        /* ... AlertDialog ... */ return AlertDialog(
-          shape:
-              RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
-          title: Text(title,
-              style: GoogleFonts.poppins(fontWeight: FontWeight.w600)),
-          content: TextField(
-            controller: commentController,
-            decoration: InputDecoration(
-              hintText: "Your comment...",
-              border:
-                  OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
-              counterText: "",
-            ),
-            maxLength: 140,
-            maxLines: 3,
-            minLines: 1,
-            autofocus: true,
-            onChanged: (text) {
-              if (isOptional) {
-                sendEnabledNotifier.value = true;
-              } else {
-                sendEnabledNotifier.value = text.trim().isNotEmpty;
-              }
-            },
+        // Use a different context name inside builder
+        return AlertDialog(
+          contentPadding: const EdgeInsets.all(16),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(20.0),
           ),
-          actions: <Widget>[
-            TextButton(
-              child: Text("Cancel",
-                  style: GoogleFonts.poppins(color: Colors.grey)),
-              onPressed: () => Navigator.of(dialogContext).pop(null),
+          // *** Wrap content in a SizedBox to provide a constraint ***
+          content: SizedBox(
+            width: MediaQuery.of(dialogContext).size.width *
+                0.8, // Constrain width
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  // Preview Image (optional)
+                  if (previewImageUrl != null)
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(12.0),
+                      child: Image.network(
+                        previewImageUrl,
+                        height: 100,
+                        width: double.infinity,
+                        fit: BoxFit.cover,
+                        errorBuilder: (_, __, ___) => Container(
+                            height: 100,
+                            color: Colors.grey[200],
+                            child: Icon(Icons.broken_image,
+                                color: Colors.grey[400])),
+                      ),
+                    ),
+                  if (previewImageUrl == null &&
+                      contentType == ContentLikeType.audioPrompt)
+                    Container(
+                      height: 100,
+                      width: double.infinity, // Ensure it takes width
+                      decoration: BoxDecoration(
+                        color: Colors.grey[100],
+                        borderRadius: BorderRadius.circular(12.0),
+                      ),
+                      child: Center(
+                          child: Icon(Icons.multitrack_audio_rounded,
+                              size: 40, color: Colors.grey[500])),
+                    ),
+                  if (previewImageUrl == null &&
+                      contentType != ContentLikeType.audioPrompt)
+                    Container(
+                      height: 100,
+                      width: double.infinity, // Ensure it takes width
+                      decoration: BoxDecoration(
+                        color: Colors.grey[100],
+                        borderRadius: BorderRadius.circular(12.0),
+                      ),
+                      child: Center(
+                          child: Icon(Icons.article_outlined,
+                              size: 40, color: Colors.grey[500])),
+                    ),
+
+                  const SizedBox(height: 16),
+
+                  // Comment Text Field
+                  TextField(
+                    controller: commentController,
+                    decoration: InputDecoration(
+                      hintText: "Add a comment...",
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12.0),
+                        borderSide: BorderSide(color: Colors.grey.shade300),
+                      ),
+                      focusedBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12.0),
+                        borderSide: const BorderSide(color: Color(0xFF8B5CF6)),
+                      ),
+                      contentPadding: const EdgeInsets.symmetric(
+                          horizontal: 12, vertical: 10),
+                    ),
+                    maxLength: 150,
+                    maxLines: 3,
+                    minLines: 1,
+                    textCapitalization: TextCapitalization.sentences,
+                  ),
+                  const SizedBox(height: 16),
+
+                  // Action Buttons Row
+                  // *** REMOVED Expanded widgets ***
+                  Row(
+                    // Changed from spaceBetween to spaceEvenly for better spacing without Expanded
+                    mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                    children: [
+                      // Send Rose Button
+                      OutlinedButton.icon(
+                        icon: Icon(Icons.star_rounded,
+                            color: Colors.purple.shade300),
+                        label: Text(
+                          "Send Rose",
+                          style: GoogleFonts.poppins(
+                              fontWeight: FontWeight.w500,
+                              color: Colors.purple.shade400,
+                              fontSize: 13 // Adjust font size if needed
+                              ),
+                          overflow: TextOverflow.ellipsis, // Prevent overflow
+                        ),
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: Colors.purple.shade400,
+                          side: BorderSide(color: Colors.purple.shade100),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(25),
+                          ),
+                          padding: const EdgeInsets.symmetric(
+                              vertical: 10, horizontal: 12), // Adjust padding
+                        ),
+                        onPressed: () =>
+                            _handleInteraction(LikeInteractionType.rose),
+                      ),
+                      // Send Like Button (with ValueListenableBuilder)
+                      ValueListenableBuilder<bool>(
+                        valueListenable: sendLikeEnabledNotifier,
+                        builder: (context, isEnabled, child) {
+                          return ElevatedButton.icon(
+                            icon: Icon(
+                              Icons.favorite_rounded,
+                              color: isEnabled
+                                  ? Colors.white
+                                  : Colors.grey.shade400,
+                              size: 18, // Adjust size
+                            ),
+                            label: Text(
+                              "Send Like",
+                              style: GoogleFonts.poppins(
+                                  fontWeight: FontWeight.w600,
+                                  color: isEnabled
+                                      ? Colors.white
+                                      : Colors.grey.shade500,
+                                  fontSize: 13 // Adjust font size if needed
+                                  ),
+                              overflow:
+                                  TextOverflow.ellipsis, // Prevent overflow
+                            ),
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: isEnabled
+                                  ? Colors.pink.shade300
+                                  : Colors.grey.shade200,
+                              disabledBackgroundColor: Colors.grey.shade200,
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(25),
+                              ),
+                              padding: const EdgeInsets.symmetric(
+                                  vertical: 10,
+                                  horizontal: 12), // Adjust padding
+                              elevation: isEnabled ? 2 : 0,
+                            ),
+                            onPressed: isEnabled
+                                ? () => _handleInteraction(
+                                    LikeInteractionType.standard)
+                                : null,
+                          );
+                        },
+                      ),
+                    ],
+                  ),
+
+                  // Cancel Button
+                  TextButton(
+                    child: Text("Cancel",
+                        style: GoogleFonts.poppins(color: Colors.grey)),
+                    onPressed: () => Navigator.of(dialogContext).pop(),
+                  ),
+                ],
+              ),
             ),
-            ValueListenableBuilder<bool>(
-              valueListenable: sendEnabledNotifier,
-              builder: (context, isEnabled, child) {
-                return TextButton(
-                  child: Text("Send",
-                      style: GoogleFonts.poppins(
-                          color:
-                              isEnabled ? const Color(0xFF8B5CF6) : Colors.grey,
-                          fontWeight: FontWeight.w600)),
-                  onPressed: isEnabled
-                      ? () => Navigator.of(dialogContext)
-                          .pop(commentController.text.trim())
-                      : null,
-                );
-              },
-            ),
-          ],
+          ),
         );
       },
     ).whenComplete(() {
+      if (isMale) {
+        try {
+          commentController.removeListener(() {});
+        } catch (e) {}
+      }
       try {
-        if (!isOptional) commentController.removeListener(() {});
-      } catch (e) {}
-      sendEnabledNotifier.dispose();
-      commentController.dispose();
+        sendLikeEnabledNotifier.dispose();
+      } catch (e) {
+        print("Error disposing sendLikeEnabledNotifier: $e");
+      }
+      try {
+        commentController.dispose();
+      } catch (e) {
+        print("Error disposing commentController: $e");
+      }
     });
   }
+  // --- END INTERACTION DIALOG METHOD ---
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    // --- Prepare the list of content blocks with specific ordering ---
+    // --- Content Block Preparation ---
     final List<dynamic> contentBlocks = [];
     final mediaUrls = profile.mediaUrls ?? [];
     final prompts = profile.prompts;
 
-    // 1. Header
     contentBlocks.add("header_section");
-
-    // 2. First Photo (if available)
-    if (mediaUrls.isNotEmpty) {
-      contentBlocks.add(mediaUrls[0]);
-    }
-
-    // 3. First Prompt (if available)
-    if (prompts.isNotEmpty) {
-      contentBlocks.add(prompts[0]);
-    }
-
-    // 4. Vitals Section
+    if (mediaUrls.isNotEmpty) contentBlocks.add(mediaUrls[0]);
+    if (prompts.isNotEmpty) contentBlocks.add(prompts[0]);
     contentBlocks.add("vitals_section");
 
-    // 5. Interleave remaining media and prompts
     int mediaIndex = 1;
     int promptIndex = 1;
     int maxRemaining = max(mediaUrls.length, prompts.length);
 
     for (int i = 1; i < maxRemaining; i++) {
-      // Start loop from 1 (second item)
       if (mediaIndex < mediaUrls.length) {
         contentBlocks.add(mediaUrls[mediaIndex]);
         mediaIndex++;
@@ -13698,8 +13720,6 @@ class HomeProfileCard extends ConsumerWidget {
         promptIndex++;
       }
     }
-
-    // 6. Add Audio Prompt (if available) at the end or interleaved earlier if preferred
     if (profile.audioPrompt != null) {
       contentBlocks.add(profile.audioPrompt!);
     }
@@ -13707,24 +13727,18 @@ class HomeProfileCard extends ConsumerWidget {
 
     // --- Build the ListView ---
     return Container(
-      // Add a container to handle background color if needed
-      color: Colors.white, // Set background color for the whole scrolling area
+      color: Colors.white,
       child: ListView.builder(
           physics: const ClampingScrollPhysics(),
-          padding: EdgeInsets.zero, // Remove ListView padding
+          padding: EdgeInsets.zero,
           itemCount: contentBlocks.length,
           itemBuilder: (context, index) {
             final item = contentBlocks[index];
-
-            // Apply consistent horizontal padding and variable vertical padding
             final double topPadding = (index == 0) ? 16.0 : 0;
-            final double bottomPadding =
-                20.0; // Consistent spacing between blocks
+            final double bottomPadding = 20.0;
             final double horizontalPadding = 12.0;
-
             Widget contentWidget;
 
-            // Build content based on type
             if (item is String && item == "header_section") {
               contentWidget = _buildHeaderBlock(profile);
             } else if (item is String && item.startsWith('http')) {
@@ -13735,14 +13749,14 @@ class HomeProfileCard extends ConsumerWidget {
             } else if (item is Prompt) {
               contentWidget = _buildPromptItem(context, ref, item);
             } else if (item is AudioPromptModel) {
-              contentWidget = _buildAudioItem(context, ref, item);
+              contentWidget = _buildAudioItem(
+                  context, ref, item); // Calls the updated builder
             } else if (item is String && item == "vitals_section") {
               contentWidget = _buildVitalsBlock(profile);
             } else {
               contentWidget = const SizedBox.shrink();
             }
 
-            // Wrap content with Padding
             return Padding(
               padding: EdgeInsets.fromLTRB(horizontalPadding, topPadding,
                   horizontalPadding, bottomPadding),
@@ -13753,7 +13767,6 @@ class HomeProfileCard extends ConsumerWidget {
   }
 
   // --- Block Builder Widgets ---
-
   Widget _buildHeaderBlock(UserModel profile) {
     final age = profile.age;
     return Column(
@@ -13761,9 +13774,8 @@ class HomeProfileCard extends ConsumerWidget {
       children: [
         Row(
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          crossAxisAlignment: CrossAxisAlignment.start, // Align top
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Use Flexible for text to allow wrapping and prevent overflow
             Flexible(
               child: Text(
                 '${profile.name ?? 'Name'}${age != null ? ', $age' : ''}',
@@ -13771,21 +13783,18 @@ class HomeProfileCard extends ConsumerWidget {
                     fontSize: 26,
                     fontWeight: FontWeight.bold,
                     color: Colors.black87),
-                //  overflow: TextOverflow.ellipsis, // Removed ellipsis for potential wrapping
               ),
             ),
             IconButton(
-              // More options button
               padding: EdgeInsets.zero,
               constraints: const BoxConstraints(),
               icon: Icon(Icons.more_horiz, color: Colors.grey[500]),
               onPressed: () {/* TODO: Implement report/block */},
-              iconSize: 30, // Slightly larger
+              iconSize: 30,
               splashRadius: 20,
             )
           ],
         ),
-        // Add other header info like location/job if desired
         if (profile.hometown != null && profile.hometown!.isNotEmpty) ...[
           const SizedBox(height: 4),
           Row(
@@ -13805,182 +13814,8 @@ class HomeProfileCard extends ConsumerWidget {
     );
   }
 
-  Widget _buildMediaItem(
-      BuildContext context, WidgetRef ref, String url, int index) {
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(10), // Consistent rounding
-      child: AspectRatio(
-        aspectRatio: 4 / 5.5,
-        child: Container(
-          decoration: BoxDecoration(
-            color: Colors.grey[200],
-          ),
-          child: Stack(
-            fit: StackFit.expand,
-            children: [
-              Image.network(
-                url,
-                fit: BoxFit.cover,
-                /* loading/error */
-                loadingBuilder: (ctx, child, prog) => prog == null
-                    ? child
-                    : Center(
-                        child: CircularProgressIndicator(
-                            value: prog.expectedTotalBytes != null
-                                ? prog.cumulativeBytesLoaded /
-                                    prog.expectedTotalBytes!
-                                : null,
-                            color: Colors.grey[400])),
-                errorBuilder: (ctx, err, st) => Center(
-                    child: Icon(Icons.image_not_supported_outlined,
-                        color: Colors.grey[400], size: 40)),
-              ),
-              Positioned(
-                  bottom: 10,
-                  right: 10,
-                  child: _buildSmallLikeButton(() => _triggerStandardLike(
-                      context, ref, ContentLikeType.media, index.toString())))
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildPromptItem(BuildContext context, WidgetRef ref, Prompt prompt) {
-    return Container(
-      padding: const EdgeInsets.all(20), // More padding
-      decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(10),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withOpacity(0.05),
-              blurRadius: 10,
-              offset: const Offset(0, 3),
-            )
-          ]),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  prompt.question.label,
-                  style: GoogleFonts.poppins(
-                      fontSize: 14,
-                      fontWeight: FontWeight.w600,
-                      color: Colors.grey[600]),
-                ),
-                const SizedBox(height: 10),
-                Text(
-                  prompt.answer,
-                  style: GoogleFonts.poppins(
-                      fontSize: 20,
-                      color: Colors.black87,
-                      height: 1.4,
-                      fontWeight: FontWeight.w500),
-                ),
-              ],
-            ),
-          ), // Larger answer font
-          const SizedBox(width: 12),
-          _buildSmallLikeButton(() => _triggerStandardLike(context, ref,
-              prompt.category.contentType, prompt.question.value)),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildAudioItem(
-      BuildContext context, WidgetRef ref, AudioPromptModel audio) {
-    final audioState = ref.watch(audioPlayerControllerProvider);
-    final currentPlayerUrl = ref.watch(currentAudioUrlProvider);
-    final bool isThisPlaying = currentPlayerUrl == audio.audioUrl &&
-        audioState == AudioPlayerState.playing;
-    final bool isThisLoading = currentPlayerUrl == audio.audioUrl &&
-        audioState == AudioPlayerState.loading;
-    final bool isThisPaused = currentPlayerUrl == audio.audioUrl &&
-        audioState == AudioPlayerState.paused;
-
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(10),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withOpacity(0.05),
-              blurRadius: 10,
-              offset: const Offset(0, 3),
-            )
-          ]),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            audio.prompt.label,
-            style: GoogleFonts.poppins(
-                fontSize: 14,
-                fontWeight: FontWeight.w600,
-                color: Colors.grey[600]),
-          ),
-          const SizedBox(height: 12),
-          Row(
-            children: [
-              InkWell(
-                onTap: () {
-                  /* Play/Pause Logic */ if (isThisLoading) return;
-                  final playerNotifier =
-                      ref.read(audioPlayerControllerProvider.notifier);
-                  if (isThisPlaying)
-                    playerNotifier.pause();
-                  else if (isThisPaused)
-                    playerNotifier.resume();
-                  else
-                    playerNotifier.play(audio.audioUrl);
-                },
-                borderRadius: BorderRadius.circular(25),
-                child: Container(
-                  width: 50,
-                  height: 50,
-                  decoration: BoxDecoration(
-                      color: Colors.grey[100], shape: BoxShape.circle),
-                  child: isThisLoading
-                      ? const Padding(
-                          padding: EdgeInsets.all(12.0),
-                          child: CircularProgressIndicator(
-                              strokeWidth: 2, color: Colors.grey))
-                      : Icon(
-                          isThisPlaying
-                              ? Icons.pause_rounded
-                              : Icons.play_arrow_rounded,
-                          color: Colors.grey[800],
-                          size: 30),
-                ),
-              ),
-              const SizedBox(width: 16),
-              Expanded(
-                child: Container(
-                  height: 4,
-                  color: Colors.grey[300],
-                ),
-              ), // Simple line for waveform
-              const SizedBox(width: 16),
-              _buildSmallLikeButton(() => _triggerStandardLike(
-                  context, ref, ContentLikeType.audioPrompt, "0")),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-
   Widget _buildVitalsBlock(UserModel profile) {
     final List<Widget> vitals = [];
-    // Add checks and build _buildVitalRow for each available vital
     if (profile.height != null && profile.height!.isNotEmpty) {
       vitals.add(_buildVitalRow(Icons.height, profile.height!));
     }
@@ -14002,13 +13837,11 @@ class HomeProfileCard extends ConsumerWidget {
       vitals.add(_buildVitalRow(
           Icons.smoking_rooms_outlined, profile.smokingHabit!.label));
     }
-    // Add more vitals as needed
 
     if (vitals.isEmpty) return const SizedBox.shrink();
 
     return Container(
-        padding: const EdgeInsets.symmetric(
-            horizontal: 16, vertical: 12), // Less vertical padding
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
         width: double.infinity,
         decoration: BoxDecoration(
             color: Colors.white,
@@ -14020,31 +13853,25 @@ class HomeProfileCard extends ConsumerWidget {
                 offset: const Offset(0, 3),
               )
             ]),
-        // Use Column with dividers instead of Wrap
         child: Column(
           children: List.generate(vitals.length * 2 - 1, (index) {
             if (index.isEven) {
               return vitals[index ~/ 2];
             } else {
-              return Divider(
-                  height: 16,
-                  thickness: 1,
-                  color: Colors.grey[200]); // Add dividers
+              return Divider(height: 16, thickness: 1, color: Colors.grey[200]);
             }
           }),
         ));
   }
 
-  // New Helper for individual vital rows
   Widget _buildVitalRow(IconData icon, String label) {
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 6.0), // Spacing for rows
+      padding: const EdgeInsets.symmetric(vertical: 6.0),
       child: Row(
         children: [
           Icon(icon, size: 20, color: Colors.grey[600]),
           const SizedBox(width: 12),
           Expanded(
-              // Allow text to wrap if needed
               child: Text(label,
                   style: GoogleFonts.poppins(
                       fontSize: 15, color: Colors.grey[800]))),
@@ -14053,10 +13880,215 @@ class HomeProfileCard extends ConsumerWidget {
     );
   }
 
-  // Helper for the small like buttons within blocks
+  // --- Item Builders ---
+  Widget _buildMediaItem(
+      BuildContext context, WidgetRef ref, String url, int index) {
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(10),
+      child: AspectRatio(
+        aspectRatio: 4 / 5.5,
+        child: Container(
+          decoration: BoxDecoration(color: Colors.grey[200]),
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              Image.network(url,
+                  fit: BoxFit.cover,
+                  loadingBuilder: (ctx, child, prog) => prog == null
+                      ? child
+                      : Center(
+                          child: CircularProgressIndicator(
+                              value: prog.expectedTotalBytes != null
+                                  ? prog.cumulativeBytesLoaded /
+                                      prog.expectedTotalBytes!
+                                  : null,
+                              color: Colors.grey[400])),
+                  errorBuilder: (ctx, err, st) => Center(
+                      child: Icon(Icons.image_not_supported_outlined,
+                          color: Colors.grey[400], size: 40))),
+              Positioned(
+                  bottom: 10,
+                  right: 10,
+                  child: _buildSmallLikeButton(() => _showInteractionDialog(
+                        context,
+                        ref,
+                        ContentLikeType.media,
+                        index.toString(), // Use index as identifier for media
+                        url,
+                      )))
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildPromptItem(BuildContext context, WidgetRef ref, Prompt prompt) {
+    return Container(
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(10),
+          boxShadow: [
+            BoxShadow(
+                color: Colors.black.withOpacity(0.05),
+                blurRadius: 10,
+                offset: const Offset(0, 3))
+          ]),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(prompt.question.label,
+                    style: GoogleFonts.poppins(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w600,
+                        color: Colors.grey[600])),
+                const SizedBox(height: 10),
+                Text(prompt.answer,
+                    style: GoogleFonts.poppins(
+                        fontSize: 20,
+                        color: Colors.black87,
+                        height: 1.4,
+                        fontWeight: FontWeight.w500)),
+              ],
+            ),
+          ),
+          const SizedBox(width: 12),
+          _buildSmallLikeButton(() => _showInteractionDialog(
+                context,
+                ref,
+                prompt.category.contentType, // Use correct ContentLikeType
+                prompt.question.value, // Use question value as identifier
+                null,
+              )),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildAudioItem(
+      BuildContext context, WidgetRef ref, AudioPromptModel audio) {
+    // --- WATCH THE STATE PROVIDER (like ProfileScreen) ---
+    final audioState = ref.watch(audioPlayerStateProvider);
+    // --- END WATCH ---
+    final currentPlayerUrl = ref.watch(currentAudioUrlProvider);
+
+    // --- Derive booleans (like ProfileScreen) ---
+    final bool isThisPlaying = currentPlayerUrl == audio.audioUrl &&
+        audioState == AudioPlayerState.playing;
+    final bool isThisLoading = currentPlayerUrl == audio.audioUrl &&
+        audioState == AudioPlayerState.loading;
+    final bool isThisPaused = currentPlayerUrl == audio.audioUrl &&
+        audioState == AudioPlayerState.paused;
+    // --- End Derive booleans ---
+
+    // Build the UI structure similar to ProfileScreen
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: Colors.grey[200]!),
+          boxShadow: [
+            BoxShadow(
+                color: Colors.grey.withOpacity(0.06),
+                blurRadius: 10,
+                offset: const Offset(0, 3))
+          ]),
+      child: Row(
+        children: [
+          // Play/Pause Button
+          InkWell(
+            onTap: () {
+              // Use the derived booleans for logic
+              if (isThisLoading) return;
+              final playerNotifier =
+                  ref.read(audioPlayerControllerProvider.notifier);
+              if (isThisPlaying) {
+                playerNotifier.pause();
+              } else if (isThisPaused) {
+                playerNotifier.resume();
+              } else {
+                playerNotifier.play(audio.audioUrl);
+              }
+            },
+            borderRadius: BorderRadius.circular(24),
+            child: Container(
+                width: 48,
+                height: 48,
+                decoration: BoxDecoration(
+                  color: const Color(0xFF8B5CF6),
+                  borderRadius: BorderRadius.circular(24),
+                  boxShadow: [
+                    BoxShadow(
+                        color: const Color(0xFF8B5CF6).withOpacity(0.3),
+                        blurRadius: 8,
+                        offset: const Offset(0, 2))
+                  ],
+                ),
+                // Use derived booleans for UI state
+                child: isThisLoading
+                    ? const Padding(
+                        padding: EdgeInsets.all(12.0),
+                        child: CircularProgressIndicator(
+                            strokeWidth: 2, color: Colors.white))
+                    : Icon(
+                        isThisPlaying // Use boolean
+                            ? Icons.pause_rounded
+                            : Icons.play_arrow_rounded,
+                        color: Colors.white,
+                        size: 28)),
+          ),
+          const SizedBox(width: 16),
+
+          // Text Column (Prompt Label and Status)
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(audio.prompt.label,
+                    style: GoogleFonts.poppins(
+                        fontSize: 15,
+                        fontWeight: FontWeight.w500,
+                        color: const Color(0xFF1A1A1A))),
+                const SizedBox(height: 4),
+                Text(
+                    // Use derived booleans for status text
+                    isThisLoading
+                        ? "Loading..."
+                        : isThisPlaying
+                            ? "Playing..."
+                            : isThisPaused
+                                ? "Paused"
+                                : "Tap to listen",
+                    style: GoogleFonts.poppins(
+                        fontSize: 13, color: Colors.grey[600])),
+              ],
+            ),
+          ),
+          // Like Button
+          const SizedBox(width: 16),
+          _buildSmallLikeButton(() => _showInteractionDialog(
+                context,
+                ref,
+                ContentLikeType.audioPrompt,
+                audio.prompt.value,
+                null,
+              )),
+        ],
+      ),
+    );
+  }
+
+  // --- Like Button Helper ---
   Widget _buildSmallLikeButton(VoidCallback onPressed) {
     return Container(
-      width: 40, height: 40, // Smaller size
+      width: 40,
+      height: 40,
       decoration: BoxDecoration(
           color: Colors.white,
           shape: BoxShape.circle,
@@ -14066,7 +14098,7 @@ class HomeProfileCard extends ConsumerWidget {
       child: IconButton(
         padding: EdgeInsets.zero,
         icon: Icon(Icons.favorite_border_rounded,
-            color: Colors.pink[200], size: 22), // Adjusted color/size
+            color: Colors.pink[200], size: 22),
         tooltip: 'Like this item',
         onPressed: onPressed,
       ),
