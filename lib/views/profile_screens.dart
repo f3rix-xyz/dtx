@@ -1,10 +1,14 @@
+// File: views/profile_screens.dart
+import 'dart:math'; // Needed for interleaving logic
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_fonts/google_fonts.dart';
-import 'package:audioplayers/audioplayers.dart';
+import 'package:audioplayers/audioplayers.dart'; // Keep for local player
+
 import 'package:dtx/models/user_model.dart';
 import 'package:dtx/providers/user_provider.dart';
-import 'package:dtx/utils/app_enums.dart'; // Import for enums if used in helpers
+import 'package:dtx/utils/app_enums.dart';
 import 'package:dtx/views/settings_screen.dart';
 
 class ProfileScreen extends ConsumerStatefulWidget {
@@ -15,26 +19,29 @@ class ProfileScreen extends ConsumerStatefulWidget {
 }
 
 class _ProfileScreenState extends ConsumerState<ProfileScreen> {
+  // --- Retained State for Local Audio Player ---
   final AudioPlayer _audioPlayer = AudioPlayer();
   bool _isPlaying = false;
   String? _currentAudioUrl;
+  // --- End Retained State ---
+
   final PageController _pageController = PageController();
   int _currentImageIndex = 0;
 
   @override
   void initState() {
     super.initState();
-    // Fetching is now initiated in MainNavigationScreen initState
-    // WidgetsBinding.instance.addPostFrameCallback((_) {
-    //   if (ref.read(userProvider).name == null && !ref.read(userLoadingProvider)) {
-    //      ref.read(userProvider.notifier).fetchProfile();
-    //   }
-    // });
+    // Fetching initiated in MainNavigationScreen initState
 
+    // --- Retained Audio Player Listeners ---
     _audioPlayer.onPlayerStateChanged.listen((state) {
       if (mounted) {
         setState(() {
           _isPlaying = state == PlayerState.playing;
+          // Reset URL if stopped/completed unexpectedly
+          if (state == PlayerState.stopped || state == PlayerState.completed) {
+            _currentAudioUrl = null;
+          }
         });
       }
     });
@@ -47,11 +54,13 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
         });
       }
     });
+    // --- End Retained Listeners ---
   }
 
   @override
   void dispose() {
     try {
+      // Stop and dispose the local audio player
       if (_audioPlayer.state == PlayerState.playing ||
           _audioPlayer.state == PlayerState.paused) {
         _audioPlayer.stop();
@@ -64,11 +73,7 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
     super.dispose();
   }
 
-  String capitalizeFirstLetter(String text) {
-    if (text.isEmpty) return text;
-    return text[0].toUpperCase() + text.substring(1);
-  }
-
+  // --- Retained Local Audio Control ---
   Future<void> _playOrPauseAudio(String audioUrl) async {
     if (!mounted) return;
 
@@ -81,14 +86,17 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
           _currentAudioUrl == audioUrl) {
         await _audioPlayer.resume();
       } else {
+        // Stop any previously playing audio before starting new
         if (currentState == PlayerState.playing ||
             currentState == PlayerState.paused) {
           await _audioPlayer.stop();
         }
+        // Play the new URL
         await _audioPlayer.play(UrlSource(audioUrl));
         if (mounted) {
           setState(() {
-            _currentAudioUrl = audioUrl;
+            _currentAudioUrl =
+                audioUrl; // Update current URL only when playing starts
           });
         }
       }
@@ -104,130 +112,20 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
       }
     }
   }
+  // --- End Retained Local Audio Control ---
 
-  @override
-  Widget build(BuildContext context) {
-    final user = ref.watch(userProvider);
-    final isLoading = ref.watch(userLoadingProvider);
+  // --- Helper Methods (some adapted from HomeProfileCard) ---
 
-    // Show loading indicator only if fetching initially (user.name is null)
-    // Loading state now handled by checking provider state directly
-    if (isLoading && user.name == null) {
-      return Scaffold(
-        backgroundColor: Colors.white,
-        // Add AppBar here for consistency during loading
-        appBar: AppBar(
-          title: Text("Profile",
-              style: GoogleFonts.poppins(fontWeight: FontWeight.w600)),
-          backgroundColor: Colors.white,
-          foregroundColor: Colors.black,
-          elevation: 0, // No shadow when loading
-          automaticallyImplyLeading: false,
-          actions: [
-            _buildTopIconButton(
-                icon: Icons.edit_outlined,
-                tooltip: 'Edit Profile',
-                onPressed: () {}), // Placeholder actions
-            const SizedBox(width: 8),
-            _buildTopIconButton(
-                icon: Icons.settings_outlined,
-                tooltip: 'Settings',
-                onPressed: () {}),
-          ],
-        ),
-        body: const Center(
-          child: CircularProgressIndicator(color: Color(0xFF8B5CF6)),
-        ),
-      );
-    }
-
-    final age = user.age;
-    final capitalizedName =
-        user.name != null ? capitalizeFirstLetter(user.name!) : null;
-    final capitalizedLastName =
-        user.lastName != null && user.lastName!.isNotEmpty
-            ? capitalizeFirstLetter(user.lastName!)
-            : null;
-
-    return Scaffold(
-      backgroundColor: Colors.white,
-      // Use SliverAppBar for integrated scrolling behavior
-      body: RefreshIndicator(
-        color: const Color(0xFF8B5CF6),
-        onRefresh: () => ref.read(userProvider.notifier).fetchProfile(),
-        child: CustomScrollView(
-          physics: const BouncingScrollPhysics(
-              parent: AlwaysScrollableScrollPhysics()),
-          slivers: [
-            SliverAppBar(
-              pinned: true, // Keep visible while scrolling down
-              floating: false, // Don't reappear immediately on scroll up
-              elevation: 1, // Subtle shadow
-              backgroundColor: Colors.white,
-              foregroundColor: Colors.black,
-              automaticallyImplyLeading: false, // No back button in tab screen
-              title: Text("Profile",
-                  style: GoogleFonts.poppins(fontWeight: FontWeight.w600)),
-              actions: [
-                _buildTopIconButton(
-                  icon: Icons.edit_outlined,
-                  tooltip: 'Edit Profile',
-                  onPressed: () {
-                    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-                        content: Text("Edit Profile (Not Implemented)")));
-                  },
-                ),
-                const SizedBox(width: 8),
-                _buildTopIconButton(
-                  icon: Icons.settings_outlined,
-                  tooltip: 'Settings',
-                  onPressed: () {
-                    Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                            builder: (context) => const SettingsScreen()));
-                  },
-                ),
-                const SizedBox(width: 8), // Add padding to the right edge
-              ],
-            ),
-
-            // Add some padding below the AppBar
-            const SliverToBoxAdapter(child: SizedBox(height: 16)),
-
-            SliverPadding(
-              padding: const EdgeInsets.symmetric(horizontal: 24),
-              sliver: SliverList(
-                delegate: SliverChildListDelegate([
-                  // Removed Row for buttons, handled by SliverAppBar actions
-                  _buildProfileHeader(
-                      capitalizedName, capitalizedLastName, age, user),
-                  const SizedBox(height: 24),
-                  _buildMediaGallery(user.mediaUrls ?? []),
-                  const SizedBox(height: 32),
-                  _buildInfoSection(
-                      "Looking for", user.datingIntention?.label ?? ""),
-                  const SizedBox(height: 24),
-                  _buildPromptSection(user.prompts),
-                  const SizedBox(height: 32),
-                  _buildAudioPrompt(user.audioPrompt),
-                  const SizedBox(height: 32),
-                  _buildPersonalDetailsSection(user),
-                  const SizedBox(height: 40), // Bottom padding
-                ]),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
+  String capitalizeFirstLetter(String text) {
+    if (text.isEmpty) return text;
+    return text[0].toUpperCase() + text.substring(1);
   }
 
-  // _buildTopIconButton remains the same
   Widget _buildTopIconButton(
       {required IconData icon,
       required String tooltip,
       required VoidCallback onPressed}) {
+    // (Keep this helper as is)
     return IconButton(
       icon: Container(
         padding: const EdgeInsets.all(8),
@@ -242,386 +140,40 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
     );
   }
 
-  // _buildProfileHeader remains the same
-  Widget _buildProfileHeader(
-      String? name, String? lastName, int? age, UserModel user) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          '${name ?? "Your Name"} ${lastName ?? ""} ${age != null ? "• $age" : ""}', // Provide default for name
-          style: GoogleFonts.poppins(
-            fontSize: 32,
-            fontWeight: FontWeight.w700,
-            color: const Color(0xFF1A1A1A),
-            height: 1.2,
-          ),
-        ),
-        const SizedBox(height: 12),
-        Container(
-          // Themed divider
-          width: 50, height: 3,
-          decoration: BoxDecoration(
-              color: const Color(0xFF8B5CF6),
-              borderRadius: BorderRadius.circular(1.5)),
-        ),
-        const SizedBox(height: 16),
-        if (user.gender != null ||
-            (user.hometown != null && user.hometown!.isNotEmpty))
-          Wrap(
-            spacing: 10,
-            runSpacing: 8,
-            children: [
-              if (user.gender != null)
-                _buildDetailChip(
-                    Icons.person_outline_rounded, user.gender!.label,
-                    subtle: true),
-              if (user.hometown != null && user.hometown!.isNotEmpty)
-                _buildDetailChip(Icons.location_on_outlined, user.hometown!,
-                    subtle: true),
-            ],
-          ),
-      ],
-    );
-  }
-
-  // _buildMediaGallery remains the same
-  Widget _buildMediaGallery(List<String> images) {
-    if (images.isEmpty) {
-      return _buildEmptySection(
-          "Photos & Videos",
-          "Add photos and videos to show off your personality!",
-          Icons.add_photo_alternate_outlined);
-    }
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Container(
-          height: MediaQuery.of(context).size.height * 0.5,
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(24),
-            boxShadow: [
-              BoxShadow(
-                  color: Colors.black.withOpacity(0.08),
-                  blurRadius: 15,
-                  offset: const Offset(0, 5))
-            ],
-          ),
-          child: ClipRRect(
-            borderRadius: BorderRadius.circular(24),
-            child: Stack(
-              children: [
-                PageView.builder(
-                  controller: _pageController,
-                  itemCount: images.length,
-                  onPageChanged: (index) {
-                    if (mounted) {
-                      setState(() {
-                        _currentImageIndex = index;
-                      });
-                    }
-                  },
-                  itemBuilder: (context, index) {
-                    bool isVideo =
-                        images[index].toLowerCase().contains('.mp4') ||
-                            images[index].toLowerCase().contains('.mov');
-                    return Container(
-                      color: Colors.grey[200],
-                      child: Stack(
-                        fit: StackFit.expand,
-                        children: [
-                          Image.network(
-                            images[index],
-                            fit: BoxFit.cover,
-                            errorBuilder: (context, error, stackTrace) =>
-                                Container(
-                                    color: Colors.grey[200],
-                                    child: Center(
-                                        child: Icon(Icons.broken_image_outlined,
-                                            color: Colors.grey[400],
-                                            size: 48))),
-                            loadingBuilder: (context, child, loadingProgress) {
-                              if (loadingProgress == null) return child;
-                              return Center(
-                                child: CircularProgressIndicator(
-                                  color: const Color(0xFF8B5CF6),
-                                  value: loadingProgress.expectedTotalBytes !=
-                                          null
-                                      ? loadingProgress.cumulativeBytesLoaded /
-                                          loadingProgress.expectedTotalBytes!
-                                      : null,
-                                ),
-                              );
-                            },
-                          ),
-                          if (isVideo)
-                            Center(
-                              child: Container(
-                                padding: const EdgeInsets.all(12),
-                                decoration: BoxDecoration(
-                                    color: Colors.black.withOpacity(0.5),
-                                    shape: BoxShape.circle),
-                                child: Icon(Icons.play_arrow_rounded,
-                                    color: Colors.white, size: 40),
-                              ),
-                            ),
-                        ],
-                      ),
-                    );
-                  },
-                ),
-                if (images.length > 1)
-                  Positioned(
-                    bottom: 20,
-                    left: 0,
-                    right: 0,
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: List.generate(
-                        images.length,
-                        (index) => AnimatedContainer(
-                          duration: const Duration(milliseconds: 200),
-                          width: _currentImageIndex == index ? 24 : 8,
-                          height: 8,
-                          margin: const EdgeInsets.symmetric(horizontal: 4),
-                          decoration: BoxDecoration(
-                            borderRadius: BorderRadius.circular(4),
-                            color: _currentImageIndex == index
-                                ? const Color(0xFF8B5CF6)
-                                : Colors.white.withOpacity(0.6),
-                          ),
-                        ),
-                      ),
-                    ),
-                  ),
-              ],
-            ),
-          ),
-        ),
-      ],
-    );
-  }
-
-  // _buildInfoSection remains the same
-  Widget _buildInfoSection(String title, String content) {
-    if (content.isEmpty) {
-      return _buildEmptySection(
-          title,
-          "Add your dating intention to tell others what you're looking for.",
-          Icons.favorite_border_rounded);
-    }
+  Widget _buildEmptySection(String title, String message, IconData icon) {
+    // (Keep this helper as is)
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.symmetric(vertical: 16),
+      padding: const EdgeInsets.symmetric(vertical: 30, horizontal: 20),
+      margin: const EdgeInsets.symmetric(vertical: 16),
       decoration: BoxDecoration(
-          border:
-              Border(bottom: BorderSide(color: Colors.grey[200]!, width: 1))),
+          color: Colors.grey[50],
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: Colors.grey[200]!)),
       child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Text(title,
-              style: GoogleFonts.poppins(
-                  fontSize: 14,
-                  fontWeight: FontWeight.w500,
-                  color: Colors.grey[600])),
-          const SizedBox(height: 6),
-          Text(content,
-              style: GoogleFonts.poppins(
-                  fontSize: 16,
-                  fontWeight: FontWeight.w500,
-                  color: const Color(0xFF1A1A1A))),
-        ],
-      ),
-    );
-  }
-
-  // _buildPromptSection remains the same
-  Widget _buildPromptSection(List<Prompt> prompts) {
-    if (prompts.isEmpty) {
-      return _buildEmptySection(
-          "About Me",
-          "Add prompt answers to share more about yourself!",
-          Icons.chat_bubble_outline);
-    }
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Padding(
-          padding: const EdgeInsets.only(top: 16.0, bottom: 8.0),
-          child: Text("About Me",
-              style: GoogleFonts.poppins(
-                  fontSize: 20,
-                  fontWeight: FontWeight.w600,
-                  color: const Color(0xFF1A1A1A))),
-        ),
-        ...prompts.map((prompt) => _buildPromptCard(prompt)).toList(),
-      ],
-    );
-  }
-
-  // _buildPromptCard remains the same
-  Widget _buildPromptCard(Prompt prompt) {
-    if (prompt.answer.trim().isEmpty) return const SizedBox.shrink();
-    return Container(
-      width: double.infinity,
-      margin: const EdgeInsets.only(bottom: 16),
-      padding: const EdgeInsets.all(20),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: Colors.grey[200]!),
-        boxShadow: [
-          BoxShadow(
-              color: Colors.grey.withOpacity(0.06),
-              blurRadius: 10,
-              offset: const Offset(0, 3))
-        ],
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(prompt.question.label,
-              style: GoogleFonts.poppins(
-                  fontSize: 15,
-                  fontWeight: FontWeight.w600,
-                  color: const Color(0xFF8B5CF6))),
-          const SizedBox(height: 10),
-          Text(prompt.answer,
-              style: GoogleFonts.poppins(
-                  fontSize: 15, color: Colors.grey[800], height: 1.5)),
-        ],
-      ),
-    );
-  }
-
-  // _buildAudioPrompt remains the same
-  Widget _buildAudioPrompt(AudioPromptModel? audio) {
-    if (audio == null || audio.audioUrl.isEmpty) {
-      return _buildEmptySection(
-          "Voice Prompt",
-          "Record a voice prompt to let matches hear your voice!",
-          Icons.mic_none_rounded);
-    }
-    final bool isThisPlaying = _currentAudioUrl == audio.audioUrl && _isPlaying;
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Padding(
-          padding: const EdgeInsets.only(top: 16.0, bottom: 8.0),
-          child: Text("Voice Prompt",
-              style: GoogleFonts.poppins(
-                  fontSize: 20,
-                  fontWeight: FontWeight.w600,
-                  color: const Color(0xFF1A1A1A))),
-        ),
-        GestureDetector(
-          onTap: () => _playOrPauseAudio(audio.audioUrl),
-          child: Container(
-            padding: const EdgeInsets.all(16),
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(16),
-              border: Border.all(color: Colors.grey[200]!),
-              boxShadow: [
-                BoxShadow(
-                    color: Colors.grey.withOpacity(0.06),
-                    blurRadius: 10,
-                    offset: const Offset(0, 3))
-              ],
-            ),
-            child: Row(
-              children: [
-                Container(
-                  width: 48,
-                  height: 48,
-                  decoration: BoxDecoration(
-                    color: const Color(0xFF8B5CF6),
-                    borderRadius: BorderRadius.circular(24),
-                    boxShadow: [
-                      BoxShadow(
-                          color: const Color(0xFF8B5CF6).withOpacity(0.3),
-                          blurRadius: 8,
-                          offset: const Offset(0, 2))
-                    ],
-                  ),
-                  child: Icon(
-                      isThisPlaying
-                          ? Icons.pause_rounded
-                          : Icons.play_arrow_rounded,
-                      color: Colors.white,
-                      size: 28),
-                ),
-                const SizedBox(width: 16),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(audio.prompt.label,
-                          style: GoogleFonts.poppins(
-                              fontSize: 15,
-                              fontWeight: FontWeight.w500,
-                              color: const Color(0xFF1A1A1A))),
-                      const SizedBox(height: 4),
-                      Text(isThisPlaying ? "Playing..." : "Tap to listen",
-                          style: GoogleFonts.poppins(
-                              fontSize: 13, color: Colors.grey[600])),
-                    ],
-                  ),
-                ),
-              ],
-            ),
+          Padding(
+            padding: const EdgeInsets.only(bottom: 16.0),
+            child: Text(title,
+                style: GoogleFonts.poppins(
+                    fontSize: 18,
+                    fontWeight: FontWeight.w600,
+                    color: Colors.grey[800])),
           ),
-        ),
-      ],
+          Icon(icon, size: 40, color: Colors.grey[400]),
+          const SizedBox(height: 12),
+          Text(message,
+              textAlign: TextAlign.center,
+              style:
+                  GoogleFonts.poppins(fontSize: 14, color: Colors.grey[600])),
+        ],
+      ),
     );
   }
 
-  // _buildPersonalDetailsSection remains the same
-  Widget _buildPersonalDetailsSection(UserModel user) {
-    final details = <Widget>[];
-    if (user.height != null && user.height!.isNotEmpty)
-      details.add(_buildDetailChip(Icons.height_rounded, user.height!));
-    if (user.religiousBeliefs != null)
-      details.add(_buildDetailChip(
-          Icons.church_outlined, user.religiousBeliefs!.label));
-    if (user.jobTitle != null && user.jobTitle!.isNotEmpty)
-      details.add(_buildDetailChip(Icons.work_outline_rounded, user.jobTitle!));
-    if (user.education != null && user.education!.isNotEmpty)
-      details.add(_buildDetailChip(Icons.school_outlined, user.education!));
-    if (user.drinkingHabit != null)
-      details.add(_buildDetailChip(
-          Icons.local_bar_outlined, "Drinks: ${user.drinkingHabit!.label}"));
-    if (user.smokingHabit != null)
-      details.add(_buildDetailChip(
-          Icons.smoking_rooms_outlined, "Smokes: ${user.smokingHabit!.label}"));
-
-    if (details.isEmpty) {
-      return _buildEmptySection(
-          "Vitals & Habits",
-          "Add more details like your height, job, habits, etc.",
-          Icons.list_alt_rounded);
-    }
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Padding(
-          padding: const EdgeInsets.only(top: 16.0, bottom: 12.0),
-          child: Text("Vitals & Habits",
-              style: GoogleFonts.poppins(
-                  fontSize: 20,
-                  fontWeight: FontWeight.w600,
-                  color: const Color(0xFF1A1A1A))),
-        ),
-        Wrap(spacing: 10, runSpacing: 10, children: details),
-      ],
-    );
-  }
-
-  // _buildDetailChip remains the same
   Widget _buildDetailChip(IconData icon, String label, {bool subtle = false}) {
+    // (Keep this helper as is)
     if (label.isEmpty) return const SizedBox.shrink();
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
@@ -651,33 +203,527 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
     );
   }
 
-  // _buildEmptySection remains the same
-  Widget _buildEmptySection(String title, String message, IconData icon) {
+  @override
+  Widget build(BuildContext context) {
+    final user = ref.watch(userProvider);
+    final isLoading = ref.watch(userLoadingProvider);
+
+    // --- Loading State ---
+    if (isLoading && user.name == null) {
+      return Scaffold(
+        backgroundColor: Colors.white,
+        appBar: AppBar(
+          title: Text("Profile",
+              style: GoogleFonts.poppins(fontWeight: FontWeight.w600)),
+          backgroundColor: Colors.white,
+          foregroundColor: Colors.black,
+          elevation: 0,
+          automaticallyImplyLeading: false,
+          actions: [
+            // Keep actions visible but disabled during load
+            _buildTopIconButton(
+                icon: Icons.edit_outlined,
+                tooltip: 'Edit Profile',
+                onPressed: () {}),
+            const SizedBox(width: 8),
+            _buildTopIconButton(
+                icon: Icons.settings_outlined,
+                tooltip: 'Settings',
+                onPressed: () {}),
+            const SizedBox(width: 8),
+          ],
+        ),
+        body: const Center(
+          child: CircularProgressIndicator(color: Color(0xFF8B5CF6)),
+        ),
+      );
+    }
+
+    // --- Prepare Content Blocks (Logic from HomeProfileCard) ---
+    final List<dynamic> contentBlocks = [];
+    final mediaUrls = user.mediaUrls ?? [];
+    final prompts = user.prompts;
+
+    // 1. Header
+    contentBlocks.add("header_section");
+
+    // 2. First Photo (if available)
+    if (mediaUrls.isNotEmpty) {
+      contentBlocks.add(mediaUrls[0]);
+    } else {
+      // Add empty section if no photos
+      contentBlocks.add("empty_media_section");
+    }
+
+    // 3. First Prompt (if available)
+    if (prompts.isNotEmpty) {
+      contentBlocks.add(prompts[0]);
+    } else {
+      // Add empty section if no prompts
+      contentBlocks.add("empty_prompt_section");
+    }
+
+    // 4. Vitals Section
+    contentBlocks.add("vitals_section");
+
+    // 5. Interleave remaining media and prompts
+    int mediaIndex = 1;
+    int promptIndex = 1;
+    int maxRemaining = max(mediaUrls.length, prompts.length);
+
+    for (int i = 1; i < maxRemaining; i++) {
+      if (mediaIndex < mediaUrls.length) {
+        contentBlocks.add(mediaUrls[mediaIndex]);
+        mediaIndex++;
+      }
+      if (promptIndex < prompts.length) {
+        contentBlocks.add(prompts[promptIndex]);
+        promptIndex++;
+      }
+    }
+
+    // 6. Add Audio Prompt (if available)
+    if (user.audioPrompt != null) {
+      contentBlocks.add(user.audioPrompt!);
+    } else {
+      contentBlocks.add("empty_audio_section");
+    }
+    // --- End Content Block Preparation ---
+
+    // --- Build UI using SliverAppBar and ListView ---
+    return Scaffold(
+      backgroundColor: Colors.white,
+      body: RefreshIndicator(
+        color: const Color(0xFF8B5CF6),
+        onRefresh: () => ref.read(userProvider.notifier).fetchProfile(),
+        child: CustomScrollView(
+          physics: const BouncingScrollPhysics(
+              parent: AlwaysScrollableScrollPhysics()),
+          slivers: [
+            SliverAppBar(
+              pinned: true,
+              floating: false,
+              elevation: 1,
+              backgroundColor: Colors.white,
+              foregroundColor: Colors.black,
+              automaticallyImplyLeading: false,
+              title: Text("Profile",
+                  style: GoogleFonts.poppins(fontWeight: FontWeight.w600)),
+              actions: [
+                _buildTopIconButton(
+                  icon: Icons.edit_outlined,
+                  tooltip: 'Edit Profile',
+                  onPressed: () {
+                    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+                        content: Text("Edit Profile (Not Implemented)")));
+                    // TODO: Navigate to Edit Profile Screen
+                  },
+                ),
+                const SizedBox(width: 8),
+                _buildTopIconButton(
+                  icon: Icons.settings_outlined,
+                  tooltip: 'Settings',
+                  onPressed: () {
+                    Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                            builder: (context) => const SettingsScreen()));
+                  },
+                ),
+                const SizedBox(width: 8),
+              ],
+            ),
+
+            // Use SliverList with ListView.builder equivalent logic
+            SliverPadding(
+              padding:
+                  const EdgeInsets.only(top: 8.0), // Add padding below AppBar
+              sliver: SliverList(
+                delegate: SliverChildBuilderDelegate(
+                  (context, index) {
+                    final item = contentBlocks[index];
+                    final double topPadding =
+                        0; // No top padding needed per item
+                    final double bottomPadding = 24.0; // Consistent spacing
+                    final double horizontalPadding =
+                        16.0; // Consistent horizontal padding
+
+                    Widget contentWidget;
+
+                    // Build content based on type
+                    if (item is String && item == "header_section") {
+                      contentWidget =
+                          _buildHeaderBlock(user); // Use user directly
+                    } else if (item is String &&
+                        item == "empty_media_section") {
+                      contentWidget = _buildEmptySection(
+                          "Photos & Videos",
+                          "Add photos and videos to show off your personality!",
+                          Icons.add_photo_alternate_outlined);
+                    } else if (item is String &&
+                        item == "empty_prompt_section") {
+                      contentWidget = _buildEmptySection(
+                          "About Me",
+                          "Add prompt answers to share more about yourself!",
+                          Icons.chat_bubble_outline);
+                    } else if (item is String &&
+                        item == "empty_audio_section") {
+                      contentWidget = _buildEmptySection(
+                          "Voice Prompt",
+                          "Record a voice prompt to let matches hear your voice!",
+                          Icons.mic_none_rounded);
+                    } else if (item is String && item.startsWith('http')) {
+                      contentWidget =
+                          _buildMediaItem(item); // Removed context/ref/index
+                    } else if (item is Prompt) {
+                      contentWidget =
+                          _buildPromptItem(item); // Removed context/ref
+                    } else if (item is AudioPromptModel) {
+                      contentWidget = _buildAudioItem(
+                          item); // Use THIS screen's audio builder, removed context/ref
+                    } else if (item is String && item == "vitals_section") {
+                      contentWidget =
+                          _buildVitalsBlock(user); // Use user directly
+                    } else {
+                      contentWidget = const SizedBox.shrink();
+                    }
+
+                    // Wrap content with Padding
+                    return Padding(
+                      padding: EdgeInsets.fromLTRB(horizontalPadding,
+                          topPadding, horizontalPadding, bottomPadding),
+                      child: contentWidget,
+                    );
+                  },
+                  childCount: contentBlocks.length,
+                ),
+              ),
+            ),
+            // Add final padding at the bottom if needed
+            const SliverToBoxAdapter(child: SizedBox(height: 20)),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // --- Block Builder Widgets (Adapted for ProfileScreen) ---
+
+  Widget _buildHeaderBlock(UserModel user) {
+    // Adapted from HomeProfileCard, uses user directly
+    final age = user.age;
+    final capitalizedName =
+        user.name != null ? capitalizeFirstLetter(user.name!) : "Your Name";
+    final capitalizedLastName =
+        user.lastName != null && user.lastName!.isNotEmpty
+            ? capitalizeFirstLetter(user.lastName!)
+            : "";
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          '$capitalizedName $capitalizedLastName ${age != null ? "• $age" : ""}',
+          style: GoogleFonts.poppins(
+            fontSize: 28, // Adjusted size for profile page
+            fontWeight: FontWeight.w700,
+            color: const Color(0xFF1A1A1A),
+            height: 1.2,
+          ),
+        ),
+        const SizedBox(height: 12),
+        if (user.gender != null ||
+            (user.hometown != null && user.hometown!.isNotEmpty))
+          Wrap(
+            spacing: 10,
+            runSpacing: 8,
+            children: [
+              if (user.gender != null)
+                _buildDetailChip(
+                    Icons.person_outline_rounded, user.gender!.label,
+                    subtle: true),
+              if (user.hometown != null && user.hometown!.isNotEmpty)
+                _buildDetailChip(Icons.location_on_outlined, user.hometown!,
+                    subtle: true),
+            ],
+          ),
+      ],
+    );
+  }
+
+  Widget _buildMediaItem(String url) {
+    // Adapted from HomeProfileCard - NO LIKE BUTTON
+    bool isVideo = url.toLowerCase().contains('.mp4') ||
+        url.toLowerCase().contains('.mov'); // Basic check
+    int imageIndex = (ref.read(userProvider).mediaUrls ?? [])
+        .indexOf(url); // Find index for PageView sync
+
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(16), // More rounded
+      child: AspectRatio(
+        aspectRatio: 9 / 13, // Profile aspect ratio
+        child: Container(
+          decoration: BoxDecoration(
+            color: Colors.grey[200], // Placeholder bg
+            boxShadow: [
+              // Subtle shadow
+              BoxShadow(
+                color: Colors.black.withOpacity(0.08),
+                blurRadius: 15,
+                offset: const Offset(0, 5),
+              )
+            ],
+          ),
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              Image.network(
+                url,
+                fit: BoxFit.cover,
+                loadingBuilder: (ctx, child, prog) => prog == null
+                    ? child
+                    : Center(
+                        child: CircularProgressIndicator(
+                            value: prog.expectedTotalBytes != null
+                                ? prog.cumulativeBytesLoaded /
+                                    prog.expectedTotalBytes!
+                                : null,
+                            color: const Color(0xFF8B5CF6))),
+                errorBuilder: (ctx, err, st) => Center(
+                    child: Icon(Icons.broken_image_outlined,
+                        color: Colors.grey[400], size: 40)),
+              ),
+              if (isVideo) // Video indicator
+                Center(
+                  child: Container(
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: Colors.black.withOpacity(0.5),
+                      shape: BoxShape.circle,
+                    ),
+                    child: const Icon(Icons.play_arrow_rounded,
+                        color: Colors.white, size: 40),
+                  ),
+                ),
+              // NO LIKE BUTTON HERE
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildPromptItem(Prompt prompt) {
+    // Adapted from HomeProfileCard - NO LIKE BUTTON
+    if (prompt.answer.trim().isEmpty) return const SizedBox.shrink();
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.symmetric(vertical: 30, horizontal: 20),
-      margin: const EdgeInsets.symmetric(vertical: 16),
+      padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
-          color: Colors.grey[50],
-          borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: Colors.grey[200]!)),
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: Colors.grey[200]!),
+        boxShadow: [
+          BoxShadow(
+              color: Colors.grey.withOpacity(0.06),
+              blurRadius: 10,
+              offset: const Offset(0, 3))
+        ],
+      ),
       child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
+        // Use Column, no need for Row without button
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Padding(
-            padding: const EdgeInsets.only(bottom: 16.0),
-            child: Text(title,
-                style: GoogleFonts.poppins(
-                    fontSize: 18,
-                    fontWeight: FontWeight.w600,
-                    color: Colors.grey[800])),
+          Text(prompt.question.label,
+              style: GoogleFonts.poppins(
+                  fontSize: 15,
+                  fontWeight: FontWeight.w600,
+                  color: const Color(0xFF8B5CF6))), // Themed question
+          const SizedBox(height: 10),
+          Text(prompt.answer,
+              style: GoogleFonts.poppins(
+                  fontSize: 16, // Slightly larger answer
+                  color: Colors.grey[850], // Darker answer text
+                  height: 1.5)),
+          // NO LIKE BUTTON HERE
+        ],
+      ),
+    );
+  }
+
+  // THIS USES THE LOCAL AUDIO PLAYER LOGIC
+  Widget _buildAudioItem(AudioPromptModel audio) {
+    // Uses THIS screen's audio player state
+    final bool isThisPlaying = _currentAudioUrl == audio.audioUrl && _isPlaying;
+    final bool isThisPaused = _currentAudioUrl == audio.audioUrl &&
+        !_isPlaying &&
+        _audioPlayer.state ==
+            PlayerState.paused; // Check if paused state matches URL
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.only(bottom: 8.0), // Add padding only above
+          child: Text("Voice Prompt",
+              style: GoogleFonts.poppins(
+                  fontSize: 20,
+                  fontWeight: FontWeight.w600,
+                  color: const Color(0xFF1A1A1A))),
+        ),
+        GestureDetector(
+          // Make the whole container tappable to play/pause
+          onTap: () => _playOrPauseAudio(audio.audioUrl),
+          child: Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(color: Colors.grey[200]!),
+              boxShadow: [
+                BoxShadow(
+                    color: Colors.grey.withOpacity(0.06),
+                    blurRadius: 10,
+                    offset: const Offset(0, 3))
+              ],
+            ),
+            child: Row(
+              children: [
+                // Play/Pause Button
+                Container(
+                  width: 48,
+                  height: 48,
+                  decoration: BoxDecoration(
+                      color: const Color(0xFF8B5CF6),
+                      borderRadius: BorderRadius.circular(24),
+                      boxShadow: [
+                        BoxShadow(
+                            color: const Color(0xFF8B5CF6).withOpacity(0.3),
+                            blurRadius: 8,
+                            offset: const Offset(0, 2))
+                      ]),
+                  child: Icon(
+                    isThisPlaying
+                        ? Icons.pause_rounded
+                        : Icons.play_arrow_rounded,
+                    color: Colors.white,
+                    size: 28,
+                  ),
+                ),
+                const SizedBox(width: 16),
+                // Prompt Text
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        audio.prompt.label,
+                        style: GoogleFonts.poppins(
+                            fontSize: 15,
+                            fontWeight: FontWeight.w500,
+                            color: const Color(0xFF1A1A1A)),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        // Indicate state
+                        isThisPlaying
+                            ? "Playing..."
+                            : (isThisPaused ? "Paused" : "Tap to listen"),
+                        style: GoogleFonts.poppins(
+                            fontSize: 13, color: Colors.grey[600]),
+                      ),
+                    ],
+                  ),
+                ),
+                // NO LIKE BUTTON HERE
+              ],
+            ),
           ),
-          Icon(icon, size: 40, color: Colors.grey[400]),
-          const SizedBox(height: 12),
-          Text(message,
-              textAlign: TextAlign.center,
-              style:
-                  GoogleFonts.poppins(fontSize: 14, color: Colors.grey[600])),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildVitalsBlock(UserModel user) {
+    // Adapted from HomeProfileCard
+    final List<Widget> vitals = [];
+    if (user.height != null && user.height!.isNotEmpty)
+      vitals.add(_buildVitalRow(Icons.height_rounded, user.height!));
+    if (user.religiousBeliefs != null)
+      vitals.add(
+          _buildVitalRow(Icons.church_outlined, user.religiousBeliefs!.label));
+    if (user.jobTitle != null && user.jobTitle!.isNotEmpty)
+      vitals.add(_buildVitalRow(Icons.work_outline_rounded, user.jobTitle!));
+    if (user.education != null && user.education!.isNotEmpty)
+      vitals.add(_buildVitalRow(Icons.school_outlined, user.education!));
+    if (user.drinkingHabit != null)
+      vitals.add(_buildVitalRow(
+          Icons.local_bar_outlined, "Drinks: ${user.drinkingHabit!.label}"));
+    if (user.smokingHabit != null)
+      vitals.add(_buildVitalRow(
+          Icons.smoking_rooms_outlined, "Smokes: ${user.smokingHabit!.label}"));
+
+    if (vitals.isEmpty) {
+      return _buildEmptySection(
+          "Vitals & Habits",
+          "Add more details like your height, job, habits, etc.",
+          Icons.list_alt_rounded);
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.only(bottom: 12.0),
+          child: Text("Vitals & Habits",
+              style: GoogleFonts.poppins(
+                  fontSize: 20,
+                  fontWeight: FontWeight.w600,
+                  color: const Color(0xFF1A1A1A))),
+        ),
+        Container(
+            padding: const EdgeInsets.symmetric(
+                horizontal: 16, vertical: 8), // Adjusted padding
+            width: double.infinity,
+            decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: Colors.grey[200]!),
+                boxShadow: [
+                  BoxShadow(
+                      color: Colors.grey.withOpacity(0.06),
+                      blurRadius: 10,
+                      offset: const Offset(0, 3))
+                ]),
+            child: Column(
+              children: List.generate(vitals.length * 2 - 1, (index) {
+                if (index.isEven) {
+                  return vitals[index ~/ 2];
+                } else {
+                  return Divider(
+                      height: 20,
+                      thickness: 1,
+                      color: Colors.grey[200]); // Thicker divider
+                }
+              }),
+            )),
+      ],
+    );
+  }
+
+  Widget _buildVitalRow(IconData icon, String label) {
+    // Adapted from HomeProfileCard
+    return Padding(
+      padding: const EdgeInsets.symmetric(
+          vertical: 8.0), // Consistent vertical padding
+      child: Row(
+        children: [
+          Icon(icon, size: 20, color: const Color(0xFF8B5CF6)), // Themed icon
+          const SizedBox(width: 12),
+          Expanded(
+              child: Text(label,
+                  style: GoogleFonts.poppins(
+                      fontSize: 15, color: Colors.grey[800]))),
         ],
       ),
     );
