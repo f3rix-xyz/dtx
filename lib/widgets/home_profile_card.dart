@@ -2,7 +2,7 @@
 import 'dart:math';
 import 'package:dtx/models/user_model.dart';
 import 'package:dtx/models/like_models.dart';
-import 'package:dtx/providers/audio_player_provider.dart';
+import 'package:dtx/providers/audio_player_provider.dart'; // Ensure this is imported
 import 'package:dtx/utils/app_enums.dart';
 import 'package:dtx/providers/user_provider.dart'; // Needed for gender check
 import 'package:flutter/material.dart';
@@ -253,9 +253,6 @@ class HomeProfileCard extends ConsumerWidget {
           commentController.removeListener(() {});
         } catch (e) {}
       }
-      // Ensure notifiers/controllers are disposed only once safely
-      // Checking if they are mounted or if the value is still needed might be complex here.
-      // A simple dispose is usually okay but be mindful in complex scenarios.
       try {
         sendLikeEnabledNotifier.dispose();
       } catch (e) {
@@ -270,10 +267,9 @@ class HomeProfileCard extends ConsumerWidget {
   }
   // --- END INTERACTION DIALOG METHOD ---
 
-  // --- Build method and other builders remain the same as previous correct version ---
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    // --- Content Block Preparation (remains the same) ---
+    // --- Content Block Preparation ---
     final List<dynamic> contentBlocks = [];
     final mediaUrls = profile.mediaUrls ?? [];
     final prompts = profile.prompts;
@@ -297,11 +293,12 @@ class HomeProfileCard extends ConsumerWidget {
         promptIndex++;
       }
     }
-
-    if (profile.audioPrompt != null) contentBlocks.add(profile.audioPrompt!);
+    if (profile.audioPrompt != null) {
+      contentBlocks.add(profile.audioPrompt!);
+    }
     // --- End Content Block Preparation ---
 
-    // --- Build the ListView (remains the same) ---
+    // --- Build the ListView ---
     return Container(
       color: Colors.white,
       child: ListView.builder(
@@ -325,7 +322,8 @@ class HomeProfileCard extends ConsumerWidget {
             } else if (item is Prompt) {
               contentWidget = _buildPromptItem(context, ref, item);
             } else if (item is AudioPromptModel) {
-              contentWidget = _buildAudioItem(context, ref, item);
+              contentWidget = _buildAudioItem(
+                  context, ref, item); // Calls the updated builder
             } else if (item is String && item == "vitals_section") {
               contentWidget = _buildVitalsBlock(profile);
             } else {
@@ -341,7 +339,7 @@ class HomeProfileCard extends ConsumerWidget {
     );
   }
 
-  // --- Block Builder Widgets (_buildHeaderBlock, _buildVitalsBlock, _buildVitalRow) remain the same ---
+  // --- Block Builder Widgets ---
   Widget _buildHeaderBlock(UserModel profile) {
     final age = profile.age;
     return Column(
@@ -454,13 +452,10 @@ class HomeProfileCard extends ConsumerWidget {
       ),
     );
   }
-  // --- End Unchanged Block Builders ---
 
-  // --- Updated Item Builders with New Like Button Logic ---
-
+  // --- Item Builders ---
   Widget _buildMediaItem(
       BuildContext context, WidgetRef ref, String url, int index) {
-    // Use the new _showInteractionDialog when the button is pressed
     return ClipRRect(
       borderRadius: BorderRadius.circular(10),
       child: AspectRatio(
@@ -491,8 +486,8 @@ class HomeProfileCard extends ConsumerWidget {
                         context,
                         ref,
                         ContentLikeType.media,
-                        index.toString(),
-                        url, // Pass image url for preview
+                        index.toString(), // Use index as identifier for media
+                        url,
                       )))
             ],
           ),
@@ -502,7 +497,6 @@ class HomeProfileCard extends ConsumerWidget {
   }
 
   Widget _buildPromptItem(BuildContext context, WidgetRef ref, Prompt prompt) {
-    // Use the new _showInteractionDialog when the button is pressed
     return Container(
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
@@ -541,19 +535,22 @@ class HomeProfileCard extends ConsumerWidget {
                 context,
                 ref,
                 prompt.category.contentType, // Use correct ContentLikeType
-                prompt.question.value,
-                null, // No image preview for prompts
+                prompt.question.value, // Use question value as identifier
+                null,
               )),
         ],
       ),
     );
   }
 
+  // *** UPDATED _buildAudioItem to match ProfileScreen UI ***
   Widget _buildAudioItem(
       BuildContext context, WidgetRef ref, AudioPromptModel audio) {
-    // Audio playback logic remains the same
+    // Watch the necessary states
     final audioState = ref.watch(audioPlayerControllerProvider);
     final currentPlayerUrl = ref.watch(currentAudioUrlProvider);
+
+    // Derive booleans based on the state enum
     final bool isThisPlaying = currentPlayerUrl == audio.audioUrl &&
         audioState == AudioPlayerState.playing;
     final bool isThisLoading = currentPlayerUrl == audio.audioUrl &&
@@ -561,79 +558,115 @@ class HomeProfileCard extends ConsumerWidget {
     final bool isThisPaused = currentPlayerUrl == audio.audioUrl &&
         audioState == AudioPlayerState.paused;
 
-    // Use the new _showInteractionDialog when the button is pressed
+    // Build the UI structure similar to ProfileScreen
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(10),
+          color: Colors.white, // Match ProfileScreen style
+          borderRadius: BorderRadius.circular(16), // Match ProfileScreen style
+          border:
+              Border.all(color: Colors.grey[200]!), // Match ProfileScreen style
           boxShadow: [
             BoxShadow(
-                color: Colors.black.withOpacity(0.05),
+                // Match ProfileScreen shadow
+                color: Colors.grey.withOpacity(0.06),
                 blurRadius: 10,
                 offset: const Offset(0, 3))
           ]),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+      child: Row(
+        // Use Row as the main layout
         children: [
-          Text(audio.prompt.label,
-              style: GoogleFonts.poppins(
-                  fontSize: 14,
-                  fontWeight: FontWeight.w600,
-                  color: Colors.grey[600])),
-          const SizedBox(height: 12),
-          Row(
-            children: [
-              InkWell(
-                onTap: () {
-                  if (isThisLoading) return;
-                  final playerNotifier =
-                      ref.read(audioPlayerControllerProvider.notifier);
-                  if (isThisPlaying)
-                    playerNotifier.pause();
-                  else if (isThisPaused)
-                    playerNotifier.resume();
-                  else
-                    playerNotifier.play(audio.audioUrl);
-                },
-                borderRadius: BorderRadius.circular(25),
-                child: Container(
-                    width: 50,
-                    height: 50,
-                    decoration: BoxDecoration(
-                        color: Colors.grey[100], shape: BoxShape.circle),
-                    child: isThisLoading
-                        ? const Padding(
-                            padding: EdgeInsets.all(12.0),
-                            child: CircularProgressIndicator(
-                                strokeWidth: 2, color: Colors.grey))
-                        : Icon(
-                            isThisPlaying
-                                ? Icons.pause_rounded
-                                : Icons.play_arrow_rounded,
-                            color: Colors.grey[800],
-                            size: 30)),
-              ),
-              const SizedBox(width: 16),
-              Expanded(child: Container(height: 4, color: Colors.grey[300])),
-              const SizedBox(width: 16),
-              _buildSmallLikeButton(() => _showInteractionDialog(
-                    context,
-                    ref,
-                    ContentLikeType.audioPrompt, // Correct type
-                    audio.prompt.value, // Use prompt value as identifier
-                    null, // No image preview for audio
-                  )),
-            ],
+          // Play/Pause Button
+          InkWell(
+            onTap: () {
+              if (isThisLoading) return;
+              final playerNotifier =
+                  ref.read(audioPlayerControllerProvider.notifier);
+              if (isThisPlaying) {
+                playerNotifier.pause();
+              } else if (isThisPaused) {
+                playerNotifier.resume();
+              } else {
+                playerNotifier.play(audio.audioUrl);
+              }
+            },
+            borderRadius: BorderRadius.circular(24), // Match container shape
+            child: Container(
+                width: 48, // Match ProfileScreen size
+                height: 48, // Match ProfileScreen size
+                decoration: BoxDecoration(
+                  color: const Color(0xFF8B5CF6), // Match ProfileScreen color
+                  borderRadius:
+                      BorderRadius.circular(24), // Match ProfileScreen shape
+                  boxShadow: [
+                    // Match ProfileScreen shadow
+                    BoxShadow(
+                        color: const Color(0xFF8B5CF6).withOpacity(0.3),
+                        blurRadius: 8,
+                        offset: const Offset(0, 2))
+                  ],
+                ),
+                child: isThisLoading
+                    ? const Padding(
+                        padding:
+                            EdgeInsets.all(12.0), // Adjust padding if needed
+                        child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: Colors.white)) // White indicator
+                    : Icon(
+                        isThisPlaying
+                            ? Icons.pause_rounded
+                            : Icons.play_arrow_rounded,
+                        color: Colors.white, // Match ProfileScreen icon color
+                        size: 28)), // Match ProfileScreen icon size
           ),
+          const SizedBox(width: 16), // Spacing between button and text
+
+          // Text Column (Prompt Label and Status)
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(audio.prompt.label,
+                    style: GoogleFonts.poppins(
+                        fontSize: 15, // Match ProfileScreen font size
+                        fontWeight:
+                            FontWeight.w500, // Match ProfileScreen weight
+                        color: const Color(
+                            0xFF1A1A1A))), // Match ProfileScreen color
+                const SizedBox(height: 4), // Match ProfileScreen spacing
+                Text(
+                    // Status text
+                    isThisLoading
+                        ? "Loading..."
+                        : isThisPlaying
+                            ? "Playing..."
+                            : isThisPaused
+                                ? "Paused"
+                                : "Tap to listen",
+                    style: GoogleFonts.poppins(
+                        fontSize: 13, // Match ProfileScreen font size
+                        color: Colors.grey[600])), // Match ProfileScreen color
+              ],
+            ),
+          ),
+          // Keep the Like Button
+          const SizedBox(width: 16), // Spacing before like button
+          _buildSmallLikeButton(() => _showInteractionDialog(
+                context,
+                ref,
+                ContentLikeType.audioPrompt,
+                audio.prompt.value,
+                null,
+              )),
         ],
       ),
     );
   }
+  // *** END UPDATED _buildAudioItem ***
 
   // --- Like Button Helper ---
   Widget _buildSmallLikeButton(VoidCallback onPressed) {
-    // This button now triggers the dialog
     return Container(
       width: 40,
       height: 40,

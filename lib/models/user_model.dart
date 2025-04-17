@@ -73,27 +73,40 @@ class AudioPromptModel {
       };
 
   factory AudioPromptModel.fromJson(Map<String, dynamic> json) {
+    // Parse Question (assuming it's always a map)
     final promptValue =
         json['audio_prompt_question']?['AudioPrompt'] as String?;
-    final audioUrlValue = json['audio_prompt_answer']?['String'] as String?;
     final bool isPromptValid =
         json['audio_prompt_question']?['Valid'] as bool? ?? false;
-    final bool isUrlValid =
-        json['audio_prompt_answer']?['Valid'] as bool? ?? false;
 
-    if (!isPromptValid ||
-        !isUrlValid ||
-        promptValue == null ||
-        audioUrlValue == null) {
+    if (!isPromptValid || promptValue == null) {
       throw const FormatException(
-          'Invalid or missing audio prompt data in JSON');
+          'Invalid or missing audio prompt question data in JSON');
     }
 
     AudioPrompt prompt = AudioPrompt.values
         .firstWhere((e) => e.value == promptValue, orElse: () {
-      print("Warning: Unknown audio prompt '$promptValue', defaulting.");
+      print(
+          "Warning: Unknown audio prompt '$promptValue', defaulting to aBoundaryOfMineIs.");
       return AudioPrompt.aBoundaryOfMineIs;
     });
+
+    // Parse Answer (handle both String and Map)
+    String? audioUrlValue;
+    dynamic answerField = json['audio_prompt_answer'];
+
+    if (answerField is String) {
+      audioUrlValue = answerField;
+    } else if (answerField is Map) {
+      if (answerField['Valid'] == true && answerField['String'] is String) {
+        audioUrlValue = answerField['String'] as String;
+      }
+    }
+
+    if (audioUrlValue == null || audioUrlValue.isEmpty) {
+      throw const FormatException(
+          'Invalid or missing audio prompt answer data in JSON');
+    }
 
     return AudioPromptModel(
       prompt: prompt,
@@ -114,7 +127,7 @@ class UserModel {
   final double? longitude;
   final Gender? gender;
   final DatingIntention? datingIntention;
-  final String? height; // Keep as String for formatted value
+  final String? height;
   final String? hometown;
   final String? jobTitle;
   final String? education;
@@ -185,7 +198,7 @@ class UserModel {
         'longitude': longitude,
         'gender': gender?.value,
         'dating_intention': datingIntention?.value,
-        'height': height, // Send formatted string back if needed
+        'height': height,
         'hometown': hometown,
         'job_title': jobTitle,
         'education': education,
@@ -206,11 +219,8 @@ class UserModel {
       return "${dt.year}-${dt.month.toString().padLeft(2, '0')}-${dt.day.toString().padLeft(2, '0')}";
     }
 
-    // Height might need conversion back to number/specific format if backend expects it
     String? formattedHeight(String? h) {
-      // Example: Convert "5' 10\"" back to inches or cm if needed
-      // Or just send the string if backend accepts it
-      return h?.replaceAll("' ", "'"); // Basic cleanup
+      return h?.replaceAll("' ", "'");
     }
 
     final Map<String, dynamic> data = {};
@@ -229,8 +239,6 @@ class UserModel {
     if (smokingHabit != null) data['smoking_habit'] = smokingHabit!.value;
     if (prompts.isNotEmpty)
       data['prompts'] = prompts.map((p) => p.toJson()).toList();
-    // Audio prompt is updated separately
-
     return data;
   }
 
@@ -314,8 +322,7 @@ class UserModel {
             print("Error accessing '.value' for enum ${T.toString()}: $e");
           }
         }
-        print(
-            "Warning: Enum value '$valueStr' not found in ${T.toString()}. Returning null.");
+        print("Warning: Enum value '$valueStr' not found in ${T.toString()}.");
         return null;
       }
       return null;
@@ -330,18 +337,6 @@ class UserModel {
         return urls.isNotEmpty ? urls : null;
       } else if (field is List<String>) {
         return field.isNotEmpty ? field : null;
-      }
-      return null;
-    }
-
-    AudioPromptModel? getAudioPrompt(Map<String, dynamic> json) {
-      if (json['audio_prompt_question'] is Map &&
-          json['audio_prompt_answer'] is Map) {
-        try {
-          return AudioPromptModel.fromJson(json);
-        } catch (e) {
-          /* print("Error parsing AudioPrompt: $e"); */ return null;
-        }
       }
       return null;
     }
@@ -363,47 +358,124 @@ class UserModel {
       return null;
     }
 
-    // --- *** UPDATED getPrompts Helper *** ---
     List<Prompt> getPrompts(Map<String, dynamic> json) {
       List<Prompt> parsedPrompts = [];
-      // **Primary Check:** Look for the unified 'prompts' array first
       if (json['prompts'] is List) {
         final List<dynamic> promptList = json['prompts'];
-        print(
-            "[UserModel fromJson] Parsing prompts from unified 'prompts' field: ${promptList.length} items");
         for (var promptData in promptList) {
           if (promptData is Map<String, dynamic>) {
             try {
               final parsedPrompt = Prompt.fromJson(promptData);
               if (parsedPrompt.answer.trim().isNotEmpty) {
                 parsedPrompts.add(parsedPrompt);
-              } else {
-                print(
-                    "[UserModel fromJson] Parsed prompt from unified list has empty answer: $promptData");
               }
             } catch (e) {
               print(
-                  "[UserModel fromJson] Error parsing prompt from unified list: $e, data: $promptData");
+                  "[UserModel fromJson] Error parsing prompt: $e, data: $promptData");
             }
-          } else {
-            print(
-                "[UserModel fromJson] Item in unified 'prompts' is not a Map: $promptData");
           }
         }
-        print(
-            "[UserModel fromJson] Finished parsing from unified 'prompts'. Count: ${parsedPrompts.length}");
-      } else {
-        print(
-            "[UserModel fromJson] Unified 'prompts' field not found or not a List.");
-        // Fallback logic removed assuming backend consistency
       }
       return parsedPrompts;
     }
-    // --- *** END UPDATED getPrompts Helper *** ---
+
+    // --- *** REVISED getAudioPrompt Helper with LOGGING *** ---
+    AudioPromptModel? getAudioPrompt(Map<String, dynamic> json, int? userId) {
+      // Added userId for logging
+      final questionData =
+          json['AudioPromptQuestion'] ?? json['audio_prompt_question'];
+      final answerData =
+          json['AudioPromptAnswer'] ?? json['audio_prompt_answer'];
+
+      // --- LOGGING START ---
+      if (userId == 2) {
+        // Log only for the problematic profile ID
+        print("--- [DEBUG getAudioPrompt ID: $userId] ---");
+        print(
+            "Raw Question Data: $questionData (Type: ${questionData?.runtimeType})");
+        print(
+            "Raw Answer Data: $answerData (Type: ${answerData?.runtimeType})");
+      }
+      // --- LOGGING END ---
+
+      // 1. Check Question Validity
+      bool isQuestionValid = questionData is Map &&
+          questionData['Valid'] == true &&
+          questionData['AudioPrompt'] is String &&
+          (questionData['AudioPrompt'] as String)
+              .isNotEmpty; // Ensure prompt value is not empty
+
+      // --- LOGGING ---
+      if (userId == 2) print("isQuestionValid Check Result: $isQuestionValid");
+      // --- LOGGING ---
+
+      if (!isQuestionValid) {
+        if (userId == 2)
+          print(
+              "[DEBUG getAudioPrompt ID: $userId] Returning null due to invalid question.");
+        return null;
+      }
+
+      // 2. Check Answer Validity (String or Valid Map)
+      bool isAnswerValid = false;
+      if (answerData is String && answerData.isNotEmpty) {
+        isAnswerValid = true;
+        if (userId == 2)
+          print(
+              "[DEBUG getAudioPrompt ID: $userId] Answer is a non-empty String.");
+      } else if (answerData is Map &&
+          answerData['Valid'] == true &&
+          answerData['String'] is String &&
+          (answerData['String'] as String).isNotEmpty) {
+        isAnswerValid = true;
+        if (userId == 2)
+          print(
+              "[DEBUG getAudioPrompt ID: $userId] Answer is a valid Map with String.");
+      }
+
+      // --- LOGGING ---
+      if (userId == 2) print("isAnswerValid Check Result: $isAnswerValid");
+      // --- LOGGING ---
+
+      if (!isAnswerValid) {
+        if (userId == 2)
+          print(
+              "[DEBUG getAudioPrompt ID: $userId] Returning null due to invalid answer.");
+        return null;
+      }
+
+      // 3. If BOTH are valid, attempt to create the model
+      if (userId == 2)
+        print(
+            "[DEBUG getAudioPrompt ID: $userId] Both valid. Attempting AudioPromptModel.fromJson...");
+      try {
+        // Pass the original data structures to the flexible factory
+        final model = AudioPromptModel.fromJson({
+          'audio_prompt_question': questionData,
+          'audio_prompt_answer': answerData,
+        });
+        if (userId == 2)
+          print(
+              "[DEBUG getAudioPrompt ID: $userId] AudioPromptModel created successfully.");
+        return model;
+      } catch (e) {
+        print(
+            "[UserModel fromJson getAudioPrompt ID: $userId] Error creating AudioPromptModel: $e");
+        print(" -> Question Data: $questionData");
+        print(" -> Answer Data: $answerData");
+        if (userId == 2)
+          print(
+              "[DEBUG getAudioPrompt ID: $userId] Returning null due to exception.");
+        return null;
+      }
+    }
+    // --- *** END REVISED getAudioPrompt Helper with LOGGING *** ---
 
     // --- Parse using helpers ---
+    final int? currentUserId =
+        getId(json['id'] ?? json['ID']); // Get ID for logging
     final parsedUser = UserModel(
-      id: getId(json['id'] ?? json['ID']), // Check both cases for robustness
+      id: currentUserId, // Use the extracted ID
       name: getString(json['name'] ?? json['Name']),
       lastName: getString(json['last_name'] ?? json['LastName']),
       email: json['email'] as String? ?? json['Email'] as String?,
@@ -417,8 +489,7 @@ class UserModel {
           DatingIntention.values,
           json['dating_intention'] ?? json['DatingIntention'],
           'DatingIntention'),
-      height:
-          getHeight(json['height'] ?? json['Height']), // Use specific helper
+      height: getHeight(json['height'] ?? json['Height']),
       hometown: getString(json['hometown'] ?? json['Hometown']),
       jobTitle: getString(json['job_title'] ?? json['JobTitle']),
       education: getString(json['education'] ?? json['Education']),
@@ -438,22 +509,21 @@ class UserModel {
       verificationPic:
           getString(json['verification_pic'] ?? json['VerificationPic']),
       role: json['role'] as String? ?? json['Role'] as String?,
-      audioPrompt: getAudioPrompt(json),
-      prompts: getPrompts(json), // Use updated helper
+      audioPrompt: getAudioPrompt(json, currentUserId), // Pass ID to helper
+      prompts: getPrompts(json),
     );
 
-    // --- DEBUGGING Print (keep temporarily) ---
-    print("--- Parsed UserModel (After Prompt Fix v2) ---");
+    // --- Original Debugging Print (Still Useful) ---
+    print("--- Parsed UserModel (Audio Prompt Check - Logging Added) ---");
     print("ID: ${parsedUser.id}");
     print("Name: ${parsedUser.name}");
-    print("Media URLs: ${parsedUser.mediaUrls}");
-    print("Prompts Count: ${parsedUser.prompts.length}"); // Crucial check
-    if (parsedUser.prompts.isNotEmpty) {
-      print("First Prompt Q: ${parsedUser.prompts[0].question.label}");
+    print("Audio Prompt Parsed: ${parsedUser.audioPrompt != null}");
+    if (parsedUser.audioPrompt != null) {
+      print("  -> Question: ${parsedUser.audioPrompt!.prompt.label}");
+      print("  -> URL: ${parsedUser.audioPrompt!.audioUrl}");
     }
-    print("Audio Prompt: ${parsedUser.audioPrompt != null}");
     print("------------------------------------------");
-    // --- END DEBUGGING ---
+    // --- END Debugging ---
 
     return parsedUser;
   }
