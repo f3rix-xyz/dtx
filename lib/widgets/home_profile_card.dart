@@ -543,42 +543,41 @@ class HomeProfileCard extends ConsumerWidget {
     );
   }
 
-  // *** UPDATED _buildAudioItem to match ProfileScreen UI ***
   Widget _buildAudioItem(
       BuildContext context, WidgetRef ref, AudioPromptModel audio) {
-    // Watch the necessary states
-    final audioState = ref.watch(audioPlayerControllerProvider);
+    // --- WATCH THE STATE PROVIDER (like ProfileScreen) ---
+    final audioState = ref.watch(audioPlayerStateProvider);
+    // --- END WATCH ---
     final currentPlayerUrl = ref.watch(currentAudioUrlProvider);
 
-    // Derive booleans based on the state enum
+    // --- Derive booleans (like ProfileScreen) ---
     final bool isThisPlaying = currentPlayerUrl == audio.audioUrl &&
         audioState == AudioPlayerState.playing;
     final bool isThisLoading = currentPlayerUrl == audio.audioUrl &&
         audioState == AudioPlayerState.loading;
     final bool isThisPaused = currentPlayerUrl == audio.audioUrl &&
         audioState == AudioPlayerState.paused;
+    // --- End Derive booleans ---
 
     // Build the UI structure similar to ProfileScreen
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-          color: Colors.white, // Match ProfileScreen style
-          borderRadius: BorderRadius.circular(16), // Match ProfileScreen style
-          border:
-              Border.all(color: Colors.grey[200]!), // Match ProfileScreen style
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: Colors.grey[200]!),
           boxShadow: [
             BoxShadow(
-                // Match ProfileScreen shadow
                 color: Colors.grey.withOpacity(0.06),
                 blurRadius: 10,
                 offset: const Offset(0, 3))
           ]),
       child: Row(
-        // Use Row as the main layout
         children: [
           // Play/Pause Button
           InkWell(
             onTap: () {
+              // Use the derived booleans for logic
               if (isThisLoading) return;
               final playerNotifier =
                   ref.read(audioPlayerControllerProvider.notifier);
@@ -590,37 +589,34 @@ class HomeProfileCard extends ConsumerWidget {
                 playerNotifier.play(audio.audioUrl);
               }
             },
-            borderRadius: BorderRadius.circular(24), // Match container shape
+            borderRadius: BorderRadius.circular(24),
             child: Container(
-                width: 48, // Match ProfileScreen size
-                height: 48, // Match ProfileScreen size
+                width: 48,
+                height: 48,
                 decoration: BoxDecoration(
-                  color: const Color(0xFF8B5CF6), // Match ProfileScreen color
-                  borderRadius:
-                      BorderRadius.circular(24), // Match ProfileScreen shape
+                  color: const Color(0xFF8B5CF6),
+                  borderRadius: BorderRadius.circular(24),
                   boxShadow: [
-                    // Match ProfileScreen shadow
                     BoxShadow(
                         color: const Color(0xFF8B5CF6).withOpacity(0.3),
                         blurRadius: 8,
                         offset: const Offset(0, 2))
                   ],
                 ),
+                // Use derived booleans for UI state
                 child: isThisLoading
                     ? const Padding(
-                        padding:
-                            EdgeInsets.all(12.0), // Adjust padding if needed
+                        padding: EdgeInsets.all(12.0),
                         child: CircularProgressIndicator(
-                            strokeWidth: 2,
-                            color: Colors.white)) // White indicator
+                            strokeWidth: 2, color: Colors.white))
                     : Icon(
-                        isThisPlaying
+                        isThisPlaying // Use boolean
                             ? Icons.pause_rounded
                             : Icons.play_arrow_rounded,
-                        color: Colors.white, // Match ProfileScreen icon color
-                        size: 28)), // Match ProfileScreen icon size
+                        color: Colors.white,
+                        size: 28)),
           ),
-          const SizedBox(width: 16), // Spacing between button and text
+          const SizedBox(width: 16),
 
           // Text Column (Prompt Label and Status)
           Expanded(
@@ -629,14 +625,12 @@ class HomeProfileCard extends ConsumerWidget {
               children: [
                 Text(audio.prompt.label,
                     style: GoogleFonts.poppins(
-                        fontSize: 15, // Match ProfileScreen font size
-                        fontWeight:
-                            FontWeight.w500, // Match ProfileScreen weight
-                        color: const Color(
-                            0xFF1A1A1A))), // Match ProfileScreen color
-                const SizedBox(height: 4), // Match ProfileScreen spacing
+                        fontSize: 15,
+                        fontWeight: FontWeight.w500,
+                        color: const Color(0xFF1A1A1A))),
+                const SizedBox(height: 4),
                 Text(
-                    // Status text
+                    // Use derived booleans for status text
                     isThisLoading
                         ? "Loading..."
                         : isThisPlaying
@@ -645,13 +639,12 @@ class HomeProfileCard extends ConsumerWidget {
                                 ? "Paused"
                                 : "Tap to listen",
                     style: GoogleFonts.poppins(
-                        fontSize: 13, // Match ProfileScreen font size
-                        color: Colors.grey[600])), // Match ProfileScreen color
+                        fontSize: 13, color: Colors.grey[600])),
               ],
             ),
           ),
-          // Keep the Like Button
-          const SizedBox(width: 16), // Spacing before like button
+          // Like Button
+          const SizedBox(width: 16),
           _buildSmallLikeButton(() => _showInteractionDialog(
                 context,
                 ref,
@@ -663,7 +656,6 @@ class HomeProfileCard extends ConsumerWidget {
       ),
     );
   }
-  // *** END UPDATED _buildAudioItem ***
 
   // --- Like Button Helper ---
   Widget _buildSmallLikeButton(VoidCallback onPressed) {
