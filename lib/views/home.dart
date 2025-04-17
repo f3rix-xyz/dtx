@@ -6,7 +6,7 @@ import 'package:dtx/providers/error_provider.dart';
 import 'package:dtx/providers/feed_provider.dart';
 import 'package:dtx/providers/filter_provider.dart';
 import 'package:dtx/providers/service_provider.dart';
-import 'package:dtx/providers/user_provider.dart';
+import 'package:dtx/providers/user_provider.dart'; // Keep user provider for gender check if needed here (though moved to card)
 import 'package:dtx/services/api_service.dart';
 import 'package:dtx/views/filter_settings_dialog.dart';
 import 'package:dtx/views/name.dart';
@@ -29,12 +29,10 @@ class HomeScreen extends ConsumerStatefulWidget {
 
 class _HomeScreenState extends ConsumerState<HomeScreen> {
   List<UserModel> _feedProfiles = [];
-  bool _isInteracting = false;
+  bool _isInteracting = false; // To show overlay during API call
 
-  // --- Unchanged Methods ---
   @override
   void initState() {
-    /* ... */
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       final feedState = ref.read(feedProvider);
@@ -64,14 +62,13 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
   }
 
   Future<void> _fetchFeed({bool force = false}) async {
-    /* ... */
     print("[HomeScreen _fetchFeed] Fetching home feed. Force: $force");
     ref.read(errorProvider.notifier).clearError();
     await ref.read(feedProvider.notifier).fetchFeed(forceRefresh: force);
   }
 
+  // Dialog shown if user tries to interact before completing onboarding step 2
   void _showCompleteProfileDialog() {
-    /* ... */
     showDialog(
       context: context,
       barrierDismissible: false,
@@ -93,6 +90,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                   style: GoogleFonts.poppins(color: Color(0xFF8B5CF6))),
               onPressed: () {
                 Navigator.of(dialogContext).pop();
+                // Navigate to the first screen of the remaining onboarding flow
                 Navigator.push(context,
                     MaterialPageRoute(builder: (_) => const NameInputScreen()));
               },
@@ -103,211 +101,109 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     );
   }
 
+  // Called by HomeProfileCard after a successful interaction
   void _removeTopCard() {
-    /* ... */
     print("[HomeScreen _removeTopCard] Removing top card.");
     if (!mounted) return;
     if (_feedProfiles.isNotEmpty) {
       ref.read(feedProvider.notifier).removeProfile(_feedProfiles[0].id!);
     }
-    _isInteracting = false;
+    // The loading overlay (_isInteracting) is handled in _callLikeRepository
   }
 
-  Future<void> _handleLikeInteraction(
-      {required int targetUserId,
-      required ContentLikeType contentType,
-      required String contentIdentifier,
-      required LikeInteractionType interactionType,
-      String? comment}) async {
-    /* ... */
+  // This method is passed to the card to handle the actual API call
+  // It allows HomeScreen to manage the loading overlay (_isInteracting)
+  Future<bool> _callLikeRepository({
+    required int targetUserId,
+    required ContentLikeType contentType,
+    required String contentIdentifier,
+    required LikeInteractionType interactionType,
+    String? comment,
+  }) async {
+    // Check if profile is complete before allowing interaction
     final authStatus = ref.read(authProvider).authStatus;
     if (authStatus == AuthStatus.onboarding2) {
       print(
-          "[HomeScreen] Interaction blocked: Profile incomplete (onboarding2).");
+          "[HomeScreen _callLikeRepository] Interaction blocked: Profile incomplete (onboarding2).");
       _showCompleteProfileDialog();
-      return;
+      return false; // Indicate failure
     }
-    if (_isInteracting) return;
-    setState(() => _isInteracting = true);
+
+    if (_isInteracting) return false; // Prevent double taps during API call
+    if (mounted) setState(() => _isInteracting = true); // Show overlay
+
     final errorNotifier = ref.read(errorProvider.notifier)..clearError();
     bool success = false;
     try {
       final likeRepo = ref.read(likeRepositoryProvider);
+      print(
+          "[HomeScreen _callLikeRepository] Calling API: Target $targetUserId, Type: $contentType, ID: $contentIdentifier, Interaction: $interactionType, Comment: ${comment != null}");
       success = await likeRepo.likeContent(
           likedUserId: targetUserId,
           contentType: contentType,
           contentIdentifier: contentIdentifier,
           interactionType: interactionType,
           comment: comment);
-      if (success) {
-        _removeTopCard();
-      } else {
-        if (ref.read(errorProvider) == null)
+
+      if (!success) {
+        // If API returns false, check if an error was already set by repo/service
+        if (mounted && ref.read(errorProvider) == null) {
+          print(
+              "[HomeScreen _callLikeRepository] API returned false, setting generic error.");
           errorNotifier.setError(
               AppError.server("Could not send ${interactionType.value}."));
-        if (mounted) setState(() => _isInteracting = false);
+        }
+      } else {
+        print("[HomeScreen _callLikeRepository] API call successful.");
       }
     } on LikeLimitExceededException catch (e) {
+      print("[HomeScreen _callLikeRepository] Like Limit Error: ${e.message}");
       errorNotifier.setError(AppError.validation(e.message));
-      _showErrorSnackbar(e.message);
-      if (mounted) setState(() => _isInteracting = false);
+      _showErrorSnackbar(e.message); // Show specific feedback
     } on InsufficientRosesException catch (e) {
-      errorNotifier.setError(AppError.validation(e.message));
-      _showErrorSnackbar(e.message);
-      if (mounted) setState(() => _isInteracting = false);
-    } on ApiException catch (e) {
-      errorNotifier.setError(AppError.server(e.message));
-      if (mounted) setState(() => _isInteracting = false);
-    } catch (e) {
-      errorNotifier.setError(AppError.generic("An unexpected error occurred."));
-      if (mounted) setState(() => _isInteracting = false);
-    }
-  }
-
-  Future<void> _performDislike(int targetUserId) async {
-    /* ... */
-    final authStatus = ref.read(authProvider).authStatus;
-    if (authStatus == AuthStatus.onboarding2) {
       print(
-          "[HomeScreen] Interaction blocked: Profile incomplete (onboarding2).");
-      _showCompleteProfileDialog();
-      return;
-    }
-    if (_isInteracting) return;
-    setState(() => _isInteracting = true);
-    final errorNotifier = ref.read(errorProvider.notifier)..clearError();
-    bool success = false;
-    try {
-      final likeRepo = ref.read(likeRepositoryProvider);
-      success = await likeRepo.dislikeUser(dislikedUserId: targetUserId);
-      if (success) {
-        _removeTopCard();
-      } else {
-        if (ref.read(errorProvider) == null)
-          errorNotifier.setError(AppError.server("Could not dislike profile."));
-        if (mounted) setState(() => _isInteracting = false);
-      }
+          "[HomeScreen _callLikeRepository] Insufficient Roses: ${e.message}");
+      errorNotifier.setError(AppError.validation(e.message));
+      _showErrorSnackbar(e.message); // Show specific feedback
     } on ApiException catch (e) {
+      print("[HomeScreen _callLikeRepository] API Exception: ${e.message}");
       errorNotifier.setError(AppError.server(e.message));
-      if (mounted) setState(() => _isInteracting = false);
+      _showErrorSnackbar(e.message); // Show API error message
     } catch (e) {
+      print(
+          "[HomeScreen _callLikeRepository] Unexpected Error: ${e.toString()}");
       errorNotifier.setError(AppError.generic("An unexpected error occurred."));
-      if (mounted) setState(() => _isInteracting = false);
+      _showErrorSnackbar("An unexpected error occurred.");
+    } finally {
+      if (mounted) setState(() => _isInteracting = false); // Hide overlay
     }
-  }
-
-  Future<void> _handleDislikeButtonPressed() async {
-    /* ... */
-    print("[HomeScreen _handleDislikeButtonPressed] Dislike button tapped.");
-    if (_feedProfiles.isEmpty || _isInteracting) return;
-    final targetProfile = _feedProfiles[0];
-    if (targetProfile.id == null) return;
-    await _performDislike(targetProfile.id!);
+    print("[HomeScreen _callLikeRepository] Returning success: $success");
+    return success; // Return the outcome
   }
 
   void _showErrorSnackbar(String message) {
-    /* ... */
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(message, style: GoogleFonts.poppins())),
+      SnackBar(
+          content: Text(message, style: GoogleFonts.poppins()),
+          backgroundColor: Colors.redAccent), // Use red for errors
     );
-  }
-
-  Future<String?> _showCommentDialog(BuildContext context,
-      {bool isOptional = false}) async {
-    /* ... */
-    final TextEditingController commentController = TextEditingController();
-    String title =
-        isOptional ? "Add a Comment? (Optional)" : "Add a Comment (Required)";
-    ValueNotifier<bool> sendEnabledNotifier = ValueNotifier<bool>(isOptional);
-
-    if (!isOptional) {
-      commentController.addListener(() {
-        if (mounted) {
-          sendEnabledNotifier.value = commentController.text.trim().isNotEmpty;
-        }
-      });
-    }
-
-    final result = await showDialog<String>(
-      context: context,
-      barrierDismissible: isOptional,
-      builder: (BuildContext dialogContext) {
-        return AlertDialog(
-          shape:
-              RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
-          title: Text(title,
-              style: GoogleFonts.poppins(fontWeight: FontWeight.w600)),
-          content: TextField(
-            controller: commentController,
-            decoration: InputDecoration(
-              hintText: "Your comment...",
-              border:
-                  OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
-              counterText: "",
-            ),
-            maxLength: 140,
-            maxLines: 3,
-            minLines: 1,
-            autofocus: true,
-            onChanged: (text) {
-              if (!isOptional) {
-                sendEnabledNotifier.value = text.trim().isNotEmpty;
-              }
-            },
-          ),
-          actions: <Widget>[
-            TextButton(
-              child: Text("Cancel",
-                  style: GoogleFonts.poppins(color: Colors.grey)),
-              onPressed: () => Navigator.of(dialogContext).pop(null),
-            ),
-            ValueListenableBuilder<bool>(
-                valueListenable: sendEnabledNotifier,
-                builder: (context, isEnabled, child) {
-                  return TextButton(
-                    child: Text("Send",
-                        style: GoogleFonts.poppins(
-                            color: isEnabled
-                                ? const Color(0xFF8B5CF6)
-                                : Colors.grey,
-                            fontWeight: FontWeight.w600)),
-                    onPressed: isEnabled
-                        ? () => Navigator.of(dialogContext)
-                            .pop(commentController.text.trim())
-                        : null,
-                  );
-                }),
-          ],
-        );
-      },
-    );
-
-    try {
-      if (!isOptional) commentController.removeListener(() {});
-      sendEnabledNotifier.dispose();
-      commentController.dispose();
-    } catch (e) {
-      print("Error disposing comment dialog resources: $e");
-    }
-    return result;
   }
 
   Future<void> _openFilterDialog() async {
-    /* ... */
     print("[HomeScreen] Opening Filter Dialog.");
     await showDialog<bool>(
       context: context,
       builder: (context) => const FilterSettingsDialog(),
     );
   }
-  // --- End Unchanged Methods ---
 
   @override
   Widget build(BuildContext context) {
     final feedState = ref.watch(feedProvider);
     final filters = ref.watch(filterProvider);
 
+    // Update local profile list when provider changes
     ref.listen<HomeFeedState>(feedProvider, (_, next) {
       if (mounted) {
         setState(() {
@@ -327,7 +223,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
             style: GoogleFonts.poppins(fontWeight: FontWeight.w600)),
         backgroundColor: Colors.white,
         foregroundColor: Colors.black,
-        elevation: 0, // Flat AppBar
+        elevation: 0,
         automaticallyImplyLeading: false,
         actions: [
           IconButton(
@@ -339,7 +235,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
       ),
       body: Column(
         children: [
-          // Filter Chips Row
+          // Filter Chips Row (remains the same)
           Padding(
             padding:
                 const EdgeInsets.symmetric(horizontal: 12.0, vertical: 10.0),
@@ -347,7 +243,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                 onTap: _openFilterDialog,
                 child: Container(
                   color: Colors.transparent,
-                  height: 34, // Adjust height if needed
+                  height: 34,
                   child: SingleChildScrollView(
                     scrollDirection: Axis.horizontal,
                     physics: const BouncingScrollPhysics(),
@@ -357,92 +253,46 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                   ),
                 )),
           ),
-          // Removed Divider
 
-          // Feed Area (Expanded) - Unchanged
+          // Feed Area (Expanded)
           Expanded(
             child: Stack(
+              alignment: Alignment.center, // Center children like indicators
               children: [
-                if (hasProfilesToShow) _buildProfileCardAtIndex(0),
                 if (isLoadingFeed)
-                  const Center(
-                      child:
-                          CircularProgressIndicator(color: Color(0xFF8B5CF6))),
-                if (!isLoadingFeed && error != null && !hasProfilesToShow)
-                  _buildErrorState(error),
-                if (!isLoadingFeed && error == null && !hasProfilesToShow)
-                  _buildEmptyState(),
+                  const CircularProgressIndicator(color: Color(0xFF8B5CF6))
+                // Show loading only if initial fetch AND no profiles loaded yet
+                else if (error != null && !hasProfilesToShow)
+                  _buildErrorState(error) // Show error only if no profiles
+                else if (!hasProfilesToShow)
+                  _buildEmptyState() // Show empty state if no profiles and no error
+                else // Only build the card if there are profiles
+                  _buildProfileCardAtIndex(0),
+
+                // General interaction loading overlay (covers everything)
                 if (_isInteracting)
                   Positioned.fill(
-                      child: Container(
-                    color: Colors.white.withOpacity(0.5),
-                    child: const Center(
-                        child: CircularProgressIndicator(
-                            color: Color(0xFF8B5CF6))),
-                  )),
+                    child: Container(
+                      color: Colors.white.withOpacity(0.5),
+                      child: const Center(
+                          child: CircularProgressIndicator(
+                              color: Color(0xFF8B5CF6))),
+                    ),
+                  ),
               ],
             ),
           ),
 
-          // Bottom Action Buttons - Unchanged
-          if (!isLoadingFeed && hasProfilesToShow)
-            Padding(
-              padding:
-                  const EdgeInsets.symmetric(vertical: 16.0, horizontal: 20.0),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                children: [
-                  _buildActionButton(Icons.close_rounded, Colors.red.shade400,
-                      _isInteracting ? null : _handleDislikeButtonPressed),
-                  _buildActionButton(
-                      Icons.favorite_rounded,
-                      Colors.pink.shade300,
-                      _isInteracting
-                          ? null
-                          : () {
-                              if (_feedProfiles.isNotEmpty &&
-                                  _feedProfiles[0].id != null) {
-                                _handleLikeInteraction(
-                                    targetUserId: _feedProfiles[0].id!,
-                                    contentType: ContentLikeType.media,
-                                    contentIdentifier: "0",
-                                    interactionType:
-                                        LikeInteractionType.standard,
-                                    comment: null);
-                              }
-                            }),
-                  _buildActionButton(
-                      Icons.star_rounded,
-                      Colors.purple.shade300,
-                      _isInteracting
-                          ? null
-                          : () async {
-                              if (_feedProfiles.isNotEmpty &&
-                                  _feedProfiles[0].id != null) {
-                                final comment = await _showCommentDialog(
-                                    context,
-                                    isOptional: true);
-                                _handleLikeInteraction(
-                                    targetUserId: _feedProfiles[0].id!,
-                                    contentType: ContentLikeType.media,
-                                    contentIdentifier: "0",
-                                    interactionType: LikeInteractionType.rose,
-                                    comment: comment);
-                              }
-                            }),
-                ],
-              ),
-            ),
+          // --- REMOVED BOTTOM ACTION BUTTONS ---
+          // Padding(...) // Removed the entire Padding widget with action buttons
         ],
       ),
     );
   }
 
-  // Build Filter Chips dynamically - Removed isActive logic from call
+  // --- Helper methods (_buildFilterChips, _buildFilterChip, _buildEmptyState, _buildErrorState) remain the same ---
   List<Widget> _buildFilterChips(FilterSettings filters) {
     List<Widget> chips = [];
-
-    // Gender Preference Chip
     chips.add(_buildFilterChip(
         Icons.wc_rounded,
         filters.whoYouWantToSee?.value.replaceFirst(
@@ -451,16 +301,10 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
             FilterSettings.defaultGenderPref.value.replaceFirst(
                 FilterSettings.defaultGenderPref.value[0],
                 FilterSettings.defaultGenderPref.value[0].toUpperCase())));
-
-    // Age Range Chip
     chips.add(_buildFilterChip(Icons.cake_outlined,
         '${filters.ageMin ?? FilterSettings.defaultAgeMin}-${filters.ageMax ?? FilterSettings.defaultAgeMax}'));
-
-    // Distance Chip
     chips.add(_buildFilterChip(Icons.social_distance_outlined,
         '${filters.radiusKm ?? FilterSettings.defaultRadius} km'));
-
-    // Active Today Chip - Use value to determine label/icon
     bool activeTodayValue =
         filters.activeToday ?? FilterSettings.defaultActiveToday;
     chips.add(_buildFilterChip(
@@ -469,64 +313,53 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
           : Icons.access_time_rounded,
       activeTodayValue ? 'Active Today' : 'Active: Any',
     ));
-
     return chips;
   }
 
-  // Helper for individual filter chip - ALWAYS use purple theme
   Widget _buildFilterChip(IconData icon, String label) {
-    final Color themeColor = const Color(0xFF8B5CF6); // Purple theme
-    final Color themeBgColor =
-        const Color(0xFFEDE9FE); // Light purple background
-    final Color themeTextColor = themeColor; // Use main theme color for text
+    const Color themeColor = Color(0xFF8B5CF6);
+    const Color themeBgColor = Color(0xFFEDE9FE);
+    const Color themeTextColor = themeColor;
 
     return Padding(
       padding: const EdgeInsets.only(right: 8.0),
       child: Chip(
-        avatar: Icon(icon, size: 16, color: themeColor), // Use theme color
+        avatar: Icon(icon, size: 16, color: themeColor),
         label: Text(label),
         labelStyle: GoogleFonts.poppins(
-            fontSize: 12,
-            color: themeTextColor, // Use theme text color
-            fontWeight: FontWeight.w500),
-        backgroundColor: themeBgColor, // Use theme background color
+            fontSize: 12, color: themeTextColor, fontWeight: FontWeight.w500),
+        backgroundColor: themeBgColor,
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
         materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
         visualDensity: const VisualDensity(horizontal: 0.0, vertical: -2),
-        side: BorderSide.none, // No border
-        elevation: 0.5, // Optional: small consistent elevation
-        shadowColor: themeColor.withOpacity(0.2), // Optional: subtle shadow
+        side: BorderSide.none,
+        elevation: 0.5,
+        shadowColor: themeColor.withOpacity(0.2),
       ),
     );
   }
 
-  // --- Unchanged Methods ---
   Widget _buildProfileCardAtIndex(int index) {
-    /* ... */
     if (index >= 0 && index < _feedProfiles.length) {
       final currentProfile = _feedProfiles[index];
       return HomeProfileCard(
         profile: currentProfile,
-        onLikeContent: (type, identifier, comment) {
-          if (currentProfile.id == null) return;
-          _handleLikeInteraction(
+        // Pass the callback function to handle the API call
+        performLikeApiCall: (
+            {required contentType,
+            required contentIdentifier,
+            required interactionType,
+            comment}) async {
+          if (currentProfile.id == null) return false;
+          return await _callLikeRepository(
               targetUserId: currentProfile.id!,
-              contentType: type,
-              contentIdentifier: identifier,
-              interactionType: LikeInteractionType.standard,
+              contentType: contentType,
+              contentIdentifier: contentIdentifier,
+              interactionType: interactionType,
               comment: comment);
         },
-        onSendRose: (comment) async {
-          if (currentProfile.id == null) return;
-          final roseComment =
-              await _showCommentDialog(context, isOptional: true);
-          _handleLikeInteraction(
-              targetUserId: currentProfile.id!,
-              contentType: ContentLikeType.media,
-              contentIdentifier: "0",
-              interactionType: LikeInteractionType.rose,
-              comment: roseComment);
-        },
+        // Callback to remove the card after success
+        onInteractionComplete: _removeTopCard,
       );
     }
     return Container(
@@ -534,37 +367,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
         child: const Text("Error loading profile."));
   }
 
-  Widget _buildActionButton(
-      IconData icon, Color color, VoidCallback? onPressed) {
-    /* ... */
-    return InkWell(
-      onTap: onPressed,
-      borderRadius: BorderRadius.circular(35),
-      child: Container(
-        width: 70,
-        height: 70,
-        decoration: BoxDecoration(
-          shape: BoxShape.circle,
-          color: Colors.white,
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withOpacity(0.08),
-              blurRadius: 10,
-              spreadRadius: 1,
-            ),
-          ],
-          border: onPressed == null
-              ? Border.all(color: Colors.grey.shade300, width: 1)
-              : null,
-        ),
-        child: Icon(icon,
-            color: onPressed == null ? Colors.grey.shade400 : color, size: 35),
-      ),
-    );
-  }
-
   Widget _buildEmptyState() {
-    /* ... */
     return Center(
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
@@ -600,7 +403,6 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
   }
 
   Widget _buildErrorState(AppError error) {
-    /* ... */
     return Center(
       child: Padding(
         padding: const EdgeInsets.all(20.0),
@@ -643,5 +445,4 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
       ),
     );
   }
-  // --- End Unchanged Methods ---
-} // End of _HomeScreenState
+}
