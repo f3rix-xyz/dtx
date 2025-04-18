@@ -1,4 +1,3 @@
-
 // File: services/api_service.dart
 import 'dart:convert';
 
@@ -8,7 +7,8 @@ abstract class ApiService {
   String get baseUrl;
 
   /// Makes a GET request to the specified endpoint
-  Future<Map<String, dynamic>> get(String endpoint, {Map<String, String>? headers});
+  Future<Map<String, dynamic>> get(String endpoint,
+      {Map<String, String>? headers});
 
   /// Makes a POST request to the specified endpoint with the provided body
   Future<Map<String, dynamic>> post(
@@ -19,6 +19,14 @@ abstract class ApiService {
 
   /// Makes a PUT request to the specified endpoint with the provided body
   Future<Map<String, dynamic>> put(
+    String endpoint, {
+    required Map<String, dynamic> body,
+    Map<String, String>? headers,
+  });
+
+  /// Makes a PATCH request to the specified endpoint with the provided body
+  Future<Map<String, dynamic>> patch(
+    // <<< ADDED
     String endpoint, {
     required Map<String, dynamic> body,
     Map<String, String>? headers,
@@ -43,5 +51,6 @@ class ApiException implements Exception {
   ApiException(this.message, {this.statusCode});
 
   @override
-  String toString() => 'ApiException: $message ${statusCode != null ? '(Status code: $statusCode)' : ''}';
+  String toString() =>
+      'ApiException: $message ${statusCode != null ? '(Status code: $statusCode)' : ''}';
 }

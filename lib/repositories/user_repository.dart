@@ -1,3 +1,4 @@
+// File: lib/repositories/user_repository.dart
 import '../models/user_model.dart';
 import '../services/api_service.dart';
 import '../utils/token_storage.dart';
@@ -59,7 +60,7 @@ class UserRepository {
     }
   }
 
-  // updateProfileDetails remains the same
+  // updateProfileDetails remains the same (used for onboarding step 2)
   Future<bool> updateProfileDetails(Map<String, dynamic> profileData) async {
     final String methodName = 'updateProfileDetails';
     print('[UserRepository $methodName] Called.');
@@ -106,9 +107,62 @@ class UserRepository {
     }
   }
 
-  // --- REMOVED fetchQuickFeed ---
+  // --- ADDED editProfile METHOD ---
+  Future<bool> editProfile(Map<String, dynamic> profileData) async {
+    final String methodName = 'editProfile';
+    print('[UserRepository $methodName] Called.');
+    // Remove any lingering null values (important for PATCH)
+    profileData.removeWhere((key, value) => value == null);
+    print(
+        '[UserRepository $methodName] Payload to send via PATCH: $profileData');
 
-  // Fetch Home Feed - Modified to return Map with profiles and has_more
+    // Ensure there's actually something to update
+    if (profileData.isEmpty) {
+      print(
+          '[UserRepository $methodName] No changes detected. Skipping API call.');
+      // Consider returning a specific value or message? For now, true as nothing failed.
+      return true; // Or throw ApiException("No changes to save.") if preferred
+    }
+
+    try {
+      final token = await TokenStorage.getToken();
+      if (token == null || token.isEmpty) {
+        print(
+            '[UserRepository $methodName] Error: Authentication token is missing.');
+        throw ApiException('Authentication token is missing');
+      }
+      final headers = {'Authorization': 'Bearer $token'};
+
+      print(
+          '[UserRepository $methodName] Making PATCH request to /api/profile/edit');
+      final response = await _apiService.patch(
+        '/api/profile/edit', // The specific PATCH endpoint
+        body: profileData,
+        headers: headers,
+      );
+
+      print('[UserRepository $methodName] API Response: $response');
+      if (response['success'] == true) {
+        print('[UserRepository $methodName] Profile edit successful.');
+        return true;
+      } else {
+        final message =
+            response['message']?.toString() ?? 'Failed to edit profile.';
+        print('[UserRepository $methodName] Profile edit failed: $message');
+        throw ApiException(message);
+      }
+    } on ApiException catch (e) {
+      print('[UserRepository $methodName] API Exception: ${e.message}');
+      rethrow;
+    } catch (e) {
+      print('[UserRepository $methodName] Unexpected Error: ${e.toString()}');
+      throw ApiException(
+          'An unexpected error occurred while editing profile: ${e.toString()}');
+    }
+  }
+  // --- END ADDED editProfile METHOD ---
+
+  // fetchHomeFeed remains the same
   Future<Map<String, dynamic>> fetchHomeFeed() async {
     final String methodName = 'fetchHomeFeed';
     print('[UserRepository $methodName] Called.');
@@ -209,10 +263,11 @@ class UserRepository {
     }
   }
 
-  // updateProfile remains the same
+  // updateProfile (DEPRECATED for edit - keep for onboarding step 2)
+  // This uses the POST /api/profile endpoint
   Future<bool> updateProfile(UserModel userModel) async {
     print(
-        "[UserRepository updateProfile] Forwarding to updateProfileDetails...");
+        "[UserRepository updateProfile] Calling updateProfileDetails (POST)...");
     Map<String, dynamic> profileData = userModel.toJsonForProfileUpdate();
     return await updateProfileDetails(profileData);
   }

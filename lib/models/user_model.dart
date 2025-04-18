@@ -2,7 +2,7 @@
 import 'package:dtx/utils/app_enums.dart';
 // No need for 'dart:convert' import here unless used elsewhere in this specific file
 
-// --- Prompt Class ---
+// --- Prompt Class --- (No changes needed)
 class Prompt {
   final PromptCategory category;
   final PromptType question;
@@ -57,20 +57,22 @@ class Prompt {
   }
 }
 
-// --- AudioPromptModel Class ---
+// --- AudioPromptModel Class --- (No changes needed)
 class AudioPromptModel {
   final AudioPrompt prompt;
-  final String audioUrl;
+  final String audioUrl; // Renamed from answer for clarity
 
   AudioPromptModel({
     required this.prompt,
-    required this.audioUrl,
+    required this.audioUrl, // Renamed
   });
 
+  // --- UPDATED toJson for PATCH ---
   Map<String, dynamic> toJson() => {
-        'prompt': prompt.value,
-        'audio_url': audioUrl,
+        'question': prompt.value, // Key expected by PATCH
+        'answer_url': audioUrl, // Key expected by PATCH
       };
+  // --- END UPDATED toJson ---
 
   factory AudioPromptModel.fromJson(Map<String, dynamic> json) {
     // Parse Question (assuming it's always a map)
@@ -110,7 +112,7 @@ class AudioPromptModel {
 
     return AudioPromptModel(
       prompt: prompt,
-      audioUrl: audioUrlValue,
+      audioUrl: audioUrlValue, // Use renamed field
     );
   }
 }
@@ -140,6 +142,8 @@ class UserModel {
   final String? verificationStatus;
   final String? verificationPic;
   final String? role;
+  // --- NEW: Internal flag for media changes ---
+  final bool mediaChangedDuringEdit; // Track if media screen was edited
 
   UserModel({
     this.id,
@@ -165,6 +169,7 @@ class UserModel {
     this.verificationStatus,
     this.verificationPic,
     this.role,
+    this.mediaChangedDuringEdit = false, // Default to false
   });
 
   int? get age {
@@ -187,6 +192,7 @@ class UserModel {
     return null;
   }
 
+  // toJson remains the same (might be useful for other things)
   Map<String, dynamic> toJson() => {
         'id': id,
         'name': name,
@@ -207,12 +213,14 @@ class UserModel {
         'smoking_habit': smokingHabit?.value,
         'media_urls': mediaUrls,
         'prompts': prompts.map((prompt) => prompt.toJson()).toList(),
+        // Use AudioPromptModel's toJson which is now formatted for PATCH
         'audio_prompt': audioPrompt?.toJson(),
         'verification_status': verificationStatus,
         'verification_pic': verificationPic,
         'role': role,
       };
 
+  // toJsonForProfileUpdate remains the same (for onboarding step 2 POST)
   Map<String, dynamic> toJsonForProfileUpdate() {
     String? formattedDate(DateTime? dt) {
       if (dt == null) return null;
@@ -220,12 +228,14 @@ class UserModel {
     }
 
     String? formattedHeight(String? h) {
-      return h?.replaceAll("' ", "'");
+      // Height format conversion is likely handled by the backend on POST
+      // but we can keep the frontend format consistent if needed.
+      return h?.replaceAll("' ", "'"); // Example: ensure single space
     }
 
     final Map<String, dynamic> data = {};
     if (name != null) data['name'] = name;
-    data['last_name'] = lastName ?? "";
+    data['last_name'] = lastName ?? ""; // Send empty string if null for POST
     if (dateOfBirth != null) data['date_of_birth'] = formattedDate(dateOfBirth);
     if (datingIntention != null)
       data['dating_intention'] = datingIntention!.value;
@@ -239,9 +249,58 @@ class UserModel {
     if (smokingHabit != null) data['smoking_habit'] = smokingHabit!.value;
     if (prompts.isNotEmpty)
       data['prompts'] = prompts.map((p) => p.toJson()).toList();
+    // Note: Audio prompt and media are handled by separate endpoints during initial onboarding POSTs
     return data;
   }
 
+  // --- NEW: toJsonForEdit for PATCH request ---
+  Map<String, dynamic> toJsonForEdit() {
+    String? formattedHeight(String? h) {
+      // Apply formatting consistent with API expectation if needed
+      return h?.replaceAll("' ", "'"); // Example
+    }
+
+    final Map<String, dynamic> data = {};
+    // --- ONLY include fields that are editable and have values ---
+    // Non-editable: name, last_name, dob, gender, location
+    if (datingIntention != null)
+      data['dating_intention'] = datingIntention!.value;
+    if (height != null && height!.isNotEmpty)
+      data['height'] = formattedHeight(height);
+    if (hometown != null && hometown!.isNotEmpty) data['hometown'] = hometown;
+    if (jobTitle != null && jobTitle!.isNotEmpty) data['job_title'] = jobTitle;
+    if (education != null && education!.isNotEmpty)
+      data['education'] = education;
+    if (religiousBeliefs != null)
+      data['religious_beliefs'] = religiousBeliefs!.value;
+    if (drinkingHabit != null) data['drinking_habit'] = drinkingHabit!.value;
+    if (smokingHabit != null) data['smoking_habit'] = smokingHabit!.value;
+
+    // Handle optional fields where null means "remove"
+    if (hometown == null)
+      data['hometown'] = null; // Explicitly set to null if cleared
+    if (jobTitle == null) data['job_title'] = null;
+    if (education == null) data['education'] = null;
+
+    // Always include prompts, even if empty, to allow removal
+    data['prompts'] = prompts.map((p) => p.toJson()).toList();
+
+    // Include audio_prompt only if it exists
+    if (audioPrompt != null) {
+      data['audio_prompt'] = audioPrompt!.toJson(); // Uses the corrected toJson
+    } else {
+      // To remove audio prompt, explicitly send null
+      data['audio_prompt'] = null;
+    }
+
+    // Always include media_urls (even if empty after edit)
+    data['media_urls'] = mediaUrls ?? [];
+
+    return data;
+  }
+  // --- END NEW ---
+
+  // fromJson remains the same
   factory UserModel.fromJson(Map<String, dynamic> json) {
     // --- Helper Functions ---
     String? getString(dynamic field) {
@@ -259,8 +318,11 @@ class UserModel {
       if (field is Map && field['Valid'] == true && field['String'] != null) {
         return field['String'] as String?;
       } else if (field is String) {
-        return field;
+        // Backend might send "5' 11\"" or "5'11\""
+        return field.replaceAll("' ",
+            "'"); // Standardize to single space or no space? Check API doc.
       } else if (field is int || field is double) {
+        // Convert cm/inches if backend sends numeric height sometimes
         double totalInches = (field as num) * 0.393701;
         int feet = (totalInches / 12).floor();
         int inches = (totalInches % 12).round();
@@ -268,7 +330,7 @@ class UserModel {
           feet++;
           inches = 0;
         }
-        return "$feet' $inches\"";
+        return "$feet' $inches\""; // Ensure this format matches API exactly
       }
       return null;
     }
@@ -276,6 +338,9 @@ class UserModel {
     String? getEnumString(dynamic field, String key) {
       if (field is Map && field['Valid'] == true && field[key] != null) {
         return field[key] as String?;
+      } else if (field is String) {
+        // Handle direct string enums
+        return field;
       }
       return null;
     }
@@ -311,15 +376,24 @@ class UserModel {
     }
 
     T? parseEnum<T>(List<T> enumValues, dynamic field, String key) {
+      // Use getEnumString which handles both map and direct string
       final valueStr = getEnumString(field, key);
       if (valueStr != null) {
         for (final enumValue in enumValues) {
           try {
+            // Assuming enums have a '.value' getter holding the string representation
             if ((enumValue as dynamic).value.toString() == valueStr) {
               return enumValue;
             }
           } catch (e) {
-            print("Error accessing '.value' for enum ${T.toString()}: $e");
+            // This catch block is tricky if enums don't uniformly have '.value'
+            // Consider a more robust mapping if enums are inconsistent.
+            // print("Error accessing '.value' for enum ${T.toString()} (value: $valueStr): $e");
+            // Fallback: Check toString() representation (less reliable)
+            if (enumValue.toString().split('.').last == valueStr) {
+              // print("Fallback enum match using toString() for $valueStr");
+              return enumValue;
+            }
           }
         }
         print("Warning: Enum value '$valueStr' not found in ${T.toString()}.");
@@ -336,7 +410,10 @@ class UserModel {
             .toList();
         return urls.isNotEmpty ? urls : null;
       } else if (field is List<String>) {
-        return field.isNotEmpty ? field : null;
+        // Handle case where it's already List<String>
+        return field.where((s) => s.isNotEmpty).toList().isNotEmpty
+            ? field
+            : null;
       }
       return null;
     }
@@ -366,8 +443,12 @@ class UserModel {
           if (promptData is Map<String, dynamic>) {
             try {
               final parsedPrompt = Prompt.fromJson(promptData);
+              // Ensure answer is not just whitespace before adding
               if (parsedPrompt.answer.trim().isNotEmpty) {
                 parsedPrompts.add(parsedPrompt);
+              } else {
+                print(
+                    "[UserModel fromJson] Skipping prompt with empty answer: ${promptData['question']}");
               }
             } catch (e) {
               print(
@@ -376,100 +457,56 @@ class UserModel {
           }
         }
       }
+      // API allows max 3, but frontend should handle this limit upstream.
+      // Here we just parse what's given.
       return parsedPrompts;
     }
 
-    // --- *** REVISED getAudioPrompt Helper with LOGGING *** ---
+    // --- REVISED getAudioPrompt Helper ---
     AudioPromptModel? getAudioPrompt(Map<String, dynamic> json, int? userId) {
-      // Added userId for logging
       final questionData =
           json['AudioPromptQuestion'] ?? json['audio_prompt_question'];
       final answerData =
           json['AudioPromptAnswer'] ?? json['audio_prompt_answer'];
 
-      // --- LOGGING START ---
-      if (userId == 2) {
-        // Log only for the problematic profile ID
-        print("--- [DEBUG getAudioPrompt ID: $userId] ---");
-        print(
-            "Raw Question Data: $questionData (Type: ${questionData?.runtimeType})");
-        print(
-            "Raw Answer Data: $answerData (Type: ${answerData?.runtimeType})");
-      }
-      // --- LOGGING END ---
-
       // 1. Check Question Validity
       bool isQuestionValid = questionData is Map &&
           questionData['Valid'] == true &&
           questionData['AudioPrompt'] is String &&
-          (questionData['AudioPrompt'] as String)
-              .isNotEmpty; // Ensure prompt value is not empty
+          (questionData['AudioPrompt'] as String).isNotEmpty;
 
-      // --- LOGGING ---
-      if (userId == 2) print("isQuestionValid Check Result: $isQuestionValid");
-      // --- LOGGING ---
+      if (!isQuestionValid) return null; // No valid question, no audio prompt
 
-      if (!isQuestionValid) {
-        if (userId == 2)
-          print(
-              "[DEBUG getAudioPrompt ID: $userId] Returning null due to invalid question.");
-        return null;
-      }
-
-      // 2. Check Answer Validity (String or Valid Map)
-      bool isAnswerValid = false;
+      // 2. Check Answer Validity (String or Valid Map with non-empty String)
+      String? audioUrlValue;
       if (answerData is String && answerData.isNotEmpty) {
-        isAnswerValid = true;
-        if (userId == 2)
-          print(
-              "[DEBUG getAudioPrompt ID: $userId] Answer is a non-empty String.");
+        audioUrlValue = answerData;
       } else if (answerData is Map &&
           answerData['Valid'] == true &&
           answerData['String'] is String &&
           (answerData['String'] as String).isNotEmpty) {
-        isAnswerValid = true;
-        if (userId == 2)
-          print(
-              "[DEBUG getAudioPrompt ID: $userId] Answer is a valid Map with String.");
+        audioUrlValue = answerData['String'] as String;
       }
 
-      // --- LOGGING ---
-      if (userId == 2) print("isAnswerValid Check Result: $isAnswerValid");
-      // --- LOGGING ---
+      if (audioUrlValue == null)
+        return null; // No valid answer, no audio prompt
 
-      if (!isAnswerValid) {
-        if (userId == 2)
-          print(
-              "[DEBUG getAudioPrompt ID: $userId] Returning null due to invalid answer.");
-        return null;
-      }
-
-      // 3. If BOTH are valid, attempt to create the model
-      if (userId == 2)
-        print(
-            "[DEBUG getAudioPrompt ID: $userId] Both valid. Attempting AudioPromptModel.fromJson...");
+      // 3. If BOTH are valid, attempt to create the model using the Factory
       try {
-        // Pass the original data structures to the flexible factory
-        final model = AudioPromptModel.fromJson({
+        // The factory now handles the map structure directly
+        return AudioPromptModel.fromJson({
           'audio_prompt_question': questionData,
           'audio_prompt_answer': answerData,
         });
-        if (userId == 2)
-          print(
-              "[DEBUG getAudioPrompt ID: $userId] AudioPromptModel created successfully.");
-        return model;
       } catch (e) {
         print(
             "[UserModel fromJson getAudioPrompt ID: $userId] Error creating AudioPromptModel: $e");
         print(" -> Question Data: $questionData");
         print(" -> Answer Data: $answerData");
-        if (userId == 2)
-          print(
-              "[DEBUG getAudioPrompt ID: $userId] Returning null due to exception.");
         return null;
       }
     }
-    // --- *** END REVISED getAudioPrompt Helper with LOGGING *** ---
+    // --- END REVISED getAudioPrompt Helper ---
 
     // --- Parse using helpers ---
     final int? currentUserId =
@@ -513,21 +550,21 @@ class UserModel {
       prompts: getPrompts(json),
     );
 
-    // --- Original Debugging Print (Still Useful) ---
-    print("--- Parsed UserModel (Audio Prompt Check - Logging Added) ---");
-    print("ID: ${parsedUser.id}");
-    print("Name: ${parsedUser.name}");
-    print("Audio Prompt Parsed: ${parsedUser.audioPrompt != null}");
-    if (parsedUser.audioPrompt != null) {
-      print("  -> Question: ${parsedUser.audioPrompt!.prompt.label}");
-      print("  -> URL: ${parsedUser.audioPrompt!.audioUrl}");
-    }
-    print("------------------------------------------");
-    // --- END Debugging ---
+    // Remove debug print unless needed
+    // print("--- Parsed UserModel (Audio Prompt Check) ---");
+    // print("ID: ${parsedUser.id}");
+    // print("Name: ${parsedUser.name}");
+    // print("Audio Prompt Parsed: ${parsedUser.audioPrompt != null}");
+    // if (parsedUser.audioPrompt != null) {
+    //   print("  -> Question: ${parsedUser.audioPrompt!.prompt.label}");
+    //   print("  -> URL: ${parsedUser.audioPrompt!.audioUrl}");
+    // }
+    // print("------------------------------------------");
 
     return parsedUser;
   }
 
+  // copyWith needs update for mediaChangedDuringEdit
   UserModel copyWith({
     int? Function()? id,
     String? Function()? name,
@@ -552,6 +589,7 @@ class UserModel {
     String? Function()? verificationStatus,
     String? Function()? verificationPic,
     String? Function()? role,
+    bool? mediaChangedDuringEdit, // <<< ADDED parameter
   }) {
     return UserModel(
       id: id != null ? id() : this.id,
@@ -583,21 +621,26 @@ class UserModel {
       verificationPic:
           verificationPic != null ? verificationPic() : this.verificationPic,
       role: role != null ? role() : this.role,
+      // Pass the value or use existing
+      mediaChangedDuringEdit:
+          mediaChangedDuringEdit ?? this.mediaChangedDuringEdit,
     );
   }
 
+  // isProfileValid for onboarding step 2 POST
   bool isProfileValid() {
     final dobValid = dateOfBirth != null &&
         DateTime.now().difference(dateOfBirth!).inDays >= (18 * 365.25);
+    // Location/Gender validation is handled in onboarding step 1
     return name != null &&
         name!.trim().isNotEmpty &&
         name!.trim().length >= 3 &&
         dobValid &&
-        gender != null &&
-        datingIntention != null &&
-        isLocationValid();
+        datingIntention != null; // Added dating intention check for step 2
+    // Removed location/gender check here as it's handled earlier
   }
 
+  // isLocationValid remains the same (used in onboarding step 1)
   bool isLocationValid() {
     return latitude != null &&
         longitude != null &&

@@ -1,34 +1,55 @@
+// File: lib/views/media.dart
 import 'dart:io';
 import 'dart:typed_data';
 import 'package:dtx/providers/error_provider.dart';
-import 'package:dtx/providers/media_upload_provider.dart';
-import 'package:dtx/views/religion.dart';
-import 'package:dtx/views/prompt.dart';
+import 'package:dtx/providers/media_upload_provider.dart'; // Keep for potential size checks?
+import 'package:dtx/providers/user_provider.dart';
+import 'package:dtx/views/prompt.dart'; // Keep for onboarding flow
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:image_picker/image_picker.dart';
-import 'package:get_thumbnail_video/video_thumbnail.dart'; // Updated package
 import 'package:reorderable_grid_view/reorderable_grid_view.dart';
 import 'package:dotted_border/dotted_border.dart';
-import 'package:get_thumbnail_video/index.dart';
+import '../models/error_model.dart'; // Keep
 
-import '../models/error_model.dart'; // NEW import
+// Wrapper class remains the same
+class EditableMediaItem {
+  final String? url;
+  final File? file;
+  final MediaType type;
+  final UniqueKey key;
+
+  EditableMediaItem({
+    this.url,
+    this.file,
+    required this.type,
+    required this.key,
+  }) : assert(
+            url != null || file != null, 'Either url or file must be provided');
+
+  bool get isNewFile => file != null;
+  String get displayIdentifier => url ?? file!.path; // Use path for new files
+}
 
 class MediaPickerScreen extends ConsumerStatefulWidget {
-  const MediaPickerScreen({super.key});
+  final bool isEditing;
+
+  const MediaPickerScreen({
+    super.key,
+    this.isEditing = false,
+  });
 
   @override
   ConsumerState<MediaPickerScreen> createState() => _MediaPickerState();
 }
 
 class _MediaPickerState extends ConsumerState<MediaPickerScreen> {
-  late List<MediaFile> _selectedMedia;
-  late List<UniqueKey> _itemKeys;
+  late List<EditableMediaItem?> _editableMedia;
   bool _isForwardButtonEnabled = false;
-  final _thumbnailCache = <String, Uint8List>{};
-  bool _isUploading = false; // Add this new variable
+  bool _mediaHasChanged = false;
 
+  // Allowed types (keep as before)
   final Set<String> _allowedImageMime = {
     'image/jpeg',
     'image/png',
@@ -36,7 +57,6 @@ class _MediaPickerState extends ConsumerState<MediaPickerScreen> {
     'image/webp',
     'image/jpg'
   };
-
   final Set<String> _allowedVideoMime = {
     'video/mp4',
     'video/quicktime',
@@ -45,7 +65,6 @@ class _MediaPickerState extends ConsumerState<MediaPickerScreen> {
     'video/3gpp',
     'video/mp2t'
   };
-
   final Set<String> _allowedImageExtensions = {
     'jpg',
     'jpeg',
@@ -55,7 +74,6 @@ class _MediaPickerState extends ConsumerState<MediaPickerScreen> {
     'bmp',
     'tiff'
   };
-
   final Set<String> _allowedVideoExtensions = {
     'mp4',
     'mov',
@@ -70,80 +88,116 @@ class _MediaPickerState extends ConsumerState<MediaPickerScreen> {
   @override
   void initState() {
     super.initState();
-    _selectedMedia = List.generate(
-        6, (index) => MediaFile(file: null, type: MediaType.image));
-    _itemKeys = List.generate(6, (index) => UniqueKey());
+    _initializeMedia();
+    WidgetsBinding.instance
+        .addPostFrameCallback((_) => _updateForwardButtonState());
+  }
+
+  void _initializeMedia() {
+    _editableMedia = List.filled(6, null);
+    if (widget.isEditing) {
+      final currentUrls = ref.read(userProvider).mediaUrls ?? [];
+      for (int i = 0; i < currentUrls.length && i < 6; i++) {
+        final url = currentUrls[i];
+        final isVideo = url.toLowerCase().endsWith('.mp4') ||
+            url.toLowerCase().endsWith('.mov');
+        _editableMedia[i] = EditableMediaItem(
+          url: url,
+          type: isVideo ? MediaType.video : MediaType.image,
+          key: UniqueKey(),
+        );
+      }
+    }
+    // Ensure list has 6 elements
+    while (_editableMedia.length < 6) {
+      _editableMedia.add(null);
+    }
   }
 
   @override
   void dispose() {
-    _thumbnailCache.clear();
     super.dispose();
   }
 
-Future<void> _pickMedia(int index) async {
-  final ImagePicker picker = ImagePicker();
-  final XFile? media = await picker.pickMedia();
+  Future<void> _pickMedia(int index) async {
+    ref.read(errorProvider.notifier).clearError();
+    final ImagePicker picker = ImagePicker();
+    final XFile? media = await picker.pickMedia();
 
-  if (media != null) {
-    final mimeType = media.mimeType?.toLowerCase();
-    final extension = media.path.split('.').last.toLowerCase();
-    final filePath = media.path.replaceFirst('file://', '');
-    final file = File(filePath);
-    
-    final isValidImage = _allowedImageMime.contains(mimeType) || 
-                       _allowedImageExtensions.contains(extension);
-    final isValidVideo = _allowedVideoMime.contains(mimeType) || 
-                       _allowedVideoExtensions.contains(extension);
-    // Check file size
-    final fileSize = await file.length();
-    final isImage = _allowedImageMime.contains(mimeType) ||
-        _allowedImageExtensions.contains(extension);
-    final isVideo = _allowedVideoMime.contains(mimeType) ||
-        _allowedVideoExtensions.contains(extension);
-        
-    // Size validation (10MB for images, 50MB for videos)
-    if (isImage && fileSize > 10 * 1024 * 1024) {
-      ref.read(errorProvider.notifier).setError(
-        AppError.validation("Image is too large. Maximum size is 10 MB."),
-      );
-      _clearInvalidInput(index);
+    if (media != null) {
+      final mimeType = media.mimeType?.toLowerCase();
+      final extension = media.path.split('.').last.toLowerCase();
+      final filePath = media.path.replaceFirst('file://', '');
+      final file = File(filePath);
+
+      final isValidImage = _allowedImageMime.contains(mimeType) ||
+          _allowedImageExtensions.contains(extension);
+      final isValidVideo = _allowedVideoMime.contains(mimeType) ||
+          _allowedVideoExtensions.contains(extension);
+      final fileSize = await file.length();
+      final isImage = isValidImage;
+      final isVideo = isValidVideo;
+
+      if (isImage && fileSize > 10 * 1024 * 1024) {
+        ref.read(errorProvider.notifier).setError(
+            AppError.validation("Image is too large. Maximum size is 10 MB."));
+        _clearSlot(index);
+        return;
+      }
+      if (isVideo && fileSize > 50 * 1024 * 1024) {
+        ref.read(errorProvider.notifier).setError(
+            AppError.validation("Video is too large. Maximum size is 50 MB."));
+        _clearSlot(index);
+        return;
+      }
+      if (index == 0 && !isValidImage) {
+        await _showErrorDialog(context, isMainImage: true);
+        _clearSlot(index);
+        return;
+      }
+      if (!isValidImage && !isValidVideo) {
+        await _showErrorDialog(context);
+        _clearSlot(index);
+        return;
+      }
+
+      setState(() {
+        _editableMedia[index] = EditableMediaItem(
+          file: file,
+          type: isVideo ? MediaType.video : MediaType.image,
+          key: UniqueKey(),
+        );
+        _mediaHasChanged = true;
+        _updateForwardButtonState();
+      });
+    }
+  }
+
+  void _clearSlot(int index) {
+    // Prevent clearing main photo if <= 3 items
+    final currentCount = _countSelectedMedia();
+    if (index == 0 && currentCount <= 3 && _editableMedia[index] != null) {
+      ref.read(errorProvider.notifier).setError(AppError.validation(
+          "Cannot remove the main photo when less than 3 items are present."));
       return;
     }
-    
-    if (isVideo && fileSize > 50 * 1024 * 1024) {
-      ref.read(errorProvider.notifier).setError(
-        AppError.validation("Video is too large. Maximum size is 50 MB."),
-      );
-      _clearInvalidInput(index);
+    // Prevent clearing any item if it would result in less than 3 items remaining
+    if (_editableMedia[index] != null && currentCount <= 3) {
+      ref
+          .read(errorProvider.notifier)
+          .setError(AppError.validation("Minimum of 3 media items required."));
       return;
     }
-
-    // Existing validation logic...
-    if (index == 0 && !isValidImage) {
-      await _showErrorDialog(context, isMainImage: true);
-      _clearInvalidInput(index);
-      return;
-    }
-
-    if (!isValidImage && !isValidVideo) {
-      await _showErrorDialog(context);
-      _clearInvalidInput(index);
-      return;
-    }
-
     setState(() {
-      _selectedMedia[index] = MediaFile(
-        file: File(filePath),
-        type: isValidVideo ? MediaType.video : MediaType.image,
-      );
+      _editableMedia[index] = null;
+      _mediaHasChanged = true;
       _updateForwardButtonState();
     });
   }
-}
 
   Future<void> _showErrorDialog(BuildContext context,
       {bool isMainImage = false}) async {
+    // ... (same as before) ...
     return showDialog(
       context: context,
       builder: (context) => AlertDialog(
@@ -161,37 +215,103 @@ Future<void> _pickMedia(int index) async {
     );
   }
 
-  void _clearInvalidInput(int index) {
+  void _reorderMedia(int oldGridIndex, int newGridIndex) {
+    if (oldGridIndex == 0 || newGridIndex == 0) return;
     setState(() {
-      _selectedMedia[index] = MediaFile(file: null, type: MediaType.image);
+      final EditableMediaItem? item = _editableMedia.removeAt(oldGridIndex);
+      if (item != null) {
+        _editableMedia.insert(newGridIndex, item);
+        _mediaHasChanged = true;
+      } else {
+        _editableMedia.insert(newGridIndex, null);
+      }
+      while (_editableMedia.length > 6) {
+        _editableMedia.removeLast();
+      }
+      while (_editableMedia.length < 6) {
+        _editableMedia.add(null);
+      }
       _updateForwardButtonState();
     });
   }
 
-  void _reorderMedia(int oldIndex, int newIndex) {
-    if (oldIndex == 0 || newIndex == 0) return;
-
-    setState(() {
-      final MediaFile item = _selectedMedia.removeAt(oldIndex);
-      final UniqueKey key = _itemKeys.removeAt(oldIndex);
-
-      if (oldIndex < newIndex) newIndex -= 1;
-
-      _selectedMedia.insert(newIndex, item);
-      _itemKeys.insert(newIndex, key);
-    });
+  int _countSelectedMedia() {
+    return _editableMedia.where((item) => item != null).length;
   }
 
   void _updateForwardButtonState() {
-    int selectedCount =
-        _selectedMedia.where((media) => media.file != null).length;
+    int selectedCount = _countSelectedMedia();
     setState(() {
       _isForwardButtonEnabled = selectedCount >= 3;
     });
   }
 
+  void _handleDone() {
+    if (!_isForwardButtonEnabled) return;
+
+    // --- *** CORE CHANGE for EDITING *** ---
+    if (widget.isEditing) {
+      // Create the list of strings (URLs or local paths)
+      final List<String> finalMediaIdentifiers = _editableMedia
+          .where((item) => item != null)
+          .map((item) => item!.displayIdentifier) // Use url or file path
+          .toList();
+
+      // Update the user provider directly with this mixed list
+      ref.read(userProvider.notifier).updateMediaUrls(finalMediaIdentifiers);
+
+      // Set the flag if changes were made
+      if (_mediaHasChanged) {
+        ref.read(userProvider.notifier).setMediaChangedFlag(true);
+      }
+      print("[MediaPickerScreen Edit] Updated provider. Popping back.");
+      Navigator.of(context).pop(); // Pop back to ProfileScreen
+    } else {
+      // --- ONBOARDING Flow (remains the same conceptually) ---
+      final List<File> filesToUpload = _editableMedia
+          .where((item) => item?.isNewFile == true)
+          .map((item) => item!.file!)
+          .toList();
+
+      if (filesToUpload.isEmpty) {
+        print(
+            "[MediaPickerScreen Onboarding] No files selected? Navigating anyway.");
+        Navigator.pushReplacement(
+            context,
+            MaterialPageRoute(
+                builder: (context) => const ProfileAnswersScreen()));
+        return;
+      }
+
+      final uploadNotifier = ref.read(mediaUploadProvider.notifier);
+      // Create a temporary list matching the desired order
+      List<File?> orderedFilesForUpload = List.filled(6, null);
+      for (int i = 0; i < _editableMedia.length; i++) {
+        if (_editableMedia[i]?.isNewFile == true) {
+          orderedFilesForUpload[i] = _editableMedia[i]!.file;
+        }
+      }
+      // Set the files in the provider
+      for (int i = 0; i < orderedFilesForUpload.length; i++) {
+        if (orderedFilesForUpload[i] != null) {
+          uploadNotifier.setMediaFile(i, orderedFilesForUpload[i]!);
+        } else {
+          // uploadNotifier.removeMedia(i); // If provider needs explicit removal
+        }
+      }
+      print(
+          "[MediaPickerScreen Onboarding] Files set in provider. Navigating to Prompts.");
+      Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(
+              builder: (context) => const ProfileAnswersScreen()));
+      // --- End ONBOARDING Flow ---
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
+    // ... (build method remains the same, header and bottom bar logic unchanged) ...
     final errorState = ref.watch(errorProvider);
     final screenSize = MediaQuery.of(context).size;
 
@@ -203,34 +323,73 @@ Future<void> _pickMedia(int index) async {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              SizedBox(height: screenSize.height * 0.03),
-              // Enhanced header section
-              Container(
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: const Color(0xFF8B5CF6).withOpacity(0.1),
-                  borderRadius: BorderRadius.circular(16),
+              // --- Adjusted Header for Edit Mode ---
+              Padding(
+                padding: EdgeInsets.only(
+                  top: screenSize.height * 0.02,
+                  left: screenSize.width * 0.02,
+                  right: screenSize.width * 0.06,
                 ),
-                child: Icon(
-                  Icons.photo_library_rounded,
-                  color: const Color(0xFF8B5CF6),
-                  size: 48,
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    if (widget.isEditing)
+                      IconButton(
+                        icon: const Icon(Icons.close, color: Colors.grey),
+                        onPressed: () => Navigator.of(context).pop(),
+                      )
+                    else
+                      Container(
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF8B5CF6).withOpacity(0.1),
+                          borderRadius: BorderRadius.circular(16),
+                        ),
+                        child: Icon(Icons.photo_library_rounded,
+                            color: const Color(0xFF8B5CF6), size: 30),
+                      ),
+                    Text(
+                      widget.isEditing ? "Edit Media" : "",
+                      style: GoogleFonts.poppins(
+                          fontSize: 18, fontWeight: FontWeight.w600),
+                    ),
+                    if (widget.isEditing)
+                      TextButton(
+                        onPressed: _isForwardButtonEnabled ? _handleDone : null,
+                        child: Text(
+                          "Done",
+                          style: GoogleFonts.poppins(
+                            color: _isForwardButtonEnabled
+                                ? const Color(0xFF8B5CF6)
+                                : Colors.grey,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      )
+                    else
+                      const SizedBox(width: 48),
+                  ],
                 ),
               ),
+              // --- End Adjusted Header ---
               SizedBox(height: screenSize.height * 0.02),
-              // Enhanced title
               Text(
-                "Create Your Gallery",
+                widget.isEditing
+                    ? "Manage Your Gallery"
+                    : "Create Your Gallery",
                 style: GoogleFonts.poppins(
-                  fontSize: screenSize.width * 0.08,
+                  fontSize: widget.isEditing
+                      ? screenSize.width * 0.07
+                      : screenSize.width * 0.08,
                   fontWeight: FontWeight.w700,
                   color: const Color(0xFF1A1A1A),
                   letterSpacing: -0.5,
                 ),
               ),
-              // Enhanced subtitle
               Text(
-                "Select at least 3 photos or videos",
+                widget.isEditing
+                    ? "Add, remove, or reorder photos/videos (min 3)"
+                    : "Select at least 3 photos or videos",
                 style: GoogleFonts.poppins(
                   fontSize: screenSize.width * 0.04,
                   color: Colors.grey[600],
@@ -238,7 +397,6 @@ Future<void> _pickMedia(int index) async {
                 ),
               ),
               SizedBox(height: screenSize.height * 0.03),
-              // Enhanced grid view
               Expanded(
                 child: Container(
                   decoration: BoxDecoration(
@@ -260,135 +418,101 @@ Future<void> _pickMedia(int index) async {
                     childAspectRatio: 0.95,
                     shrinkWrap: true,
                     physics: const BouncingScrollPhysics(),
-                    children: List.generate(
-                        6, (index) => _buildMediaPlaceholder(index)),
+                    children: List.generate(_editableMedia.length,
+                        (index) => _buildMediaPlaceholder(index)),
                     onReorder: _reorderMedia,
                   ),
                 ),
               ),
-              // Add this right below the Expanded widget containing the grid view
-if (ref.watch(errorProvider) != null)
-  Padding(
-    padding: const EdgeInsets.symmetric(vertical: 8.0),
-    child: Text(
-      ref.watch(errorProvider)!.message,
-      style: GoogleFonts.poppins(
-        color: Colors.red,
-        fontSize: 14,
-      ),
-    ),
-  ),
-
-              // Enhanced bottom section
-              Container(
-                padding: EdgeInsets.symmetric(
-                  vertical: screenSize.height * 0.02,
-                  horizontal: screenSize.width * 0.04,
-                ),
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(16),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black.withOpacity(0.05),
-                      blurRadius: 10,
-                      offset: const Offset(0, -4),
+              if (errorState != null)
+                Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 8.0),
+                  child: Center(
+                    child: Text(
+                      errorState.message,
+                      style:
+                          GoogleFonts.poppins(color: Colors.red, fontSize: 14),
+                      textAlign: TextAlign.center,
                     ),
-                  ],
+                  ),
                 ),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          "${_selectedMedia.where((media) => media.file != null).length}/6 Selected",
-                          style: GoogleFonts.poppins(
-                            fontSize: screenSize.width * 0.04,
-                            fontWeight: FontWeight.w600,
-                            color: const Color(0xFF8B5CF6),
+              // --- Hide Bottom Bar in Edit Mode ---
+              if (!widget.isEditing)
+                Container(
+                  padding: EdgeInsets.symmetric(
+                    vertical: screenSize.height * 0.02,
+                    horizontal: screenSize.width * 0.04,
+                  ),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(16),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withOpacity(0.05),
+                        blurRadius: 10,
+                        offset: const Offset(0, -4),
+                      ),
+                    ],
+                  ),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            "${_countSelectedMedia()}/6 Selected",
+                            style: GoogleFonts.poppins(
+                              fontSize: screenSize.width * 0.04,
+                              fontWeight: FontWeight.w600,
+                              color: const Color(0xFF8B5CF6),
+                            ),
+                          ),
+                          Text(
+                            "Minimum 3 required",
+                            style: GoogleFonts.poppins(
+                              fontSize: screenSize.width * 0.035,
+                              color: Colors.grey[600],
+                            ),
+                          ),
+                        ],
+                      ),
+                      GestureDetector(
+                        onTap: _handleDone,
+                        child: AnimatedContainer(
+                          duration: const Duration(milliseconds: 200),
+                          width: 60,
+                          height: 60,
+                          decoration: BoxDecoration(
+                            color: _isForwardButtonEnabled
+                                ? const Color(0xFF8B5CF6)
+                                : Colors.grey[300],
+                            borderRadius: BorderRadius.circular(30),
+                            boxShadow: _isForwardButtonEnabled
+                                ? [
+                                    BoxShadow(
+                                      color: const Color(0xFF8B5CF6)
+                                          .withOpacity(0.3),
+                                      blurRadius: 8,
+                                      offset: const Offset(0, 4),
+                                    ),
+                                  ]
+                                : null,
+                          ),
+                          child: Icon(
+                            Icons.arrow_forward_rounded,
+                            color: _isForwardButtonEnabled
+                                ? Colors.white
+                                : Colors.grey[500],
+                            size: 28,
                           ),
                         ),
-                        Text(
-                          "Minimum 3 required",
-                          style: GoogleFonts.poppins(
-                            fontSize: screenSize.width * 0.035,
-                            color: Colors.grey[600],
-                          ),
-                        ),
-                      ],
-                    ),
-                    // Enhanced forward button
-GestureDetector(
-  onTap: () async {
-    if (_isForwardButtonEnabled && !_isUploading) {
-      setState(() {
-        _isUploading = true;
-      });
-      
-      // Transfer selected media to the upload provider
-      for (int i = 0; i < _selectedMedia.length; i++) {
-        if (_selectedMedia[i].file != null) {
-          final file = _selectedMedia[i].file!;
-          final fileName = file.path.split('/').last;
-          final fileType = _selectedMedia[i].type == MediaType.image 
-              ? 'image/jpeg' 
-              : 'video/mp4';
-          
-          ref.read(mediaUploadProvider.notifier).setMediaFile(i, file);
-        }
-      }
-      
-      // Start upload process
-      final success = await ref.read(mediaUploadProvider.notifier).uploadAllMedia();
-      
-      setState(() {
-        _isUploading = false;
-      });
-      
-      if (success) {
-        Navigator.push(
-          context,
-          MaterialPageRoute(
-            builder: (context) => const ProfileAnswersScreen(),
-          ),
-        );
-      }
-    }
-  },
-  child: AnimatedContainer(
-    duration: const Duration(milliseconds: 200),
-    width: 60,
-    height: 60,
-    decoration: BoxDecoration(
-      color: _isForwardButtonEnabled && !_isUploading
-          ? const Color(0xFF8B5CF6)
-          : Colors.grey[300],
-      borderRadius: BorderRadius.circular(30),
-      boxShadow: _isForwardButtonEnabled && !_isUploading
-          ? [
-              BoxShadow(
-                color: const Color(0xFF8B5CF6).withOpacity(0.3),
-                blurRadius: 8,
-                offset: const Offset(0, 4),
-              ),
-            ]
-          : null,
-    ),
-    child: _isUploading 
-        ? const CircularProgressIndicator(color: Colors.white)
-        : Icon(
-            Icons.arrow_forward_rounded,
-            color: _isForwardButtonEnabled ? Colors.white : Colors.grey[500],
-            size: 28,
-          ),
-  ),
-)
-                  ],
+                      )
+                    ],
+                  ),
                 ),
-              ),
-              SizedBox(height: screenSize.height * 0.02),
+              // --- End Hide Bottom Bar ---
+              SizedBox(height: widget.isEditing ? 0 : screenSize.height * 0.02),
             ],
           ),
         ),
@@ -396,10 +520,11 @@ GestureDetector(
     );
   }
 
+  // --- Placeholder builder remains the same conceptually ---
   Widget _buildMediaPlaceholder(int index) {
-    final media = _selectedMedia[index];
+    final item = _editableMedia[index];
     return GestureDetector(
-      key: _itemKeys[index],
+      key: item?.key ?? ValueKey('empty_$index'),
       onTap: () => _pickMedia(index),
       child: DottedBorder(
         dashPattern: const [6, 3],
@@ -417,20 +542,29 @@ GestureDetector(
           child: Stack(
             fit: StackFit.expand,
             children: [
-              if (media.file != null)
-                media.type == MediaType.image
-                    ? ClipRRect(
-                        borderRadius: BorderRadius.circular(16),
-                        child: Image.file(
-                          media.file!,
-                          fit: BoxFit.cover,
-                        ),
-                      )
-                    : VideoThumbnailWidget(
-                        file: media.file!,
-                        cache: _thumbnailCache,
-                      ),
-              if (media.file == null)
+              if (item != null)
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(16),
+                  child: item.isNewFile
+                      ? (item.type == MediaType.image
+                          ? Image.file(item.file!, fit: BoxFit.cover)
+                          : Container(
+                              color: Colors.grey[300],
+                              child: const Center(
+                                  child: Icon(Icons.videocam_outlined,
+                                      color: Colors.grey, size: 40))))
+                      : (item.type == MediaType.image
+                          ? Image.network(item.url!,
+                              fit: BoxFit.cover,
+                              errorBuilder: (_, __, ___) =>
+                                  const Icon(Icons.broken_image))
+                          : Container(
+                              color: Colors.grey[300],
+                              child: const Center(
+                                  child: Icon(Icons.videocam_outlined,
+                                      color: Colors.grey, size: 40)))),
+                ),
+              if (item == null)
                 Center(
                   child: Column(
                     mainAxisAlignment: MainAxisAlignment.center,
@@ -445,33 +579,32 @@ GestureDetector(
                       if (index == 0)
                         Padding(
                           padding: const EdgeInsets.only(top: 8),
-                          child: Text(
-                            "Main Photo",
-                            style: GoogleFonts.poppins(fontSize: 14),
-                          ),
+                          child: Text("Main Photo",
+                              style: GoogleFonts.poppins(fontSize: 14)),
                         ),
                     ],
                   ),
                 ),
-              if (media.type == MediaType.video && media.file != null)
-                Container(
-                  decoration: BoxDecoration(
-                    gradient: LinearGradient(
-                      begin: Alignment.bottomCenter,
-                      end: Alignment.topCenter,
-                      colors: [
-                        Colors.black.withOpacity(0.6),
-                        Colors.transparent,
-                      ],
-                    ),
-                  ),
-                ),
-              if (media.type == MediaType.video && media.file != null)
+              if (item?.type == MediaType.video)
                 const Center(
-                  child: Icon(
-                    Icons.play_circle_fill_rounded,
-                    color: Colors.white,
-                    size: 48,
+                  child: Icon(Icons.play_circle_fill_rounded,
+                      color: Colors.white70, size: 48),
+                ),
+              if (widget.isEditing && item != null)
+                Positioned(
+                  top: 4,
+                  right: 4,
+                  child: GestureDetector(
+                    onTap: () => _clearSlot(index),
+                    child: Container(
+                      padding: const EdgeInsets.all(4),
+                      decoration: BoxDecoration(
+                        color: Colors.black.withOpacity(0.6),
+                        shape: BoxShape.circle,
+                      ),
+                      child: const Icon(Icons.close_rounded,
+                          color: Colors.white, size: 16),
+                    ),
                   ),
                 ),
             ],
@@ -482,72 +615,4 @@ GestureDetector(
   }
 }
 
-class MediaFile {
-  final File? file;
-  final MediaType type;
-
-  MediaFile({this.file, required this.type});
-}
-
-enum MediaType { image, video }
-
-class VideoThumbnailWidget extends StatefulWidget {
-  final File file;
-  final Map<String, Uint8List> cache;
-
-  const VideoThumbnailWidget({
-    super.key,
-    required this.file,
-    required this.cache,
-  });
-
-  @override
-  State<VideoThumbnailWidget> createState() => _VideoThumbnailWidgetState();
-}
-
-class _VideoThumbnailWidgetState extends State<VideoThumbnailWidget> {
-  Uint8List? _thumbnail;
-
-  @override
-  void initState() {
-    super.initState();
-    _loadThumbnail();
-  }
-
-  Future<void> _loadThumbnail() async {
-    final filePath = widget.file.path;
-    if (widget.cache.containsKey(filePath)) {
-      setState(() {
-        _thumbnail = widget.cache[filePath];
-      });
-      return;
-    }
-
-    final thumbnail = await VideoThumbnail.thumbnailData(
-      video: filePath,
-      quality: 100,
-    );
-
-    if (thumbnail != null) {
-      widget.cache[filePath] = thumbnail;
-      setState(() {
-        _thumbnail = thumbnail;
-      });
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return _thumbnail != null
-        ? ClipRRect(
-            borderRadius: BorderRadius.circular(16),
-            child: Image.memory(
-              _thumbnail!,
-              fit: BoxFit.cover,
-            ),
-          )
-        : const Center(
-            child: CircularProgressIndicator(),
-          );
-  }
-}
+enum MediaType { image, video } // Keep enum

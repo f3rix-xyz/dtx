@@ -1,16 +1,19 @@
+// File: lib/views/textpromptsselect.dart
 import 'package:dtx/models/user_model.dart';
 import 'package:dtx/views/writeprompt.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:google_fonts/google_fonts.dart';
+// Removed unused Riverpod import
+// Removed unused google_fonts import
 import 'package:dtx/utils/app_enums.dart';
 
 class TextSelectPromptScreen extends StatefulWidget {
   final int? editIndex;
+  final bool isEditing; // <<< ADDED
 
   const TextSelectPromptScreen({
     super.key,
     this.editIndex,
+    this.isEditing = false, // <<< ADDED default
   });
 
   @override
@@ -20,7 +23,7 @@ class TextSelectPromptScreen extends StatefulWidget {
 class _TextSelectPromptScreenState extends State<TextSelectPromptScreen> {
   PromptCategory selectedCategory = PromptCategory.storyTime;
   bool showAllPrompts = false;
-  PromptType? selectedPrompt;
+  // Removed unused selectedPrompt state
 
   List<PromptType> get currentPrompts {
     if (showAllPrompts) {
@@ -50,7 +53,9 @@ class _TextSelectPromptScreenState extends State<TextSelectPromptScreen> {
                       });
                     },
                     child: Text(
-                      'View all',
+                      showAllPrompts
+                          ? 'View by Category'
+                          : 'View all', // Toggle text
                       style: TextStyle(
                         color: const Color(0xFF8b5cf6),
                         fontSize: 16,
@@ -67,7 +72,8 @@ class _TextSelectPromptScreenState extends State<TextSelectPromptScreen> {
                     ),
                   ),
                   GestureDetector(
-                    onTap: () => Navigator.pop(context),
+                    onTap: () =>
+                        Navigator.pop(context), // Always pop back from here
                     child: const Icon(Icons.close),
                   ),
                 ],
@@ -125,6 +131,9 @@ class _TextSelectPromptScreenState extends State<TextSelectPromptScreen> {
                   return GestureDetector(
                     onTap: () {
                       final category = promptType.getCategory();
+                      // Navigate to WriteAnswerScreen, potentially replacing this one
+                      // if we don't want the user coming back here after writing.
+                      // Using push ensures they can come back to select a different prompt if needed.
                       Navigator.push(
                         context,
                         MaterialPageRoute(
@@ -132,6 +141,8 @@ class _TextSelectPromptScreenState extends State<TextSelectPromptScreen> {
                             category: category,
                             question: promptType,
                             editIndex: widget.editIndex,
+                            isEditing:
+                                widget.isEditing, // <<< Pass editing flag
                           ),
                         ),
                       );

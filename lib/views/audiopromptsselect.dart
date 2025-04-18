@@ -1,15 +1,21 @@
-// views/audiopromptsselect.dart
+// File: views/audiopromptsselect.dart
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:dtx/utils/app_enums.dart';
 import 'package:dtx/providers/audio_upload_provider.dart';
 
 class AudioSelectPromptScreen extends ConsumerWidget {
-  const AudioSelectPromptScreen({Key? key}) : super(key: key);
+  final bool isEditing; // <<< ADDED
+
+  const AudioSelectPromptScreen({
+    Key? key,
+    this.isEditing = false, // <<< ADDED default
+  }) : super(key: key);
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final currentPrompt = ref.watch(audioUploadProvider.notifier).selectedPrompt;
+    final currentPrompt =
+        ref.watch(audioUploadProvider.notifier).selectedPrompt;
 
     return Scaffold(
       backgroundColor: Colors.white,
@@ -22,6 +28,8 @@ class AudioSelectPromptScreen extends ConsumerWidget {
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
+                  // Add back button if editing? Or rely on close? Let's use close.
+                  const SizedBox(width: 24), // Placeholder for alignment
                   const Text(
                     "Select a Prompt",
                     style: TextStyle(
@@ -30,7 +38,7 @@ class AudioSelectPromptScreen extends ConsumerWidget {
                     ),
                   ),
                   GestureDetector(
-                    onTap: () => Navigator.pop(context),
+                    onTap: () => Navigator.pop(context), // Always pop back
                     child: const Icon(Icons.close, size: 24),
                   ),
                 ],
@@ -43,10 +51,13 @@ class AudioSelectPromptScreen extends ConsumerWidget {
                 itemBuilder: (context, index) {
                   final prompt = AudioPrompt.values[index];
                   final isSelected = prompt == currentPrompt;
-                  
+
                   return GestureDetector(
                     onTap: () {
-                      ref.read(audioUploadProvider.notifier).setSelectedPrompt(prompt);
+                      ref
+                          .read(audioUploadProvider.notifier)
+                          .setSelectedPrompt(prompt);
+                      // Pop back to VoicePromptScreen, which handles further nav
                       Navigator.pop(context);
                     },
                     child: Container(
@@ -67,8 +78,12 @@ class AudioSelectPromptScreen extends ConsumerWidget {
                               prompt.label,
                               style: TextStyle(
                                 fontSize: 18,
-                                color: isSelected ? const Color(0xFF8B5CF6) : Colors.black87,
-                                fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal,
+                                color: isSelected
+                                    ? const Color(0xFF8B5CF6)
+                                    : Colors.black87,
+                                fontWeight: isSelected
+                                    ? FontWeight.w600
+                                    : FontWeight.normal,
                               ),
                             ),
                           ),
