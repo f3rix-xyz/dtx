@@ -1,7 +1,11 @@
 // File: providers/auth_provider.dart
 import 'package:dtx/models/auth_model.dart';
+import 'package:dtx/providers/feed_provider.dart'; // Import providers to invalidate
+import 'package:dtx/providers/filter_provider.dart';
+import 'package:dtx/providers/recieved_likes_provider.dart';
+import 'package:dtx/providers/user_provider.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:google_sign_in/google_sign_in.dart'; // Import Google Sign-In
+import 'package:google_sign_in/google_sign_in.dart';
 import '../models/error_model.dart';
 import '../repositories/auth_repository.dart';
 import '../services/api_service.dart';
@@ -9,37 +13,39 @@ import '../utils/token_storage.dart';
 import 'error_provider.dart';
 import 'service_provider.dart';
 
-// Provider for GoogleSignIn instance
+// Provider for GoogleSignIn instance (remains the same)
 final googleSignInProvider = Provider<GoogleSignIn>((ref) {
   return GoogleSignIn(
-    // Add scopes if needed beyond basic profile/email, e.g., for YouTube later
-    // scopes: ['email', 'profile', 'https://www.googleapis.com/auth/youtube.readonly'],
-    scopes: ['email', 'profile'], // Basic scopes for login
+    scopes: ['email', 'profile'],
   );
 });
 
+// AuthProvider definition (remains the same)
 final authProvider = StateNotifierProvider<AuthNotifier, AuthState>((ref) {
   final authRepository = ref.watch(authRepositoryProvider);
-  // No longer need _lastRequestId or _phoneRegex
+  // *** Pass ref to the notifier ***
   return AuthNotifier(ref, authRepository);
 });
 
 class AuthNotifier extends StateNotifier<AuthState> {
+  // *** Store the Ref object ***
   final Ref ref;
   final AuthRepository _authRepository;
-  // Removed: int _lastRequestId = 0;
-  // Removed: static final _phoneRegex = RegExp(r'^[6-9][0-9]{9}$');
 
+  // *** Modify constructor to accept Ref ***
   AuthNotifier(this.ref, this._authRepository) : super(const AuthState()) {
-    _loadTokenAndCheckStatus(); // Check status upon initialization
+    _loadTokenAndCheckStatus();
   }
 
-  // Combined load and check
+  // _loadTokenAndCheckStatus, checkAuthStatus, signInWithGoogle remain the same
+
   Future<void> _loadTokenAndCheckStatus() async {
     print('[AuthNotifier] Loading token and checking initial status...');
     state = state.copyWith(isLoading: true);
     final token = await TokenStorage.getToken();
     if (token != null && token.isNotEmpty) {
+      print(
+          '[AuthNotifier] Token found, setting in state and checking status.');
       state = state.copyWith(jwtToken: () => token);
       await checkAuthStatus(updateState: true); // Check status if token exists
     } else {
@@ -50,16 +56,27 @@ class AuthNotifier extends StateNotifier<AuthState> {
     }
   }
 
-  /// Checks the current authentication status with the backend.
-  /// Updates the provider's state if `updateState` is true.
   Future<AuthStatus> checkAuthStatus({bool updateState = true}) async {
     print('[AuthNotifier checkAuthStatus] Called. updateState: $updateState');
     if (updateState) {
       state = state.copyWith(isLoading: true, error: () => null);
     }
 
-    final token =
-        state.jwtToken ?? await TokenStorage.getToken(); // Check state first
+    // Use token from state if available, otherwise try storage
+    final token = state.jwtToken ?? await TokenStorage.getToken();
+
+    // If still no token, return login status immediately
+    if (token == null || token.isEmpty) {
+      print(
+          '[AuthNotifier checkAuthStatus] No token available, returning login status.');
+      if (updateState) {
+        state = state.copyWith(
+            isLoading: false,
+            authStatus: AuthStatus.login,
+            jwtToken: () => null);
+      }
+      return AuthStatus.login;
+    }
 
     try {
       final backendStatus = await _authRepository.checkAuthStatus(token);
@@ -70,12 +87,13 @@ class AuthNotifier extends StateNotifier<AuthState> {
         state = state.copyWith(
           isLoading: false,
           authStatus: backendStatus,
-          // Clear token in state if backend says login is required
-          jwtToken: backendStatus == AuthStatus.login
-              ? () => null
-              : null, // Conditional null set
+          // Keep the token in state if status is not login
+          // No need to clear token here unless backendStatus is login
+          jwtToken: backendStatus == AuthStatus.login ? () => null : null,
         );
         if (backendStatus == AuthStatus.login) {
+          print(
+              '[AuthNotifier checkAuthStatus] Status is login, removing token from storage.');
           await TokenStorage.removeToken(); // Also remove from storage
         }
       }
@@ -91,19 +109,14 @@ class AuthNotifier extends StateNotifier<AuthState> {
           error: () => 'Failed to check status: ${e.toString()}',
           jwtToken: () => null, // Clear token on error
         );
+        print(
+            '[AuthNotifier checkAuthStatus] Error occurred, removing token from storage.');
         await TokenStorage.removeToken(); // Also remove from storage
       }
       return AuthStatus.login; // Return login on error
     }
   }
 
-  // --- REMOVED METHODS ---
-  // Future<bool> verifyPhone(String phone) async { ... }
-  // Future<bool> sendOtp(String phoneNumber) async { ... }
-  // Future<bool> verifyOtp(String phoneNumber, String otpCode) async { ... }
-  // --- END REMOVED METHODS ---
-
-  // --- NEW METHOD: Sign In With Google ---
   Future<AuthStatus> signInWithGoogle() async {
     print('[AuthNotifier signInWithGoogle] Attempting Google Sign-In...');
     state = state.copyWith(isLoading: true, error: () => null);
@@ -137,10 +150,13 @@ class AuthNotifier extends StateNotifier<AuthState> {
           '[AuthNotifier signInWithGoogle] Backend verification successful. App JWT received.');
 
       await TokenStorage.saveToken(appJwt);
+      print('[AuthNotifier signInWithGoogle] App JWT saved to storage.');
 
       // IMPORTANT: After successful login and getting the JWT,
       // immediately check the status with the backend to know the next step.
-      state = state.copyWith(jwtToken: () => appJwt); // Temporarily set token
+      state = state.copyWith(jwtToken: () => appJwt); // Set token in state
+      print(
+          '[AuthNotifier signInWithGoogle] JWT set in state. Checking auth status...');
       final finalStatus = await checkAuthStatus(
           updateState: true); // Update state with final status
 
@@ -169,22 +185,51 @@ class AuthNotifier extends StateNotifier<AuthState> {
       return AuthStatus.login;
     }
   }
-  // --- END NEW METHOD ---
 
   // Logout user
   Future<void> logout() async {
     print('[AuthNotifier] Logging out...');
+    final currentToken = state.jwtToken ?? await TokenStorage.getToken();
+
     try {
       final googleSignIn = ref.read(googleSignInProvider);
       await googleSignIn.signOut(); // Sign out from Google
-      await googleSignIn.disconnect(); // Optional: Revoke permissions
+      await googleSignIn.disconnect().catchError((e) {
+        // Catch errors during disconnect specifically, as it can sometimes fail
+        print('[AuthNotifier] Non-critical error during Google disconnect: $e');
+      });
     } catch (e) {
-      print('[AuthNotifier] Error during Google Sign Out/Disconnect: $e');
+      print('[AuthNotifier] Error during Google Sign Out: $e');
       // Decide if you want to proceed with app logout even if Google logout fails
     } finally {
       await TokenStorage.removeToken(); // Remove app token *always*
-      state =
-          const AuthState(authStatus: AuthStatus.login); // Reset state *always*
+      print('[AuthNotifier] Token removed from storage.');
+
+      // Reset auth state *first*
+      state = const AuthState(authStatus: AuthStatus.login);
+      print('[AuthNotifier] Auth state reset to login.');
+
+      // *** Invalidate other user-specific providers ***
+      print('[AuthNotifier] Invalidating user-specific providers...');
+      ref.invalidate(userProvider);
+      ref.invalidate(feedProvider);
+      ref.invalidate(receivedLikesProvider);
+      ref.invalidate(filterProvider);
+      // Add any other providers that store user-specific data here
+      // e.g., ref.invalidate(chatProvider);
+      // e.g., ref.invalidate(likerProfileProvider); // .family needs specific handling if needed globally
+      print('[AuthNotifier] Providers invalidated.');
+
+      // Optionally, you could call a backend logout endpoint if you have one
+      // if (currentToken != null) {
+      //   try {
+      //     await _authRepository.logoutBackend(currentToken);
+      //     print('[AuthNotifier] Backend logout successful.');
+      //   } catch (e) {
+      //     print('[AuthNotifier] Backend logout failed (non-critical): $e');
+      //   }
+      // }
+
       print('[AuthNotifier] Local logout complete.');
     }
   }

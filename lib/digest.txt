@@ -1825,8 +1825,12 @@ File: providers/auth_provider.dart
 ================================================
 // File: providers/auth_provider.dart
 import 'package:dtx/models/auth_model.dart';
+import 'package:dtx/providers/feed_provider.dart'; // Import providers to invalidate
+import 'package:dtx/providers/filter_provider.dart';
+import 'package:dtx/providers/recieved_likes_provider.dart';
+import 'package:dtx/providers/user_provider.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:google_sign_in/google_sign_in.dart'; // Import Google Sign-In
+import 'package:google_sign_in/google_sign_in.dart';
 import '../models/error_model.dart';
 import '../repositories/auth_repository.dart';
 import '../services/api_service.dart';
@@ -1834,37 +1838,39 @@ import '../utils/token_storage.dart';
 import 'error_provider.dart';
 import 'service_provider.dart';
 
-// Provider for GoogleSignIn instance
+// Provider for GoogleSignIn instance (remains the same)
 final googleSignInProvider = Provider<GoogleSignIn>((ref) {
   return GoogleSignIn(
-    // Add scopes if needed beyond basic profile/email, e.g., for YouTube later
-    // scopes: ['email', 'profile', 'https://www.googleapis.com/auth/youtube.readonly'],
-    scopes: ['email', 'profile'], // Basic scopes for login
+    scopes: ['email', 'profile'],
   );
 });
 
+// AuthProvider definition (remains the same)
 final authProvider = StateNotifierProvider<AuthNotifier, AuthState>((ref) {
   final authRepository = ref.watch(authRepositoryProvider);
-  // No longer need _lastRequestId or _phoneRegex
+  // *** Pass ref to the notifier ***
   return AuthNotifier(ref, authRepository);
 });
 
 class AuthNotifier extends StateNotifier<AuthState> {
+  // *** Store the Ref object ***
   final Ref ref;
   final AuthRepository _authRepository;
-  // Removed: int _lastRequestId = 0;
-  // Removed: static final _phoneRegex = RegExp(r'^[6-9][0-9]{9}$');
 
+  // *** Modify constructor to accept Ref ***
   AuthNotifier(this.ref, this._authRepository) : super(const AuthState()) {
-    _loadTokenAndCheckStatus(); // Check status upon initialization
+    _loadTokenAndCheckStatus();
   }
 
-  // Combined load and check
+  // _loadTokenAndCheckStatus, checkAuthStatus, signInWithGoogle remain the same
+
   Future<void> _loadTokenAndCheckStatus() async {
     print('[AuthNotifier] Loading token and checking initial status...');
     state = state.copyWith(isLoading: true);
     final token = await TokenStorage.getToken();
     if (token != null && token.isNotEmpty) {
+      print(
+          '[AuthNotifier] Token found, setting in state and checking status.');
       state = state.copyWith(jwtToken: () => token);
       await checkAuthStatus(updateState: true); // Check status if token exists
     } else {
@@ -1875,16 +1881,27 @@ class AuthNotifier extends StateNotifier<AuthState> {
     }
   }
 
-  /// Checks the current authentication status with the backend.
-  /// Updates the provider's state if `updateState` is true.
   Future<AuthStatus> checkAuthStatus({bool updateState = true}) async {
     print('[AuthNotifier checkAuthStatus] Called. updateState: $updateState');
     if (updateState) {
       state = state.copyWith(isLoading: true, error: () => null);
     }
 
-    final token =
-        state.jwtToken ?? await TokenStorage.getToken(); // Check state first
+    // Use token from state if available, otherwise try storage
+    final token = state.jwtToken ?? await TokenStorage.getToken();
+
+    // If still no token, return login status immediately
+    if (token == null || token.isEmpty) {
+      print(
+          '[AuthNotifier checkAuthStatus] No token available, returning login status.');
+      if (updateState) {
+        state = state.copyWith(
+            isLoading: false,
+            authStatus: AuthStatus.login,
+            jwtToken: () => null);
+      }
+      return AuthStatus.login;
+    }
 
     try {
       final backendStatus = await _authRepository.checkAuthStatus(token);
@@ -1895,12 +1912,13 @@ class AuthNotifier extends StateNotifier<AuthState> {
         state = state.copyWith(
           isLoading: false,
           authStatus: backendStatus,
-          // Clear token in state if backend says login is required
-          jwtToken: backendStatus == AuthStatus.login
-              ? () => null
-              : null, // Conditional null set
+          // Keep the token in state if status is not login
+          // No need to clear token here unless backendStatus is login
+          jwtToken: backendStatus == AuthStatus.login ? () => null : null,
         );
         if (backendStatus == AuthStatus.login) {
+          print(
+              '[AuthNotifier checkAuthStatus] Status is login, removing token from storage.');
           await TokenStorage.removeToken(); // Also remove from storage
         }
       }
@@ -1916,19 +1934,14 @@ class AuthNotifier extends StateNotifier<AuthState> {
           error: () => 'Failed to check status: ${e.toString()}',
           jwtToken: () => null, // Clear token on error
         );
+        print(
+            '[AuthNotifier checkAuthStatus] Error occurred, removing token from storage.');
         await TokenStorage.removeToken(); // Also remove from storage
       }
       return AuthStatus.login; // Return login on error
     }
   }
 
-  // --- REMOVED METHODS ---
-  // Future<bool> verifyPhone(String phone) async { ... }
-  // Future<bool> sendOtp(String phoneNumber) async { ... }
-  // Future<bool> verifyOtp(String phoneNumber, String otpCode) async { ... }
-  // --- END REMOVED METHODS ---
-
-  // --- NEW METHOD: Sign In With Google ---
   Future<AuthStatus> signInWithGoogle() async {
     print('[AuthNotifier signInWithGoogle] Attempting Google Sign-In...');
     state = state.copyWith(isLoading: true, error: () => null);
@@ -1962,10 +1975,13 @@ class AuthNotifier extends StateNotifier<AuthState> {
           '[AuthNotifier signInWithGoogle] Backend verification successful. App JWT received.');
 
       await TokenStorage.saveToken(appJwt);
+      print('[AuthNotifier signInWithGoogle] App JWT saved to storage.');
 
       // IMPORTANT: After successful login and getting the JWT,
       // immediately check the status with the backend to know the next step.
-      state = state.copyWith(jwtToken: () => appJwt); // Temporarily set token
+      state = state.copyWith(jwtToken: () => appJwt); // Set token in state
+      print(
+          '[AuthNotifier signInWithGoogle] JWT set in state. Checking auth status...');
       final finalStatus = await checkAuthStatus(
           updateState: true); // Update state with final status
 
@@ -1994,22 +2010,51 @@ class AuthNotifier extends StateNotifier<AuthState> {
       return AuthStatus.login;
     }
   }
-  // --- END NEW METHOD ---
 
   // Logout user
   Future<void> logout() async {
     print('[AuthNotifier] Logging out...');
+    final currentToken = state.jwtToken ?? await TokenStorage.getToken();
+
     try {
       final googleSignIn = ref.read(googleSignInProvider);
       await googleSignIn.signOut(); // Sign out from Google
-      await googleSignIn.disconnect(); // Optional: Revoke permissions
+      await googleSignIn.disconnect().catchError((e) {
+        // Catch errors during disconnect specifically, as it can sometimes fail
+        print('[AuthNotifier] Non-critical error during Google disconnect: $e');
+      });
     } catch (e) {
-      print('[AuthNotifier] Error during Google Sign Out/Disconnect: $e');
+      print('[AuthNotifier] Error during Google Sign Out: $e');
       // Decide if you want to proceed with app logout even if Google logout fails
     } finally {
       await TokenStorage.removeToken(); // Remove app token *always*
-      state =
-          const AuthState(authStatus: AuthStatus.login); // Reset state *always*
+      print('[AuthNotifier] Token removed from storage.');
+
+      // Reset auth state *first*
+      state = const AuthState(authStatus: AuthStatus.login);
+      print('[AuthNotifier] Auth state reset to login.');
+
+      // *** Invalidate other user-specific providers ***
+      print('[AuthNotifier] Invalidating user-specific providers...');
+      ref.invalidate(userProvider);
+      ref.invalidate(feedProvider);
+      ref.invalidate(receivedLikesProvider);
+      ref.invalidate(filterProvider);
+      // Add any other providers that store user-specific data here
+      // e.g., ref.invalidate(chatProvider);
+      // e.g., ref.invalidate(likerProfileProvider); // .family needs specific handling if needed globally
+      print('[AuthNotifier] Providers invalidated.');
+
+      // Optionally, you could call a backend logout endpoint if you have one
+      // if (currentToken != null) {
+      //   try {
+      //     await _authRepository.logoutBackend(currentToken);
+      //     print('[AuthNotifier] Backend logout successful.');
+      //   } catch (e) {
+      //     print('[AuthNotifier] Backend logout failed (non-critical): $e');
+      //   }
+      // }
+
       print('[AuthNotifier] Local logout complete.');
     }
   }
@@ -13426,17 +13471,18 @@ class FullLikerProfileCard extends StatelessWidget {
 File: widgets/home_profile_card.dart
 ================================================
 // File: widgets/home_profile_card.dart
+import 'dart:async'; // Import async
 import 'dart:math';
 import 'package:dtx/models/user_model.dart';
 import 'package:dtx/models/like_models.dart';
-import 'package:dtx/providers/audio_player_provider.dart'; // Ensure this is imported
+import 'package:dtx/providers/audio_player_provider.dart';
 import 'package:dtx/utils/app_enums.dart';
-import 'package:dtx/providers/user_provider.dart'; // Needed for gender check
+import 'package:dtx/providers/user_provider.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_fonts/google_fonts.dart';
 
-// Function Type Definitions
+// Function Type Definitions (remain the same)
 typedef PerformLikeApiCall = Future<bool> Function({
   required ContentLikeType contentType,
   required String contentIdentifier,
@@ -13458,7 +13504,7 @@ class HomeProfileCard extends ConsumerWidget {
     required this.onInteractionComplete,
   });
 
-  // --- METHOD TO SHOW INTERACTION DIALOG ---
+  // --- METHOD TO SHOW INTERACTION DIALOG (WITH LOCAL LOADING) ---
   Future<void> _showInteractionDialog(
     BuildContext context,
     WidgetRef ref,
@@ -13468,55 +13514,96 @@ class HomeProfileCard extends ConsumerWidget {
   ) async {
     final currentUserGender = ref.read(userProvider).gender;
     final isMale = currentUserGender == Gender.man;
-    final commentController = TextEditingController();
-    final sendLikeEnabledNotifier = ValueNotifier<bool>(!isMale);
+    final FocusNode commentFocusNode = FocusNode();
+    late final TextEditingController commentController;
+    late final ValueNotifier<bool> sendLikeEnabledNotifier;
+    // *** RE-ADDED: Local loading state for dialog buttons ***
+    late final ValueNotifier<bool> _isDialogLiking;
+    VoidCallback? listenerCallback;
+
+    commentController = TextEditingController();
+    sendLikeEnabledNotifier = ValueNotifier<bool>(!isMale);
+    // *** Initialize the notifier ***
+    _isDialogLiking = ValueNotifier<bool>(false); // Start not liking
 
     if (isMale) {
-      commentController.addListener(() {
-        // Check mounted before accessing notifier state inside listener
+      listenerCallback = () {
         if (context.mounted) {
-          sendLikeEnabledNotifier.value =
-              commentController.text.trim().isNotEmpty;
+          try {
+            sendLikeEnabledNotifier.value =
+                commentController.text.trim().isNotEmpty;
+          } catch (e) {
+            print("Error accessing controller/notifier in listener: $e");
+          }
         }
-      });
+      };
+      commentController.addListener(listenerCallback);
     }
 
+    // *** Modified _handleInteraction to use _isDialogLiking ***
     Future<void> _handleInteraction(LikeInteractionType interactionType) async {
-      final comment = commentController.text.trim();
-      // Ensure context is still valid before popping
-      if (context.mounted) {
-        Navigator.of(context).pop();
+      if (_isDialogLiking.value) return; // Prevent double taps
+
+      String comment = "";
+      try {
+        comment = commentController.text.trim();
+      } catch (e) {
+        print("Error reading commentController text: $e");
+        return;
       }
-      bool success = await performLikeApiCall(
-        contentType: contentType,
-        contentIdentifier: contentIdentifier,
-        interactionType: interactionType,
-        comment: comment.isNotEmpty ? comment : null,
-      );
-      if (success) {
-        onInteractionComplete();
+
+      commentFocusNode.unfocus();
+      await Future.delayed(const Duration(milliseconds: 50));
+
+      // Set dialog loading state to true
+      _isDialogLiking.value = true;
+      bool success = false;
+
+      try {
+        // This call now triggers the HomeScreen's overlay as well
+        success = await performLikeApiCall(
+          contentType: contentType,
+          contentIdentifier: contentIdentifier,
+          interactionType: interactionType,
+          comment: comment.isNotEmpty ? comment : null,
+        );
+
+        // Pop only on success. HomeScreen's overlay will disappear via its finally block.
+        if (success && context.mounted) {
+          Navigator.of(context, rootNavigator: true).pop();
+          onInteractionComplete();
+        }
+      } finally {
+        // Set dialog loading state back to false
+        // Check mount status and notifier validity before updating
+        try {
+          if (context.mounted && _isDialogLiking.value) {
+            _isDialogLiking.value = false;
+          }
+        } catch (e) {
+          print(
+              "Error setting _isDialogLiking to false (already disposed?): $e");
+        }
       }
     }
+    // *** End modified _handleInteraction ***
 
     await showDialog<void>(
       context: context,
-      barrierDismissible: true,
+      barrierDismissible: true, // User can dismiss by tapping outside
       builder: (BuildContext dialogContext) {
-        // Use a different context name inside builder
         return AlertDialog(
           contentPadding: const EdgeInsets.all(16),
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(20.0),
           ),
-          // *** Wrap content in a SizedBox to provide a constraint ***
           content: SizedBox(
-            width: MediaQuery.of(dialogContext).size.width *
-                0.8, // Constrain width
+            width: MediaQuery.of(dialogContext).size.width * 0.8,
             child: SingleChildScrollView(
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  // Preview Image (optional)
+                  // Preview Image or Placeholder
                   if (previewImageUrl != null)
                     ClipRRect(
                       borderRadius: BorderRadius.circular(12.0),
@@ -13536,7 +13623,7 @@ class HomeProfileCard extends ConsumerWidget {
                       contentType == ContentLikeType.audioPrompt)
                     Container(
                       height: 100,
-                      width: double.infinity, // Ensure it takes width
+                      width: double.infinity,
                       decoration: BoxDecoration(
                         color: Colors.grey[100],
                         borderRadius: BorderRadius.circular(12.0),
@@ -13549,7 +13636,7 @@ class HomeProfileCard extends ConsumerWidget {
                       contentType != ContentLikeType.audioPrompt)
                     Container(
                       height: 100,
-                      width: double.infinity, // Ensure it takes width
+                      width: double.infinity,
                       decoration: BoxDecoration(
                         color: Colors.grey[100],
                         borderRadius: BorderRadius.circular(12.0),
@@ -13558,12 +13645,12 @@ class HomeProfileCard extends ConsumerWidget {
                           child: Icon(Icons.article_outlined,
                               size: 40, color: Colors.grey[500])),
                     ),
-
                   const SizedBox(height: 16),
 
                   // Comment Text Field
                   TextField(
                     controller: commentController,
+                    focusNode: commentFocusNode,
                     decoration: InputDecoration(
                       hintText: "Add a comment...",
                       border: OutlineInputBorder(
@@ -13584,90 +13671,151 @@ class HomeProfileCard extends ConsumerWidget {
                   ),
                   const SizedBox(height: 16),
 
-                  // Action Buttons Row
-                  // *** REMOVED Expanded widgets ***
+                  // *** ACTION BUTTONS ROW (with local loading indicators) ***
                   Row(
-                    // Changed from spaceBetween to spaceEvenly for better spacing without Expanded
                     mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                     children: [
                       // Send Rose Button
-                      OutlinedButton.icon(
-                        icon: Icon(Icons.star_rounded,
-                            color: Colors.purple.shade300),
-                        label: Text(
-                          "Send Rose",
-                          style: GoogleFonts.poppins(
-                              fontWeight: FontWeight.w500,
-                              color: Colors.purple.shade400,
-                              fontSize: 13 // Adjust font size if needed
-                              ),
-                          overflow: TextOverflow.ellipsis, // Prevent overflow
-                        ),
-                        style: OutlinedButton.styleFrom(
-                          foregroundColor: Colors.purple.shade400,
-                          side: BorderSide(color: Colors.purple.shade100),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(25),
-                          ),
-                          padding: const EdgeInsets.symmetric(
-                              vertical: 10, horizontal: 12), // Adjust padding
-                        ),
-                        onPressed: () =>
-                            _handleInteraction(LikeInteractionType.rose),
-                      ),
-                      // Send Like Button (with ValueListenableBuilder)
                       ValueListenableBuilder<bool>(
+                        // Listens to comment validity
                         valueListenable: sendLikeEnabledNotifier,
-                        builder: (context, isEnabled, child) {
-                          return ElevatedButton.icon(
-                            icon: Icon(
-                              Icons.favorite_rounded,
-                              color: isEnabled
-                                  ? Colors.white
-                                  : Colors.grey.shade400,
-                              size: 18, // Adjust size
-                            ),
-                            label: Text(
-                              "Send Like",
-                              style: GoogleFonts.poppins(
-                                  fontWeight: FontWeight.w600,
-                                  color: isEnabled
-                                      ? Colors.white
-                                      : Colors.grey.shade500,
-                                  fontSize: 13 // Adjust font size if needed
+                        builder: (context, isCommentValid, child) {
+                          final bool roseButtonEnabled =
+                              !isMale || isCommentValid;
+                          return ValueListenableBuilder<bool>(
+                            // Listens to dialog liking state
+                            valueListenable: _isDialogLiking,
+                            builder: (context, isLiking, child) {
+                              return OutlinedButton.icon(
+                                icon: isLiking // Show spinner if liking
+                                    ? const SizedBox(
+                                        width: 18,
+                                        height: 18,
+                                        child: CircularProgressIndicator(
+                                            strokeWidth: 2,
+                                            color: Colors.purple))
+                                    : Icon(
+                                        Icons.star_rounded,
+                                        color: roseButtonEnabled && !isLiking
+                                            ? Colors.purple.shade300
+                                            : Colors.grey.shade400,
+                                        size: 18, // Match size
+                                      ),
+                                label: Text(
+                                  "Send Rose",
+                                  style: GoogleFonts.poppins(
+                                    fontWeight: FontWeight.w500,
+                                    color: roseButtonEnabled && !isLiking
+                                        ? Colors.purple.shade400
+                                        : Colors.grey.shade500,
+                                    fontSize: 13,
                                   ),
-                              overflow:
-                                  TextOverflow.ellipsis, // Prevent overflow
-                            ),
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: isEnabled
-                                  ? Colors.pink.shade300
-                                  : Colors.grey.shade200,
-                              disabledBackgroundColor: Colors.grey.shade200,
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(25),
-                              ),
-                              padding: const EdgeInsets.symmetric(
-                                  vertical: 10,
-                                  horizontal: 12), // Adjust padding
-                              elevation: isEnabled ? 2 : 0,
-                            ),
-                            onPressed: isEnabled
-                                ? () => _handleInteraction(
-                                    LikeInteractionType.standard)
-                                : null,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                                style: OutlinedButton.styleFrom(
+                                  foregroundColor:
+                                      roseButtonEnabled && !isLiking
+                                          ? Colors.purple.shade400
+                                          : Colors.grey.shade500,
+                                  side: BorderSide(
+                                    color: roseButtonEnabled && !isLiking
+                                        ? Colors.purple.shade100
+                                        : Colors.grey.shade300,
+                                  ),
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(25),
+                                  ),
+                                  padding: const EdgeInsets.symmetric(
+                                      vertical: 10, horizontal: 12),
+                                ),
+                                onPressed: roseButtonEnabled && !isLiking
+                                    ? () => _handleInteraction(
+                                        LikeInteractionType.rose)
+                                    : null,
+                              );
+                            },
+                          );
+                        },
+                      ),
+
+                      // Send Like Button
+                      ValueListenableBuilder<bool>(
+                        // Listens to comment validity
+                        valueListenable: sendLikeEnabledNotifier,
+                        builder: (context, isCommentValid, child) {
+                          final bool likeButtonEnabled =
+                              !isMale || isCommentValid;
+                          return ValueListenableBuilder<bool>(
+                            // Listens to dialog liking state
+                            valueListenable: _isDialogLiking,
+                            builder: (context, isLiking, child) {
+                              return ElevatedButton.icon(
+                                icon: isLiking // Show spinner if liking
+                                    ? const SizedBox(
+                                        width: 18,
+                                        height: 18,
+                                        child: CircularProgressIndicator(
+                                            strokeWidth: 2,
+                                            color: Colors.white))
+                                    : Icon(
+                                        Icons.favorite_rounded,
+                                        color: likeButtonEnabled && !isLiking
+                                            ? Colors.white
+                                            : Colors.grey.shade400,
+                                        size: 18,
+                                      ),
+                                label: Text(
+                                  "Send Like",
+                                  style: GoogleFonts.poppins(
+                                      fontWeight: FontWeight.w600,
+                                      color: likeButtonEnabled && !isLiking
+                                          ? Colors.white
+                                          : Colors.grey.shade500,
+                                      fontSize: 13),
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor:
+                                      likeButtonEnabled && !isLiking
+                                          ? Colors.pink.shade300
+                                          : Colors.grey.shade200,
+                                  disabledBackgroundColor: Colors.grey.shade200,
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(25),
+                                  ),
+                                  padding: const EdgeInsets.symmetric(
+                                      vertical: 10, horizontal: 12),
+                                  elevation:
+                                      likeButtonEnabled && !isLiking ? 2 : 0,
+                                ),
+                                onPressed: likeButtonEnabled && !isLiking
+                                    ? () => _handleInteraction(
+                                        LikeInteractionType.standard)
+                                    : null,
+                              );
+                            },
                           );
                         },
                       ),
                     ],
                   ),
+                  // *** END ACTION BUTTONS ROW ***
 
-                  // Cancel Button
-                  TextButton(
-                    child: Text("Cancel",
-                        style: GoogleFonts.poppins(color: Colors.grey)),
-                    onPressed: () => Navigator.of(dialogContext).pop(),
-                  ),
+                  // Cancel Button (Disable while liking)
+                  ValueListenableBuilder<bool>(
+                      valueListenable: _isDialogLiking,
+                      builder: (context, isLiking, child) {
+                        return TextButton(
+                          child: Text("Cancel",
+                              style: GoogleFonts.poppins(
+                                  color: isLiking
+                                      ? Colors.grey.shade400
+                                      : Colors.grey)),
+                          onPressed: isLiking
+                              ? null
+                              : () => Navigator.of(dialogContext).pop(),
+                        );
+                      }),
                 ],
               ),
             ),
@@ -13675,28 +13823,34 @@ class HomeProfileCard extends ConsumerWidget {
         );
       },
     ).whenComplete(() {
-      if (isMale) {
+      // Clean up listeners and controllers
+      if (listenerCallback != null) {
         try {
-          commentController.removeListener(() {});
-        } catch (e) {}
+          commentController.removeListener(listenerCallback!);
+          listenerCallback = null;
+        } catch (e) {/* ignore */}
       }
       try {
         sendLikeEnabledNotifier.dispose();
-      } catch (e) {
-        print("Error disposing sendLikeEnabledNotifier: $e");
-      }
+      } catch (e) {/* ignore */}
       try {
         commentController.dispose();
-      } catch (e) {
-        print("Error disposing commentController: $e");
-      }
+      } catch (e) {/* ignore */}
+      try {
+        commentFocusNode.dispose();
+      } catch (e) {/* ignore */}
+      // *** Dispose the new notifier ***
+      try {
+        _isDialogLiking.dispose();
+      } catch (e) {/* ignore */}
     });
   }
   // --- END INTERACTION DIALOG METHOD ---
 
+  // --- build method and block builders (remain the same) ---
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    // --- Content Block Preparation ---
+    // ... (Content Block Preparation logic remains the same) ...
     final List<dynamic> contentBlocks = [];
     final mediaUrls = profile.mediaUrls ?? [];
     final prompts = profile.prompts;
@@ -13723,9 +13877,7 @@ class HomeProfileCard extends ConsumerWidget {
     if (profile.audioPrompt != null) {
       contentBlocks.add(profile.audioPrompt!);
     }
-    // --- End Content Block Preparation ---
 
-    // --- Build the ListView ---
     return Container(
       color: Colors.white,
       child: ListView.builder(
@@ -13749,8 +13901,7 @@ class HomeProfileCard extends ConsumerWidget {
             } else if (item is Prompt) {
               contentWidget = _buildPromptItem(context, ref, item);
             } else if (item is AudioPromptModel) {
-              contentWidget = _buildAudioItem(
-                  context, ref, item); // Calls the updated builder
+              contentWidget = _buildAudioItem(context, ref, item);
             } else if (item is String && item == "vitals_section") {
               contentWidget = _buildVitalsBlock(profile);
             } else {
@@ -13766,8 +13917,8 @@ class HomeProfileCard extends ConsumerWidget {
     );
   }
 
-  // --- Block Builder Widgets ---
   Widget _buildHeaderBlock(UserModel profile) {
+    // ... (remains the same) ...
     final age = profile.age;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -13785,14 +13936,6 @@ class HomeProfileCard extends ConsumerWidget {
                     color: Colors.black87),
               ),
             ),
-            IconButton(
-              padding: EdgeInsets.zero,
-              constraints: const BoxConstraints(),
-              icon: Icon(Icons.more_horiz, color: Colors.grey[500]),
-              onPressed: () {/* TODO: Implement report/block */},
-              iconSize: 30,
-              splashRadius: 20,
-            )
           ],
         ),
         if (profile.hometown != null && profile.hometown!.isNotEmpty) ...[
@@ -13815,6 +13958,7 @@ class HomeProfileCard extends ConsumerWidget {
   }
 
   Widget _buildVitalsBlock(UserModel profile) {
+    // ... (remains the same) ...
     final List<Widget> vitals = [];
     if (profile.height != null && profile.height!.isNotEmpty) {
       vitals.add(_buildVitalRow(Icons.height, profile.height!));
@@ -13831,11 +13975,11 @@ class HomeProfileCard extends ConsumerWidget {
     }
     if (profile.drinkingHabit != null) {
       vitals.add(_buildVitalRow(
-          Icons.local_bar_outlined, profile.drinkingHabit!.label));
+          Icons.local_bar_outlined, "Drinks: ${profile.drinkingHabit!.label}"));
     }
     if (profile.smokingHabit != null) {
-      vitals.add(_buildVitalRow(
-          Icons.smoking_rooms_outlined, profile.smokingHabit!.label));
+      vitals.add(_buildVitalRow(Icons.smoking_rooms_outlined,
+          "Smokes: ${profile.smokingHabit!.label}"));
     }
 
     if (vitals.isEmpty) return const SizedBox.shrink();
@@ -13865,6 +14009,7 @@ class HomeProfileCard extends ConsumerWidget {
   }
 
   Widget _buildVitalRow(IconData icon, String label) {
+    // ... (remains the same) ...
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 6.0),
       child: Row(
@@ -13880,15 +14025,18 @@ class HomeProfileCard extends ConsumerWidget {
     );
   }
 
-  // --- Item Builders ---
   Widget _buildMediaItem(
       BuildContext context, WidgetRef ref, String url, int index) {
+    // ... (remains the same) ...
+    bool isVideo = url.toLowerCase().contains('.mp4') ||
+        url.toLowerCase().contains('.mov');
+
     return ClipRRect(
-      borderRadius: BorderRadius.circular(10),
+      borderRadius: BorderRadius.circular(10), // Consistent rounding
       child: AspectRatio(
-        aspectRatio: 4 / 5.5,
+        aspectRatio: 4 / 5.5, // Or your desired ratio
         child: Container(
-          decoration: BoxDecoration(color: Colors.grey[200]),
+          decoration: BoxDecoration(color: Colors.grey[200]), // Placeholder bg
           child: Stack(
             fit: StackFit.expand,
             children: [
@@ -13906,6 +14054,18 @@ class HomeProfileCard extends ConsumerWidget {
                   errorBuilder: (ctx, err, st) => Center(
                       child: Icon(Icons.image_not_supported_outlined,
                           color: Colors.grey[400], size: 40))),
+              if (isVideo) // Show video indicator
+                Center(
+                  child: Container(
+                    padding: const EdgeInsets.all(10),
+                    decoration: BoxDecoration(
+                      color: Colors.black.withOpacity(0.5),
+                      shape: BoxShape.circle,
+                    ),
+                    child: const Icon(Icons.play_arrow_rounded,
+                        color: Colors.white, size: 30),
+                  ),
+                ),
               Positioned(
                   bottom: 10,
                   right: 10,
@@ -13924,46 +14084,54 @@ class HomeProfileCard extends ConsumerWidget {
   }
 
   Widget _buildPromptItem(BuildContext context, WidgetRef ref, Prompt prompt) {
+    // ... (remains the same) ...
+    if (prompt.answer.trim().isEmpty) return const SizedBox.shrink();
+
     return Container(
+      width: double.infinity, // Take full width
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(10),
+          color: Colors.white, // White background
+          borderRadius: BorderRadius.circular(10), // Rounded corners
           boxShadow: [
+            // Subtle shadow
             BoxShadow(
                 color: Colors.black.withOpacity(0.05),
                 blurRadius: 10,
                 offset: const Offset(0, 3))
           ]),
       child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
+        crossAxisAlignment: CrossAxisAlignment.start, // Align top
         children: [
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
+                // Prompt Question
                 Text(prompt.question.label,
                     style: GoogleFonts.poppins(
-                        fontSize: 14,
+                        fontSize: 14, // Slightly smaller question
                         fontWeight: FontWeight.w600,
-                        color: Colors.grey[600])),
+                        color: Colors.grey[600])), // Subdued color
                 const SizedBox(height: 10),
+                // Prompt Answer
                 Text(prompt.answer,
                     style: GoogleFonts.poppins(
-                        fontSize: 20,
+                        fontSize: 20, // Larger answer text
                         color: Colors.black87,
-                        height: 1.4,
+                        height: 1.4, // Line height
                         fontWeight: FontWeight.w500)),
               ],
             ),
           ),
-          const SizedBox(width: 12),
+          const SizedBox(width: 12), // Spacing before button
+          // Like Button
           _buildSmallLikeButton(() => _showInteractionDialog(
                 context,
                 ref,
-                prompt.category.contentType, // Use correct ContentLikeType
-                prompt.question.value, // Use question value as identifier
-                null,
+                prompt.category.contentType, // Get type from category
+                prompt.question.value, // Use question enum value as identifier
+                null, // No image preview for prompts
               )),
         ],
       ),
@@ -13972,26 +14140,23 @@ class HomeProfileCard extends ConsumerWidget {
 
   Widget _buildAudioItem(
       BuildContext context, WidgetRef ref, AudioPromptModel audio) {
-    // --- WATCH THE STATE PROVIDER (like ProfileScreen) ---
-    final audioState = ref.watch(audioPlayerStateProvider);
-    // --- END WATCH ---
-    final currentPlayerUrl = ref.watch(currentAudioUrlProvider);
+    // ... (remains the same, uses audioPlayerProvider) ...
+    final audioPlayerState = ref.watch(audioPlayerStateProvider);
+    final currentPlayingUrl = ref.watch(currentAudioUrlProvider);
+    final playerNotifier = ref.read(audioPlayerControllerProvider.notifier);
 
-    // --- Derive booleans (like ProfileScreen) ---
-    final bool isThisPlaying = currentPlayerUrl == audio.audioUrl &&
-        audioState == AudioPlayerState.playing;
-    final bool isThisLoading = currentPlayerUrl == audio.audioUrl &&
-        audioState == AudioPlayerState.loading;
-    final bool isThisPaused = currentPlayerUrl == audio.audioUrl &&
-        audioState == AudioPlayerState.paused;
-    // --- End Derive booleans ---
+    final bool isThisPlaying = currentPlayingUrl == audio.audioUrl &&
+        audioPlayerState == AudioPlayerState.playing;
+    final bool isThisLoading = currentPlayingUrl == audio.audioUrl &&
+        audioPlayerState == AudioPlayerState.loading;
+    final bool isThisPaused = currentPlayingUrl == audio.audioUrl &&
+        audioPlayerState == AudioPlayerState.paused;
 
-    // Build the UI structure similar to ProfileScreen
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
           color: Colors.white,
-          borderRadius: BorderRadius.circular(16),
+          borderRadius: BorderRadius.circular(16), // More rounded
           border: Border.all(color: Colors.grey[200]!),
           boxShadow: [
             BoxShadow(
@@ -14001,13 +14166,10 @@ class HomeProfileCard extends ConsumerWidget {
           ]),
       child: Row(
         children: [
-          // Play/Pause Button
           InkWell(
             onTap: () {
-              // Use the derived booleans for logic
               if (isThisLoading) return;
-              final playerNotifier =
-                  ref.read(audioPlayerControllerProvider.notifier);
+
               if (isThisPlaying) {
                 playerNotifier.pause();
               } else if (isThisPaused) {
@@ -14018,34 +14180,33 @@ class HomeProfileCard extends ConsumerWidget {
             },
             borderRadius: BorderRadius.circular(24),
             child: Container(
-                width: 48,
-                height: 48,
-                decoration: BoxDecoration(
-                  color: const Color(0xFF8B5CF6),
-                  borderRadius: BorderRadius.circular(24),
-                  boxShadow: [
-                    BoxShadow(
-                        color: const Color(0xFF8B5CF6).withOpacity(0.3),
-                        blurRadius: 8,
-                        offset: const Offset(0, 2))
-                  ],
-                ),
-                // Use derived booleans for UI state
-                child: isThisLoading
-                    ? const Padding(
-                        padding: EdgeInsets.all(12.0),
-                        child: CircularProgressIndicator(
-                            strokeWidth: 2, color: Colors.white))
-                    : Icon(
-                        isThisPlaying // Use boolean
-                            ? Icons.pause_rounded
-                            : Icons.play_arrow_rounded,
-                        color: Colors.white,
-                        size: 28)),
+              width: 48,
+              height: 48,
+              decoration: BoxDecoration(
+                color: const Color(0xFF8B5CF6),
+                borderRadius: BorderRadius.circular(24),
+                boxShadow: [
+                  BoxShadow(
+                      color: const Color(0xFF8B5CF6).withOpacity(0.3),
+                      blurRadius: 8,
+                      offset: const Offset(0, 2))
+                ],
+              ),
+              child: isThisLoading
+                  ? const Padding(
+                      padding: EdgeInsets.all(12.0),
+                      child: CircularProgressIndicator(
+                          strokeWidth: 2, color: Colors.white))
+                  : Icon(
+                      isThisPlaying
+                          ? Icons.pause_rounded
+                          : Icons.play_arrow_rounded,
+                      color: Colors.white,
+                      size: 28,
+                    ),
+            ),
           ),
           const SizedBox(width: 16),
-
-          // Text Column (Prompt Label and Status)
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -14057,7 +14218,6 @@ class HomeProfileCard extends ConsumerWidget {
                         color: const Color(0xFF1A1A1A))),
                 const SizedBox(height: 4),
                 Text(
-                    // Use derived booleans for status text
                     isThisLoading
                         ? "Loading..."
                         : isThisPlaying
@@ -14070,13 +14230,12 @@ class HomeProfileCard extends ConsumerWidget {
               ],
             ),
           ),
-          // Like Button
           const SizedBox(width: 16),
           _buildSmallLikeButton(() => _showInteractionDialog(
                 context,
                 ref,
                 ContentLikeType.audioPrompt,
-                audio.prompt.value,
+                "0", // API requires "0" for audio prompts
                 null,
               )),
         ],
@@ -14084,21 +14243,23 @@ class HomeProfileCard extends ConsumerWidget {
     );
   }
 
-  // --- Like Button Helper ---
   Widget _buildSmallLikeButton(VoidCallback onPressed) {
+    // ... (remains the same) ...
     return Container(
       width: 40,
       height: 40,
       decoration: BoxDecoration(
-          color: Colors.white,
+          color: Colors.white, // White background
           shape: BoxShape.circle,
           boxShadow: [
+            // Subtle shadow
             BoxShadow(color: Colors.black.withOpacity(0.1), blurRadius: 5)
           ]),
       child: IconButton(
-        padding: EdgeInsets.zero,
+        padding: EdgeInsets.zero, // Remove default padding
         icon: Icon(Icons.favorite_border_rounded,
-            color: Colors.pink[200], size: 22),
+            color: Colors.pink[200], // Soft pink color
+            size: 22), // Icon size
         tooltip: 'Like this item',
         onPressed: onPressed,
       ),
