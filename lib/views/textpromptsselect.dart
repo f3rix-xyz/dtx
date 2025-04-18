@@ -2,28 +2,32 @@
 import 'package:dtx/models/user_model.dart';
 import 'package:dtx/views/writeprompt.dart';
 import 'package:flutter/material.dart';
-// Removed unused Riverpod import
-// Removed unused google_fonts import
+import 'package:flutter_riverpod/flutter_riverpod.dart'; // Import Riverpod
+import 'package:dtx/providers/user_provider.dart'; // Import UserProvider
 import 'package:dtx/utils/app_enums.dart';
+import 'package:google_fonts/google_fonts.dart'; // Import GoogleFonts
 
-class TextSelectPromptScreen extends StatefulWidget {
+// Change StatefulWidget to ConsumerStatefulWidget
+class TextSelectPromptScreen extends ConsumerStatefulWidget {
   final int? editIndex;
-  final bool isEditing; // <<< ADDED
+  final bool isEditing;
 
   const TextSelectPromptScreen({
     super.key,
     this.editIndex,
-    this.isEditing = false, // <<< ADDED default
+    this.isEditing = false,
   });
 
   @override
-  State<TextSelectPromptScreen> createState() => _TextSelectPromptScreenState();
+  ConsumerState<TextSelectPromptScreen> createState() =>
+      _TextSelectPromptScreenState();
 }
 
-class _TextSelectPromptScreenState extends State<TextSelectPromptScreen> {
+// Change State to ConsumerState
+class _TextSelectPromptScreenState
+    extends ConsumerState<TextSelectPromptScreen> {
   PromptCategory selectedCategory = PromptCategory.storyTime;
   bool showAllPrompts = false;
-  // Removed unused selectedPrompt state
 
   List<PromptType> get currentPrompts {
     if (showAllPrompts) {
@@ -34,8 +38,27 @@ class _TextSelectPromptScreenState extends State<TextSelectPromptScreen> {
     return selectedCategory.getPrompts();
   }
 
+  // Function to check for duplicates
+  bool _isDuplicate(PromptType selectedPromptType) {
+    final existingPrompts = ref.read(userProvider).prompts;
+    for (int i = 0; i < existingPrompts.length; i++) {
+      // Skip check if editing the current index
+      if (widget.isEditing && widget.editIndex == i) {
+        continue;
+      }
+      if (existingPrompts[i].question == selectedPromptType) {
+        return true; // Found a duplicate
+      }
+    }
+    return false; // No duplicate found
+  }
+
   @override
   Widget build(BuildContext context) {
+    // Read existing prompts to disable selected ones
+    final existingPromptQuestions = ref.watch(userProvider
+        .select((user) => user.prompts.map((p) => p.question).toSet()));
+
     return Scaffold(
       backgroundColor: Colors.white,
       body: SafeArea(
@@ -53,9 +76,7 @@ class _TextSelectPromptScreenState extends State<TextSelectPromptScreen> {
                       });
                     },
                     child: Text(
-                      showAllPrompts
-                          ? 'View by Category'
-                          : 'View all', // Toggle text
+                      showAllPrompts ? 'View by Category' : 'View all',
                       style: TextStyle(
                         color: const Color(0xFF8b5cf6),
                         fontSize: 16,
@@ -64,16 +85,16 @@ class _TextSelectPromptScreenState extends State<TextSelectPromptScreen> {
                       ),
                     ),
                   ),
-                  const Text(
-                    'Prompts',
-                    style: TextStyle(
+                  Text(
+                    'Prompts', // Keep title centered
+                    style: GoogleFonts.poppins(
+                      // Use GoogleFonts if desired
                       fontSize: 18,
                       fontWeight: FontWeight.bold,
                     ),
                   ),
                   GestureDetector(
-                    onTap: () =>
-                        Navigator.pop(context), // Always pop back from here
+                    onTap: () => Navigator.pop(context),
                     child: const Icon(Icons.close),
                   ),
                 ],
@@ -81,6 +102,7 @@ class _TextSelectPromptScreenState extends State<TextSelectPromptScreen> {
             ),
             if (!showAllPrompts)
               SingleChildScrollView(
+                // ... Category chips (unchanged) ...
                 scrollDirection: Axis.horizontal,
                 padding: const EdgeInsets.symmetric(horizontal: 16),
                 child: Row(
@@ -128,25 +150,49 @@ class _TextSelectPromptScreenState extends State<TextSelectPromptScreen> {
                 itemCount: currentPrompts.length,
                 itemBuilder: (context, index) {
                   final promptType = currentPrompts[index];
+                  final bool isAlreadySelected =
+                      existingPromptQuestions.contains(promptType);
+                  final bool isEditingThisPrompt = widget.isEditing &&
+                      widget.editIndex != null &&
+                      ref.read(userProvider).prompts.length >
+                          widget.editIndex! &&
+                      ref
+                              .read(userProvider)
+                              .prompts[widget.editIndex!]
+                              .question ==
+                          promptType;
+
+                  final bool isDisabled = isAlreadySelected &&
+                      !isEditingThisPrompt; // Disable if selected elsewhere
+
                   return GestureDetector(
-                    onTap: () {
-                      final category = promptType.getCategory();
-                      // Navigate to WriteAnswerScreen, potentially replacing this one
-                      // if we don't want the user coming back here after writing.
-                      // Using push ensures they can come back to select a different prompt if needed.
-                      Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                          builder: (context) => WriteAnswerScreen(
-                            category: category,
-                            question: promptType,
-                            editIndex: widget.editIndex,
-                            isEditing:
-                                widget.isEditing, // <<< Pass editing flag
-                          ),
-                        ),
-                      );
-                    },
+                    onTap: isDisabled
+                        ? null
+                        : () async {
+                            // Make onTap async
+                            final category = promptType.getCategory();
+                            // Navigate and wait for result
+                            final result = await Navigator.push(
+                              // <-- Use await
+                              context,
+                              MaterialPageRoute(
+                                builder: (context) => WriteAnswerScreen(
+                                  category: category,
+                                  question: promptType,
+                                  editIndex: widget.editIndex,
+                                  isEditing: widget.isEditing,
+                                ),
+                              ),
+                            );
+
+                            // If NOT editing and WriteAnswerScreen popped with success (true)
+                            if (!widget.isEditing &&
+                                result == true &&
+                                context.mounted) {
+                              // Pop this screen (TextSelectPromptScreen) to go back to ProfileAnswersScreen
+                              Navigator.pop(context);
+                            }
+                          },
                     child: Container(
                       padding: const EdgeInsets.symmetric(vertical: 16),
                       decoration: BoxDecoration(
@@ -159,9 +205,12 @@ class _TextSelectPromptScreenState extends State<TextSelectPromptScreen> {
                       ),
                       child: Text(
                         promptType.label,
-                        style: const TextStyle(
+                        style: TextStyle(
                           fontSize: 16,
-                          color: Colors.black87,
+                          // Dim text if disabled
+                          color: isDisabled ? Colors.grey[400] : Colors.black87,
+                          // Add strike-through if disabled? (Optional)
+                          // decoration: isDisabled ? TextDecoration.lineThrough : null,
                         ),
                       ),
                     ),

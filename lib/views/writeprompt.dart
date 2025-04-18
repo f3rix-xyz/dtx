@@ -61,6 +61,8 @@ class _WriteAnswerScreenState extends ConsumerState<WriteAnswerScreen> {
 
   void _saveAnswer() {
     final answerText = _answerController.text.trim();
+    bool actionTaken = false; // Flag to check if any action was performed
+
     if (answerText.isNotEmpty) {
       final newPrompt = Prompt(
         category: widget.category,
@@ -68,54 +70,56 @@ class _WriteAnswerScreenState extends ConsumerState<WriteAnswerScreen> {
         answer: answerText,
       );
 
-      // Determine the correct index to update/add
       int targetIndex =
           widget.editIndex ?? ref.read(userProvider).prompts.length;
 
-      // If editIndex is provided and valid, update. Otherwise, add if not full.
       if (widget.editIndex != null &&
           widget.editIndex! < ref.read(userProvider).prompts.length) {
         ref
             .read(userProvider.notifier)
             .updatePromptAtIndex(widget.editIndex!, newPrompt);
         print("Updated prompt at index: ${widget.editIndex}");
+        actionTaken = true;
       } else if (ref.read(userProvider).prompts.length < 3) {
         ref.read(userProvider.notifier).addPrompt(newPrompt);
         print("Added new prompt.");
+        actionTaken = true;
       } else {
-        // This case should ideally be prevented by the UI, but as a fallback:
         print("Error: Cannot add prompt, maximum reached.");
         ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(content: Text("You can only have 3 prompts.")));
-        return; // Don't pop
+        return;
       }
 
-      // Navigate back differently based on mode
+      // Navigate back
       if (widget.isEditing) {
-        // Pop twice: once for this screen, once for TextSelectPromptScreen
+        // Pop twice for editing
         int popCount = 0;
-        Navigator.of(context).popUntil((route) {
-          return popCount++ == 2;
-        });
+        Navigator.of(context).popUntil((route) => popCount++ == 2);
       } else {
-        // Onboarding: Pop back to ProfileAnswersScreen
-        Navigator.of(context).pop(); // Pop WriteAnswerScreen
-        // Note: Onboarding flow might need adjustment if ProfileAnswersScreen isn't the direct previous route.
-        // If TextSelectPromptScreen should also be popped in onboarding:
-        // Navigator.of(context).popUntil((route) => route.isFirst); // Or pop back to specific route
+        // Onboarding: Pop once and signal success
+        Navigator.of(context).pop(true); // <-- Signal success
       }
-    } else {
-      // If user clears text and hits Done, consider it as removing the prompt if editing existing
-      if (widget.isEditing && widget.editIndex != null) {
-        print(
-            "Removing prompt at index: ${widget.editIndex} due to empty answer.");
-        ref.read(userProvider.notifier).removePromptAtIndex(widget.editIndex!);
-        // Pop twice
-        int popCount = 0;
-        Navigator.of(context).popUntil((route) {
-          return popCount++ == 2;
-        });
-      }
+    } else if (widget.isEditing && widget.editIndex != null) {
+      // Handle clearing existing prompt during edit
+      print(
+          "Removing prompt at index: ${widget.editIndex} due to empty answer.");
+      ref.read(userProvider.notifier).removePromptAtIndex(widget.editIndex!);
+      actionTaken = true;
+      // Pop twice for editing
+      int popCount = 0;
+      Navigator.of(context).popUntil((route) => popCount++ == 2);
+    } else if (!widget.isEditing) {
+      // Don't allow saving empty prompt during onboarding if "Done" is pressed
+      ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text("Please enter an answer.")));
+      return; // Stay on the screen
+    }
+
+    // If no action was taken but user pressed Done (e.g., editing non-existent index with empty text)
+    if (!actionTaken) {
+      // Just pop back once (likely from TextSelectPromptScreen)
+      Navigator.of(context).pop(false); // Signal no change made
     }
   }
 
