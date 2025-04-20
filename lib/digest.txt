@@ -3795,237 +3795,287 @@ File: repositories/media_repository.dart
 // File: repositories/media_repository.dart
 import 'dart:convert';
 import 'dart:io';
-import 'package:dio/dio.dart';
+import 'package:dio/dio.dart'; // Keep if used elsewhere, not needed for HttpClient PUT
 import 'package:dtx/providers/auth_provider.dart';
 import 'package:dtx/utils/app_enums.dart';
 import 'package:dtx/utils/token_storage.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:http_parser/http_parser.dart';
-import 'package:path/path.dart' as path;
+import 'package:http_parser/http_parser.dart'; // Keep if used elsewhere
+// Removed path import as not directly used here
+
 import '../models/media_upload_model.dart';
 import '../services/api_service.dart';
 
 class MediaRepository {
   final ApiService _apiService;
-  final Ref? ref;
-  
+  final Ref? ref; // Keep ref if needed for token access
+
   MediaRepository(this._apiService, [this.ref]);
-  
-  // Get presigned URLs for uploading files
-  Future<List<Map<String, dynamic>>> getPresignedUrls(List<Map<String, String>> fileDetails) async {
+
+  // --- NEW Method for Edit Presigned URLs ---
+  Future<List<Map<String, dynamic>>> getEditPresignedUrls(
+      List<Map<String, String>> fileDetails) async {
+    final String methodName = 'getEditPresignedUrls';
+    print(
+        '[MediaRepository $methodName] Getting presigned URLs for editing...');
+    if (fileDetails.isEmpty) {
+      print(
+          '[MediaRepository $methodName] No file details provided, returning empty list.');
+      return []; // Return empty list if no files need uploading
+    }
     try {
-      // Get the token either from the provider or storage
-      String? token;
-      if (ref != null) {
-        final authState = ref!.read(authProvider);
-        token = authState.jwtToken;
-      }
-      
-      if (token == null) {
-        // Fallback to token storage if not available from provider
-        token = await TokenStorage.getToken();
-      }
-      
+      String? token = await _getAuthToken(); // Use helper to get token
       if (token == null) {
         throw ApiException('Authentication token is missing');
       }
-      
-      // Create auth headers
-      final headers = {
-        'Authorization': 'Bearer $token',
-      };
-      
+      final headers = {'Authorization': 'Bearer $token'};
+      final body = {'files': fileDetails};
+      print('[MediaRepository $methodName] Request Body: $body');
+
       final response = await _apiService.post(
-        '/upload',
-        body: {
-          'files': fileDetails,
-        },
+        '/api/edit-presigned-urls', // <-- Use the NEW endpoint
+        body: body,
         headers: headers,
       );
-      
-      if (response['uploads'] != null) {
+
+      print('[MediaRepository $methodName] API Response: $response');
+      if (response['uploads'] != null && response['uploads'] is List) {
+        print('[MediaRepository $methodName] Presigned URLs received.');
         return List<Map<String, dynamic>>.from(response['uploads']);
       } else {
-        throw ApiException('Failed to get presigned URLs');
+        final message = response['message']?.toString() ??
+            'Failed to get edit presigned URLs.';
+        print('[MediaRepository $methodName] Failed: $message');
+        // Throw specific error if prerequisite failed
+        if (message.contains("must have at least 3 existing media items")) {
+          throw ApiException(message,
+              statusCode: 400); // Use 400 as indicated in docs for this error
+        }
+        throw ApiException(message);
       }
-    } on ApiException {
+    } on ApiException catch (e) {
+      print(
+          '[MediaRepository $methodName] API Exception: ${e.message} (Status: ${e.statusCode})');
       rethrow;
     } catch (e) {
-      throw ApiException('Error getting presigned URLs: ${e.toString()}');
+      print('[MediaRepository $methodName] Unexpected Error: $e');
+      throw ApiException('Error getting edit presigned URLs: ${e.toString()}');
+    }
+  }
+  // --- END NEW Method ---
+
+  // --- Helper to get token (avoids repetition) ---
+  Future<String?> _getAuthToken() async {
+    String? token;
+    if (ref != null) {
+      // Try reading from auth provider state first
+      try {
+        final authState = ref!.read(authProvider);
+        token = authState.jwtToken;
+        // print("[MediaRepository _getAuthToken] Token from Provider: $token"); // Debug
+      } catch (e) {
+        print(
+            "[MediaRepository _getAuthToken] Error reading auth provider: $e");
+        // Fallback below
+      }
+    }
+    if (token == null || token.isEmpty) {
+      // Fallback to token storage
+      token = await TokenStorage.getToken();
+      // print("[MediaRepository _getAuthToken] Token from Storage: $token"); // Debug
+    }
+    return token;
+  }
+  // --- END Helper ---
+
+  // --- Existing methods (keep as they are for onboarding/audio/verification) ---
+  Future<List<Map<String, dynamic>>> getPresignedUrls(
+      List<Map<String, String>> fileDetails) async {
+    // (Used for initial onboarding media upload)
+    final String methodName = 'getPresignedUrls (Onboarding)';
+    print(
+        '[MediaRepository $methodName] Getting presigned URLs for onboarding...');
+    try {
+      String? token = await _getAuthToken();
+      if (token == null) throw ApiException('Authentication token is missing');
+      final headers = {'Authorization': 'Bearer $token'};
+      final body = {'files': fileDetails};
+      print('[MediaRepository $methodName] Request Body: $body');
+
+      final response = await _apiService.post(
+        '/upload', // <-- Uses the ORIGINAL endpoint for onboarding
+        body: body,
+        headers: headers,
+      );
+
+      print('[MediaRepository $methodName] API Response: $response');
+      if (response['uploads'] != null && response['uploads'] is List) {
+        print('[MediaRepository $methodName] Presigned URLs received.');
+        return List<Map<String, dynamic>>.from(response['uploads']);
+      } else {
+        final message = response['message']?.toString() ??
+            'Failed to get onboarding presigned URLs.';
+        print('[MediaRepository $methodName] Failed: $message');
+        throw ApiException(message);
+      }
+    } on ApiException catch (e) {
+      print(
+          '[MediaRepository $methodName] API Exception: ${e.message} (Status: ${e.statusCode})');
+      rethrow;
+    } catch (e) {
+      print('[MediaRepository $methodName] Unexpected Error: $e');
+      throw ApiException(
+          'Error getting onboarding presigned URLs: ${e.toString()}');
     }
   }
 
-  // Get presigned URL for audio upload
-  Future<Map<String, dynamic>> getAudioPresignedUrl(String filename, String fileType, AudioPrompt prompt) async {
+  Future<Map<String, dynamic>> getAudioPresignedUrl(
+      String filename, String fileType, AudioPrompt prompt) async {
+    // (Keep as is for audio)
+    final String methodName = 'getAudioPresignedUrl';
+    print('[MediaRepository $methodName] Getting audio presigned URL...');
     try {
-      // Get the token either from the provider or storage
-      String? token;
-      if (ref != null) {
-        final authState = ref!.read(authProvider);
-        token = authState.jwtToken;
-      }
-      
-      if (token == null) {
-        // Fallback to token storage if not available from provider
-        token = await TokenStorage.getToken();
-      }
-      
-      if (token == null) {
-        throw ApiException('Authentication token is missing');
-      }
-      
-      // Create auth headers
-      final headers = {
-        'Authorization': 'Bearer $token',
+      String? token = await _getAuthToken();
+      if (token == null) throw ApiException('Authentication token is missing');
+      final headers = {'Authorization': 'Bearer $token'};
+      final body = {
+        'filename': filename,
+        'type': fileType,
+        'prompt': prompt.value,
       };
-      
+      print('[MediaRepository $methodName] Request Body: $body');
       final response = await _apiService.post(
         '/audio',
-        body: {
-          'filename': filename,
-          'type': fileType,
-          'prompt': prompt.value,
-        },
+        body: body,
         headers: headers,
       );
-      
+      print('[MediaRepository $methodName] API Response: $response');
       return response;
-    } on ApiException {
+    } on ApiException catch (e) {
+      print(
+          '[MediaRepository $methodName] API Exception: ${e.message} (Status: ${e.statusCode})');
       rethrow;
     } catch (e) {
+      print('[MediaRepository $methodName] Unexpected Error: $e');
       throw ApiException('Error getting audio presigned URL: ${e.toString()}');
     }
   }
 
-    // Get presigned URL for verification photo upload
-  Future<String> getVerificationPresignedUrl(String filename, String fileType) async {
+  Future<String> getVerificationPresignedUrl(
+      String filename, String fileType) async {
+    // (Keep as is for verification)
+    final String methodName = 'getVerificationPresignedUrl';
+    print(
+        '[MediaRepository $methodName] Getting verification presigned URL...');
     try {
-      // Get the token either from the provider or storage
-      String? token;
-      if (ref != null) {
-        final authState = ref!.read(authProvider);
-        token = authState.jwtToken;
-      }
-
-      if (token == null) {
-        // Fallback to token storage if not available from provider
-        token = await TokenStorage.getToken();
-      }
-
-      if (token == null) {
-        throw ApiException('Authentication token is missing');
-      }
-
-      // Create auth headers
-      final headers = {
-        'Authorization': 'Bearer $token',
-      };
-
+      String? token = await _getAuthToken();
+      if (token == null) throw ApiException('Authentication token is missing');
+      final headers = {'Authorization': 'Bearer $token'};
+      final body = {'filename': filename, 'type': fileType};
+      print('[MediaRepository $methodName] Request Body: $body');
       final response = await _apiService.post(
         '/verify',
-        body: {
-          'filename': filename,
-          'type': fileType,
-        },
+        body: body,
         headers: headers,
       );
-
+      print('[MediaRepository $methodName] API Response: $response');
       if (response['upload_url'] != null) {
+        print('[MediaRepository $methodName] Presigned URL received.');
         return response['upload_url'];
       } else {
-        throw ApiException('Failed to get verification presigned URL');
+        final message = response['message']?.toString() ??
+            'Failed to get verification presigned URL.';
+        print('[MediaRepository $methodName] Failed: $message');
+        throw ApiException(message);
       }
-    } on ApiException {
+    } on ApiException catch (e) {
+      print(
+          '[MediaRepository $methodName] API Exception: ${e.message} (Status: ${e.statusCode})');
       rethrow;
     } catch (e) {
-      throw ApiException('Error getting verification presigned URL: ${e.toString()}');
+      print('[MediaRepository $methodName] Unexpected Error: $e');
+      throw ApiException(
+          'Error getting verification presigned URL: ${e.toString()}');
     }
   }
-  
-  // Upload a file to S3 using presigned URL
-// Upload a file to S3 using presigned URL
-Future<bool> uploadFileToS3(MediaUploadModel mediaUpload) async {
-  if (mediaUpload.presignedUrl == null) {
-    throw ApiException('Missing presigned URL for upload');
-  }
 
-  final file = mediaUpload.file;
-  final contentType = mediaUpload.fileType;
-  final filePath = file.path;
-
-  try {
-    print('⏫ Starting S3 upload for: ${mediaUpload.fileName}');
-    print('📁 File path: $filePath');
-    print('📦 Content-Type: $contentType');
-    print('📏 File size: ${(await file.length()) / 1024} KB');
-    print('🔗 Presigned URL: ${mediaUpload.presignedUrl}');
-
-    final client = HttpClient();
-    final request = await client.putUrl(Uri.parse(mediaUpload.presignedUrl!));
-    
-    // Set headers from curl example
-    request.headers.set(HttpHeaders.contentTypeHeader, contentType);
-    request.contentLength = await file.length();
-
-    // Add debug headers
-    print('📨 Request headers:');
-    request.headers.forEach((name, values) {
-      print('   $name: ${values.join(', ')}');
-    });
-
-    // Pipe file content directly
-    final fileStream = file.openRead();
-    await request.addStream(fileStream);
-    final response = await request.close();
-
-    // Get response details
-    final statusCode = response.statusCode;
-    final responseHeaders = response.headers;
-    final responseBody = await response.transform(utf8.decoder).join();
-
-    print('📩 Upload response:');
-    print('   Status: $statusCode');
-    print('   Headers:');
-    responseHeaders.forEach((name, values) {
-      print('     $name: ${values.join(', ')}');
-    });
-    print('   Body: $responseBody');
-
-    if (statusCode != HttpStatus.ok) {
-      print('❌ Upload failed with status $statusCode');
-      return false;
+  // Upload a file to S3 using presigned URL (No changes needed)
+  Future<bool> uploadFileToS3(MediaUploadModel mediaUpload) async {
+    if (mediaUpload.presignedUrl == null) {
+      throw ApiException('Missing presigned URL for upload');
     }
 
-    print('✅ Upload successful for ${mediaUpload.fileName}');
-    return true;
-  } catch (e, stack) {
-    print('‼️ Critical upload error: $e');
-    print('🛑 Stack trace: $stack');
-    return false;
-  }
-}
+    final file = mediaUpload.file;
+    final contentType = mediaUpload.fileType;
+    final filePath = file.path;
 
-  // Retry failed uploads with exponential backoff
-  Future<bool> retryUpload(MediaUploadModel mediaUpload, {int maxRetries = 3}) async {
+    try {
+      print('⏫ Starting S3 upload for: ${mediaUpload.fileName}');
+      print('📁 File path: $filePath');
+      print('📦 Content-Type: $contentType');
+      print('📏 File size: ${(await file.length()) / 1024} KB');
+      print('🔗 Presigned URL: ${mediaUpload.presignedUrl}');
+
+      final client = HttpClient();
+      final request = await client.putUrl(Uri.parse(mediaUpload.presignedUrl!));
+
+      request.headers.set(HttpHeaders.contentTypeHeader, contentType);
+      request.contentLength = await file.length();
+
+      // print('📨 Request headers:');
+      // request.headers.forEach((name, values) {
+      //   print('   $name: ${values.join(', ')}');
+      // });
+
+      final fileStream = file.openRead();
+      await request.addStream(fileStream);
+      final response = await request.close();
+
+      final statusCode = response.statusCode;
+      final responseBody = await response.transform(utf8.decoder).join();
+
+      print('📩 Upload response: Status=$statusCode, Body=$responseBody');
+
+      if (statusCode != HttpStatus.ok) {
+        print('❌ Upload failed with status $statusCode');
+        return false;
+      }
+
+      print('✅ Upload successful for ${mediaUpload.fileName}');
+      return true;
+    } catch (e, stack) {
+      print('‼️ Critical upload error: $e');
+      print('🛑 Stack trace: $stack');
+      return false; // Indicate failure
+    }
+  }
+
+  // Retry failed uploads with exponential backoff (No changes needed)
+  Future<bool> retryUpload(MediaUploadModel mediaUpload,
+      {int maxRetries = 3}) async {
     int retryCount = 0;
-    int backoffMs = 1000; // Start with 1 second
-    
+    int backoffMs = 1000;
+
     while (retryCount < maxRetries) {
       try {
+        // Add a small delay before retrying
+        await Future.delayed(Duration(milliseconds: backoffMs ~/ 2));
+        print(
+            '🔄 Retrying upload ($retryCount/${maxRetries - 1}) for: ${mediaUpload.fileName}');
         final success = await uploadFileToS3(mediaUpload);
         if (success) return true;
       } catch (e) {
         print('Retry $retryCount failed: $e');
       }
-      
+
       retryCount++;
       if (retryCount < maxRetries) {
-        // Exponential backoff
         await Future.delayed(Duration(milliseconds: backoffMs));
-        backoffMs *= 2; // Double the wait time for next retry
+        backoffMs *= 2;
       }
     }
-    
+    print(
+        '❌ Upload failed after $maxRetries retries for: ${mediaUpload.fileName}');
     return false;
   }
 }
@@ -9769,9 +9819,9 @@ File: views/media.dart
 ================================================
 // File: lib/views/media.dart
 import 'dart:io';
-import 'dart:typed_data';
+import 'dart:typed_data'; // Keep if thumbnail generation is used (not shown, but possible)
 import 'package:dtx/providers/error_provider.dart';
-import 'package:dtx/providers/media_upload_provider.dart'; // Keep for potential size checks?
+import 'package:dtx/providers/media_upload_provider.dart';
 import 'package:dtx/providers/user_provider.dart';
 import 'package:dtx/views/prompt.dart'; // Keep for onboarding flow
 import 'package:flutter/material.dart';
@@ -9780,26 +9830,16 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:reorderable_grid_view/reorderable_grid_view.dart';
 import 'package:dotted_border/dotted_border.dart';
-import '../models/error_model.dart'; // Keep
+import 'package:path/path.dart' as p; // Use prefix for path
+import 'package:mime/mime.dart'; // Use mime package
 
-// Wrapper class remains the same
-class EditableMediaItem {
-  final String? url;
-  final File? file;
-  final MediaType type;
-  final UniqueKey key;
+import '../models/error_model.dart';
+import '../models/media_upload_model.dart'; // Import MediaUploadModel
 
-  EditableMediaItem({
-    this.url,
-    this.file,
-    required this.type,
-    required this.key,
-  }) : assert(
-            url != null || file != null, 'Either url or file must be provided');
-
-  bool get isNewFile => file != null;
-  String get displayIdentifier => url ?? file!.path; // Use path for new files
-}
+// Wrapper class using MediaUploadModel now for consistency
+// Using MediaUploadModel directly in the list might be simpler if no extra UI state needed here.
+// Let's try using MediaUploadModel directly.
+// class EditableMediaItem { ... } // Removed wrapper
 
 class MediaPickerScreen extends ConsumerStatefulWidget {
   final bool isEditing;
@@ -9814,20 +9854,21 @@ class MediaPickerScreen extends ConsumerStatefulWidget {
 }
 
 class _MediaPickerState extends ConsumerState<MediaPickerScreen> {
-  late List<EditableMediaItem?> _editableMedia;
-  bool _isForwardButtonEnabled = false;
-  bool _mediaHasChanged = false;
+  // State now directly uses MediaUploadModel?
+  // Initialize this in initState based on mode
+  List<MediaUploadModel?> _mediaSlots = List.filled(6, null);
+  bool _isInitialized = false; // Track initialization
 
-  // Allowed types (keep as before)
+  // Keep allowed types
   final Set<String> _allowedImageMime = {
-    'image/jpeg',
+    /* ... as before ... */ 'image/jpeg',
     'image/png',
     'image/gif',
     'image/webp',
     'image/jpg'
   };
   final Set<String> _allowedVideoMime = {
-    'video/mp4',
+    /* ... as before ... */ 'video/mp4',
     'video/quicktime',
     'video/x-msvideo',
     'video/mpeg',
@@ -9835,7 +9876,7 @@ class _MediaPickerState extends ConsumerState<MediaPickerScreen> {
     'video/mp2t'
   };
   final Set<String> _allowedImageExtensions = {
-    'jpg',
+    /* ... as before ... */ 'jpg',
     'jpeg',
     'png',
     'gif',
@@ -9844,7 +9885,7 @@ class _MediaPickerState extends ConsumerState<MediaPickerScreen> {
     'tiff'
   };
   final Set<String> _allowedVideoExtensions = {
-    'mp4',
+    /* ... as before ... */ 'mp4',
     'mov',
     'avi',
     'mpeg',
@@ -9857,30 +9898,50 @@ class _MediaPickerState extends ConsumerState<MediaPickerScreen> {
   @override
   void initState() {
     super.initState();
-    _initializeMedia();
-    WidgetsBinding.instance
-        .addPostFrameCallback((_) => _updateForwardButtonState());
+    // Delay initialization until the first build context is available
+    WidgetsBinding.instance.addPostFrameCallback((_) => _initializeMedia());
   }
 
   void _initializeMedia() {
-    _editableMedia = List.filled(6, null);
+    if (_isInitialized) return; // Prevent re-initialization
+    print("[MediaPickerScreen] Initializing Media...");
+
+    final mediaUploadNotifier = ref.read(mediaUploadProvider.notifier);
+    final currentUser = ref.read(userProvider);
+
+    List<MediaUploadModel?> initialSlots = List.filled(6, null);
+
     if (widget.isEditing) {
-      final currentUrls = ref.read(userProvider).mediaUrls ?? [];
+      print("[MediaPickerScreen] Mode: Editing. Populating from userProvider.");
+      final currentUrls = currentUser.mediaUrls ?? [];
       for (int i = 0; i < currentUrls.length && i < 6; i++) {
         final url = currentUrls[i];
-        final isVideo = url.toLowerCase().endsWith('.mp4') ||
-            url.toLowerCase().endsWith('.mov');
-        _editableMedia[i] = EditableMediaItem(
-          url: url,
-          type: isVideo ? MediaType.video : MediaType.image,
-          key: UniqueKey(),
-        );
+        if (url.isNotEmpty && url.startsWith('http')) {
+          // Represent existing URL - use a placeholder model or null?
+          // Let's use null for simplicity in the provider state,
+          // ProfileScreen will use _originalProfileData to fetch the URL.
+          initialSlots[i] = null; // Represents existing URL slot
+          print("  - Slot $i: Existing URL (set as null in provider)");
+        } else if (url.isNotEmpty) {
+          print(
+              "  - Slot $i: Found non-URL in user.mediaUrls: $url (Ignoring for edit init)");
+        }
       }
+    } else {
+      print("[MediaPickerScreen] Mode: Onboarding. Starting fresh.");
     }
-    // Ensure list has 6 elements
-    while (_editableMedia.length < 6) {
-      _editableMedia.add(null);
-    }
+
+    // Set the initial state in the provider
+    mediaUploadNotifier.state = initialSlots; // Directly set the state list
+
+    // Update local state for UI building
+    setState(() {
+      _mediaSlots = List.from(initialSlots); // Copy for local UI state
+      _isInitialized = true;
+      _updateForwardButtonState(); // Update button based on initial state
+    });
+    print(
+        "[MediaPickerScreen] Initialization complete. Slots: ${_mediaSlots.map((m) => m?.fileName ?? m?.presignedUrl ?? 'null').toList()}");
   }
 
   @override
@@ -9889,16 +9950,21 @@ class _MediaPickerState extends ConsumerState<MediaPickerScreen> {
   }
 
   Future<void> _pickMedia(int index) async {
+    // (Keep validation logic, but update provider state)
     ref.read(errorProvider.notifier).clearError();
     final ImagePicker picker = ImagePicker();
     final XFile? media = await picker.pickMedia();
 
     if (media != null) {
       final mimeType = media.mimeType?.toLowerCase();
-      final extension = media.path.split('.').last.toLowerCase();
+      // Use p.basename for path manipulation
+      final fileName = p.basename(media.path);
+      final extension =
+          p.extension(media.path).toLowerCase().replaceAll('.', '');
       final filePath = media.path.replaceFirst('file://', '');
       final file = File(filePath);
 
+      // Validation... (keep existing validation logic)
       final isValidImage = _allowedImageMime.contains(mimeType) ||
           _allowedImageExtensions.contains(extension);
       final isValidVideo = _allowedVideoMime.contains(mimeType) ||
@@ -9919,6 +9985,7 @@ class _MediaPickerState extends ConsumerState<MediaPickerScreen> {
         _clearSlot(index);
         return;
       }
+      // First image must be an image
       if (index == 0 && !isValidImage) {
         await _showErrorDialog(context, isMainImage: true);
         _clearSlot(index);
@@ -9929,44 +9996,69 @@ class _MediaPickerState extends ConsumerState<MediaPickerScreen> {
         _clearSlot(index);
         return;
       }
+      // --- End Validation ---
 
-      setState(() {
-        _editableMedia[index] = EditableMediaItem(
+      // Update provider directly
+      final newModel = MediaUploadModel(
           file: file,
-          type: isVideo ? MediaType.video : MediaType.image,
-          key: UniqueKey(),
-        );
-        _mediaHasChanged = true;
+          fileName: fileName,
+          fileType: mimeType ??
+              (isVideo ? 'video/mp4' : 'image/jpeg'), // Provide fallback MIME
+          status: UploadStatus.idle // Initial status
+          );
+      ref
+          .read(mediaUploadProvider.notifier)
+          .setMediaFile(index, file); // Use existing provider method
+
+      // Update local state for UI
+      setState(() {
+        _mediaSlots = List.from(
+            ref.read(mediaUploadProvider)); // Sync local with provider
         _updateForwardButtonState();
       });
+      // Signal change if editing
+      if (widget.isEditing) {
+        ref.read(userProvider.notifier).setMediaChangedFlag(true);
+      }
     }
   }
 
   void _clearSlot(int index) {
-    // Prevent clearing main photo if <= 3 items
+    // (Keep validation logic for min 3 items)
     final currentCount = _countSelectedMedia();
-    if (index == 0 && currentCount <= 3 && _editableMedia[index] != null) {
+    // Prevent clearing main photo if <= 3 items
+    if (index == 0 && currentCount <= 3 && _mediaSlots[index] != null) {
       ref.read(errorProvider.notifier).setError(AppError.validation(
           "Cannot remove the main photo when less than 3 items are present."));
       return;
     }
     // Prevent clearing any item if it would result in less than 3 items remaining
-    if (_editableMedia[index] != null && currentCount <= 3) {
+    if (_mediaSlots[index] != null && currentCount <= 3) {
       ref
           .read(errorProvider.notifier)
           .setError(AppError.validation("Minimum of 3 media items required."));
       return;
     }
+    // --- End Validation ---
+
+    // Update provider directly
+    ref.read(mediaUploadProvider.notifier).removeMedia(index);
+
+    // Update local state for UI
     setState(() {
-      _editableMedia[index] = null;
-      _mediaHasChanged = true;
+      _mediaSlots =
+          List.from(ref.read(mediaUploadProvider)); // Sync local with provider
       _updateForwardButtonState();
     });
+    // Signal change if editing
+    if (widget.isEditing) {
+      ref.read(userProvider.notifier).setMediaChangedFlag(true);
+    }
   }
 
   Future<void> _showErrorDialog(BuildContext context,
       {bool isMainImage = false}) async {
-    // ... (same as before) ...
+    // (Keep as is)
     return showDialog(
       context: context,
       builder: (context) => AlertDialog(
@@ -9985,89 +10077,127 @@ class _MediaPickerState extends ConsumerState<MediaPickerScreen> {
   }
 
   void _reorderMedia(int oldGridIndex, int newGridIndex) {
-    if (oldGridIndex == 0 || newGridIndex == 0) return;
+    // (Keep validation logic)
+    // Allow reordering even if it involves index 0 temporarily
+    // Validation happens on save/done
+    // if (oldGridIndex == 0 || newGridIndex == 0) return; // Removed this restriction
+
+    final currentSlots = ref.read(mediaUploadProvider);
+    final item = currentSlots[oldGridIndex];
+
+    // Create a mutable copy
+    List<MediaUploadModel?> mutableSlots = List.from(currentSlots);
+
+    // Perform reorder
+    mutableSlots.removeAt(oldGridIndex);
+    mutableSlots.insert(newGridIndex, item);
+
+    // Ensure first slot is an image after reorder
+    if (mutableSlots[0] != null &&
+        !(mutableSlots[0]!.fileType.startsWith('image/'))) {
+      ref
+          .read(errorProvider.notifier)
+          .setError(AppError.validation("The first item must be a photo."));
+      // Optional: Revert the reorder visually immediately? Or just prevent saving later?
+      // For now, just show error. User needs to fix order before saving.
+      setState(() {
+        // Update local state immediately to show error state potentially
+        _mediaSlots =
+            List.from(ref.read(mediaUploadProvider)); // Keep old order for now
+        _updateForwardButtonState(); // Re-evaluate button state
+      });
+      return; // Prevent updating provider with invalid state
+    }
+
+    // Update provider state
+    ref.read(mediaUploadProvider.notifier).state = mutableSlots;
+
+    // Update local state for UI
     setState(() {
-      final EditableMediaItem? item = _editableMedia.removeAt(oldGridIndex);
-      if (item != null) {
-        _editableMedia.insert(newGridIndex, item);
-        _mediaHasChanged = true;
-      } else {
-        _editableMedia.insert(newGridIndex, null);
-      }
-      while (_editableMedia.length > 6) {
-        _editableMedia.removeLast();
-      }
-      while (_editableMedia.length < 6) {
-        _editableMedia.add(null);
-      }
+      _mediaSlots = List.from(mutableSlots); // Sync local with provider
       _updateForwardButtonState();
     });
+    // Signal change if editing
+    if (widget.isEditing) {
+      ref.read(userProvider.notifier).setMediaChangedFlag(true);
+    }
   }
 
+  // Count selected based on provider state
   int _countSelectedMedia() {
-    return _editableMedia.where((item) => item != null).length;
+    // Counts non-null items in the provider state
+    return ref.read(mediaUploadProvider).where((item) => item != null).length;
   }
 
+  // Update button state based on provider state
   void _updateForwardButtonState() {
     int selectedCount = _countSelectedMedia();
-    setState(() {
-      _isForwardButtonEnabled = selectedCount >= 3;
-    });
+    bool firstIsImage = true;
+    final slots = ref.read(mediaUploadProvider);
+    if (slots.isNotEmpty &&
+        slots[0] != null &&
+        !slots[0]!.fileType.startsWith('image/')) {
+      firstIsImage = false;
+    }
+    // No local state needed for the button enabled status anymore
+    // setState(() {
+    //   _isForwardButtonEnabled = selectedCount >= 3 && firstIsImage;
+    // });
   }
 
+  // --- *** SIMPLIFIED Done Handler *** ---
   void _handleDone() {
-    if (!_isForwardButtonEnabled) return;
+    final slots = ref.read(mediaUploadProvider);
+    final currentCount = slots.where((item) => item != null).length;
+    final errorNotifier = ref.read(errorProvider.notifier);
 
-    // --- *** CORE CHANGE for EDITING *** ---
+    // Validate minimum items
+    if (currentCount < 3) {
+      errorNotifier
+          .setError(AppError.validation("Minimum 3 media items required."));
+      return;
+    }
+
+    // Validate first item is image
+    if (slots.isNotEmpty &&
+        slots[0] != null &&
+        !slots[0]!.fileType.startsWith('image/')) {
+      errorNotifier
+          .setError(AppError.validation("The first item must be a photo."));
+      return;
+    }
+
+    // If editing, update user provider state with local file paths for ProfileScreen to handle
     if (widget.isEditing) {
-      // Create the list of strings (URLs or local paths)
-      final List<String> finalMediaIdentifiers = _editableMedia
-          .where((item) => item != null)
-          .map((item) => item!.displayIdentifier) // Use url or file path
-          .toList();
+      List<String> identifiers = [];
+      final originalUrls =
+          ref.read(userProvider).mediaUrls ?? []; // Get original URLs
 
-      // Update the user provider directly with this mixed list
-      ref.read(userProvider.notifier).updateMediaUrls(finalMediaIdentifiers);
-
-      // Set the flag if changes were made
-      if (_mediaHasChanged) {
-        ref.read(userProvider.notifier).setMediaChangedFlag(true);
-      }
-      print("[MediaPickerScreen Edit] Updated provider. Popping back.");
-      Navigator.of(context).pop(); // Pop back to ProfileScreen
-    } else {
-      // --- ONBOARDING Flow (remains the same conceptually) ---
-      final List<File> filesToUpload = _editableMedia
-          .where((item) => item?.isNewFile == true)
-          .map((item) => item!.file!)
-          .toList();
-
-      if (filesToUpload.isEmpty) {
-        print(
-            "[MediaPickerScreen Onboarding] No files selected? Navigating anyway.");
-        Navigator.pushReplacement(
-            context,
-            MaterialPageRoute(
-                builder: (context) => const ProfileAnswersScreen()));
-        return;
-      }
-
-      final uploadNotifier = ref.read(mediaUploadProvider.notifier);
-      // Create a temporary list matching the desired order
-      List<File?> orderedFilesForUpload = List.filled(6, null);
-      for (int i = 0; i < _editableMedia.length; i++) {
-        if (_editableMedia[i]?.isNewFile == true) {
-          orderedFilesForUpload[i] = _editableMedia[i]!.file;
-        }
-      }
-      // Set the files in the provider
-      for (int i = 0; i < orderedFilesForUpload.length; i++) {
-        if (orderedFilesForUpload[i] != null) {
-          uploadNotifier.setMediaFile(i, orderedFilesForUpload[i]!);
+      // Iterate through the provider's state (_mediaSlots reflects this)
+      for (int i = 0; i < slots.length; ++i) {
+        final model = slots[i];
+        if (model != null) {
+          // It's a local file selected/replaced during this edit
+          identifiers.add(model.file.path);
         } else {
-          // uploadNotifier.removeMedia(i); // If provider needs explicit removal
+          // It's potentially an existing URL slot (or empty)
+          // We need the original URL if it existed at this index
+          if (i < originalUrls.length && originalUrls[i].startsWith('http')) {
+            identifiers.add(originalUrls[i]);
+          }
+          // If it wasn't an original URL, it remains an empty slot implicitly
         }
       }
+
+      // Update user provider with the mixed list (paths and original URLs)
+      ref.read(userProvider.notifier).updateMediaUrls(identifiers);
+      // The mediaChanged flag was already set when picking/clearing/reordering
+      print(
+          "[MediaPickerScreen Edit] Updated userProvider state. Popping back.");
+      Navigator.of(context).pop();
+    } else {
+      // --- ONBOARDING Flow ---
+      // Provider state is already updated. Just navigate.
       print(
           "[MediaPickerScreen Onboarding] Files set in provider. Navigating to Prompts.");
       Navigator.pushReplacement(
@@ -10077,12 +10207,30 @@ class _MediaPickerState extends ConsumerState<MediaPickerScreen> {
       // --- End ONBOARDING Flow ---
     }
   }
+  // --- *** END SIMPLIFIED Done Handler *** ---
 
   @override
   Widget build(BuildContext context) {
-    // ... (build method remains the same, header and bottom bar logic unchanged) ...
+    // Read state directly from provider for build
+    _mediaSlots =
+        ref.watch(mediaUploadProvider); // Keep UI in sync with provider
     final errorState = ref.watch(errorProvider);
     final screenSize = MediaQuery.of(context).size;
+
+    // Calculate enabled state within build
+    final int selectedCount = _mediaSlots.where((item) => item != null).length;
+    bool firstIsImage = true;
+    if (_mediaSlots.isNotEmpty &&
+        _mediaSlots[0] != null &&
+        !_mediaSlots[0]!.fileType.startsWith('image/')) {
+      firstIsImage = false;
+    }
+    final bool isForwardButtonEnabled = selectedCount >= 3 && firstIsImage;
+
+    // Show loading if not initialized yet
+    if (!_isInitialized) {
+      return const Scaffold(body: Center(child: CircularProgressIndicator()));
+    }
 
     return Scaffold(
       backgroundColor: const Color(0xFFFAFAFA), // Lighter background
@@ -10092,7 +10240,7 @@ class _MediaPickerState extends ConsumerState<MediaPickerScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // --- Adjusted Header for Edit Mode ---
+              // --- Header (keep as is) ---
               Padding(
                 padding: EdgeInsets.only(
                   top: screenSize.height * 0.02,
@@ -10124,11 +10272,11 @@ class _MediaPickerState extends ConsumerState<MediaPickerScreen> {
                     ),
                     if (widget.isEditing)
                       TextButton(
-                        onPressed: _isForwardButtonEnabled ? _handleDone : null,
+                        onPressed: isForwardButtonEnabled ? _handleDone : null,
                         child: Text(
                           "Done",
                           style: GoogleFonts.poppins(
-                            color: _isForwardButtonEnabled
+                            color: isForwardButtonEnabled
                                 ? const Color(0xFF8B5CF6)
                                 : Colors.grey,
                             fontWeight: FontWeight.w600,
@@ -10184,10 +10332,10 @@ class _MediaPickerState extends ConsumerState<MediaPickerScreen> {
                     crossAxisCount: 2,
                     mainAxisSpacing: 16,
                     crossAxisSpacing: 16,
-                    childAspectRatio: 0.95,
+                    childAspectRatio: 0.95, // Adjust aspect ratio if needed
                     shrinkWrap: true,
                     physics: const BouncingScrollPhysics(),
-                    children: List.generate(_editableMedia.length,
+                    children: List.generate(_mediaSlots.length,
                         (index) => _buildMediaPlaceholder(index)),
                     onReorder: _reorderMedia,
                   ),
@@ -10205,13 +10353,15 @@ class _MediaPickerState extends ConsumerState<MediaPickerScreen> {
                     ),
                   ),
                 ),
-              // --- Hide Bottom Bar in Edit Mode ---
+              // --- Bottom Bar (keep as is) ---
               if (!widget.isEditing)
                 Container(
                   padding: EdgeInsets.symmetric(
                     vertical: screenSize.height * 0.02,
                     horizontal: screenSize.width * 0.04,
                   ),
+                  margin:
+                      const EdgeInsets.only(top: 10), // Add margin if needed
                   decoration: BoxDecoration(
                     color: Colors.white,
                     borderRadius: BorderRadius.circular(16),
@@ -10230,7 +10380,7 @@ class _MediaPickerState extends ConsumerState<MediaPickerScreen> {
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(
-                            "${_countSelectedMedia()}/6 Selected",
+                            "${selectedCount}/6 Selected",
                             style: GoogleFonts.poppins(
                               fontSize: screenSize.width * 0.04,
                               fontWeight: FontWeight.w600,
@@ -10247,17 +10397,19 @@ class _MediaPickerState extends ConsumerState<MediaPickerScreen> {
                         ],
                       ),
                       GestureDetector(
-                        onTap: _handleDone,
+                        onTap: isForwardButtonEnabled
+                            ? _handleDone
+                            : null, // Use calculated state
                         child: AnimatedContainer(
                           duration: const Duration(milliseconds: 200),
                           width: 60,
                           height: 60,
                           decoration: BoxDecoration(
-                            color: _isForwardButtonEnabled
+                            color: isForwardButtonEnabled
                                 ? const Color(0xFF8B5CF6)
                                 : Colors.grey[300],
                             borderRadius: BorderRadius.circular(30),
-                            boxShadow: _isForwardButtonEnabled
+                            boxShadow: isForwardButtonEnabled
                                 ? [
                                     BoxShadow(
                                       color: const Color(0xFF8B5CF6)
@@ -10270,7 +10422,7 @@ class _MediaPickerState extends ConsumerState<MediaPickerScreen> {
                           ),
                           child: Icon(
                             Icons.arrow_forward_rounded,
-                            color: _isForwardButtonEnabled
+                            color: isForwardButtonEnabled
                                 ? Colors.white
                                 : Colors.grey[500],
                             size: 28,
@@ -10281,7 +10433,10 @@ class _MediaPickerState extends ConsumerState<MediaPickerScreen> {
                   ),
                 ),
               // --- End Hide Bottom Bar ---
-              SizedBox(height: widget.isEditing ? 0 : screenSize.height * 0.02),
+              SizedBox(
+                  height: widget.isEditing
+                      ? 16
+                      : screenSize.height * 0.02), // Adjusted bottom padding
             ],
           ),
         ),
@@ -10289,11 +10444,21 @@ class _MediaPickerState extends ConsumerState<MediaPickerScreen> {
     );
   }
 
-  // --- Placeholder builder remains the same conceptually ---
   Widget _buildMediaPlaceholder(int index) {
-    final item = _editableMedia[index];
+    final itemModel =
+        _mediaSlots[index]; // Read from local state synced with provider
+    // Generate a unique key based on file path or index
+    final key = itemModel != null
+        ? ValueKey(itemModel.file.path)
+        : ValueKey('empty_$index');
+
+    bool isVideo = false;
+    if (itemModel != null) {
+      isVideo = itemModel.fileType.startsWith('video/');
+    }
+
     return GestureDetector(
-      key: item?.key ?? ValueKey('empty_$index'),
+      key: key, // Use the generated key
       onTap: () => _pickMedia(index),
       child: DottedBorder(
         dashPattern: const [6, 3],
@@ -10311,29 +10476,20 @@ class _MediaPickerState extends ConsumerState<MediaPickerScreen> {
           child: Stack(
             fit: StackFit.expand,
             children: [
-              if (item != null)
+              if (itemModel != null)
                 ClipRRect(
-                  borderRadius: BorderRadius.circular(16),
-                  child: item.isNewFile
-                      ? (item.type == MediaType.image
-                          ? Image.file(item.file!, fit: BoxFit.cover)
-                          : Container(
-                              color: Colors.grey[300],
-                              child: const Center(
-                                  child: Icon(Icons.videocam_outlined,
-                                      color: Colors.grey, size: 40))))
-                      : (item.type == MediaType.image
-                          ? Image.network(item.url!,
-                              fit: BoxFit.cover,
-                              errorBuilder: (_, __, ___) =>
-                                  const Icon(Icons.broken_image))
-                          : Container(
-                              color: Colors.grey[300],
-                              child: const Center(
-                                  child: Icon(Icons.videocam_outlined,
-                                      color: Colors.grey, size: 40)))),
-                ),
-              if (item == null)
+                    borderRadius: BorderRadius.circular(16),
+                    child: isVideo
+                        ? Container(
+                            color: Colors.grey[300],
+                            child: const Center(
+                                child: Icon(Icons.videocam_outlined,
+                                    color: Colors.grey, size: 40)))
+                        : Image.file(itemModel.file,
+                            fit: BoxFit.cover,
+                            errorBuilder: (_, __, ___) =>
+                                const Icon(Icons.broken_image))),
+              if (itemModel == null)
                 Center(
                   child: Column(
                     mainAxisAlignment: MainAxisAlignment.center,
@@ -10354,12 +10510,13 @@ class _MediaPickerState extends ConsumerState<MediaPickerScreen> {
                     ],
                   ),
                 ),
-              if (item?.type == MediaType.video)
+              if (isVideo)
                 const Center(
                   child: Icon(Icons.play_circle_fill_rounded,
                       color: Colors.white70, size: 48),
                 ),
-              if (widget.isEditing && item != null)
+              // Show remove button always if item exists (editing or onboarding)
+              if (itemModel != null)
                 Positioned(
                   top: 4,
                   right: 4,
@@ -10384,7 +10541,7 @@ class _MediaPickerState extends ConsumerState<MediaPickerScreen> {
   }
 }
 
-enum MediaType { image, video } // Keep enum
+enum MediaType { image, video } // Keep enum (though less used directly now)
 
 
 
@@ -10609,9 +10766,10 @@ class _NameInputScreenState extends ConsumerState<NameInputScreen> {
 File: views/profile_screens.dart
 ================================================
 // File: views/profile_screens.dart
-import 'dart:math'; // Needed for interleaving logic
-import 'dart:io'; // Needed for File type checking
+import 'dart:math';
+import 'dart:io';
 
+// Keep necessary imports...
 import 'package:dtx/models/media_upload_model.dart';
 import 'package:dtx/views/audioprompt.dart';
 import 'package:dtx/views/dating_intentions.dart';
@@ -10629,16 +10787,23 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:audioplayers/audioplayers.dart'; // Keep for local player
+import 'package:path/path.dart' as path; // Import path package
+import 'package:mime/mime.dart'; // Import mime package
 
 import 'package:dtx/models/user_model.dart';
 import 'package:dtx/providers/user_provider.dart';
 import 'package:dtx/utils/app_enums.dart';
 import 'package:dtx/views/settings_screen.dart';
-import 'package:dtx/providers/error_provider.dart'; // <<< ADDED
-import 'package:dtx/models/error_model.dart'; // <<< ADDED
-import 'package:dtx/providers/service_provider.dart'; // <<< ADDED for repository
-import 'package:dtx/providers/media_upload_provider.dart'; // <<< ADDED for upload
-import 'package:dtx/services/api_service.dart'; // <<< ADDED for ApiException
+import 'package:dtx/providers/error_provider.dart';
+import 'package:dtx/models/error_model.dart';
+import 'package:dtx/providers/service_provider.dart'; // Keep
+import 'package:dtx/providers/media_upload_provider.dart'; // Keep
+import 'package:dtx/services/api_service.dart'; // Keep
+// Import audio player provider for audio playback UI state (Global player, not local)
+// Keep import if global player UI is needed elsewhere, but playback uses local _audioPlayer
+import 'package:dtx/providers/audio_player_provider.dart';
+// Import MediaRepository provider
+import 'package:dtx/repositories/media_repository.dart'; // Import MediaRepository
 
 class ProfileScreen extends ConsumerStatefulWidget {
   const ProfileScreen({Key? key}) : super(key: key);
@@ -10648,24 +10813,23 @@ class ProfileScreen extends ConsumerStatefulWidget {
 }
 
 class _ProfileScreenState extends ConsumerState<ProfileScreen> {
-  // --- Retained State for Local Audio Player ---
+  // Retain state for Audio Player, Edit Mode, Saving, Original Data
   final AudioPlayer _audioPlayer = AudioPlayer();
   bool _isPlaying = false;
   String? _currentAudioUrl;
-  // --- End Retained State ---
-
-  // --- NEW State for Edit Mode ---
   bool _isEditing = false;
   bool _isSaving = false;
   UserModel? _originalProfileData; // To store data before editing starts
-  // --- END NEW State ---
 
   @override
   void initState() {
     super.initState();
-    // Fetching initiated in MainNavigationScreen initState now
+    // Fetch profile if needed (e.g., if user lands directly here after login)
+    // Moved fetching logic primarily to MainNavigationScreen
+    _setupLocalAudioPlayerListeners();
+  }
 
-    // --- Retained Audio Player Listeners ---
+  void _setupLocalAudioPlayerListeners() {
     _audioPlayer.onPlayerStateChanged.listen((state) {
       if (mounted) {
         setState(() {
@@ -10684,7 +10848,6 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
         });
       }
     });
-    // --- End Retained Listeners ---
   }
 
   @override
@@ -10694,15 +10857,15 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
           _audioPlayer.state == PlayerState.paused) {
         _audioPlayer.stop();
       }
+      _audioPlayer.release();
       _audioPlayer.dispose();
     } catch (e) {
-      print("Error stopping/disposing audio player: $e");
+      print("Error releasing/disposing local audio player: $e");
     }
-    // _pageController.dispose(); // Removed PageController
     super.dispose();
   }
 
-  // --- Retained Local Audio Control ---
+  // --- Local Audio Control --- (Keep as is)
   Future<void> _playOrPauseAudio(String audioUrl) async {
     if (!mounted) return;
     try {
@@ -10717,7 +10880,8 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
             currentState == PlayerState.paused) {
           await _audioPlayer.stop();
         }
-        await _audioPlayer.play(UrlSource(audioUrl));
+        await _audioPlayer.setSource(UrlSource(audioUrl));
+        await _audioPlayer.resume();
         if (mounted) setState(() => _currentAudioUrl = audioUrl);
       }
     } catch (e) {
@@ -10732,183 +10896,242 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
       }
     }
   }
-  // --- End Retained Local Audio Control ---
 
-  // --- NEW Edit Mode Handlers ---
+  // --- Edit Mode Handlers (_enterEditMode, _cancelEditMode) ---
   void _enterEditMode() {
-    // Store current state before starting edits
-    _originalProfileData = ref.read(userProvider);
+    _originalProfileData = ref.read(userProvider); // Store original state
+    ref.read(userProvider.notifier).setMediaChangedFlag(false); // Reset flag
     setState(() => _isEditing = true);
   }
 
   void _cancelEditMode() {
-    // Discard changes by restoring original data or refetching
     if (_originalProfileData != null) {
-      ref.read(userProvider.notifier).state = _originalProfileData!;
+      // Restore state ONLY if media hasn't changed during the edit process
+      // If media DID change, it's complex to revert provider state easily,
+      // so we might just refetch or accept the userProvider's current state.
+      // For simplicity, let's just refetch if media changed.
+      if (!ref.read(userProvider).mediaChangedDuringEdit) {
+        print("[ProfileScreen] Cancelling edit, restoring original data.");
+        ref.read(userProvider.notifier).state = _originalProfileData!;
+      } else {
+        print("[ProfileScreen] Cancelling edit, media changed, refetching.");
+        // Optionally clear the flag before refetching
+        ref.read(userProvider.notifier).setMediaChangedFlag(false);
+        ref.read(userProvider.notifier).fetchProfile();
+      }
     } else {
-      // Fallback: Refetch if original data wasn't stored
-      ref.read(userProvider.notifier).fetchProfile();
+      print("[ProfileScreen] Cancelling edit, no original data, refetching.");
+      ref
+          .read(userProvider.notifier)
+          .fetchProfile(); // Refetch if original is missing
     }
-    // Reset media changed flag
-    ref.read(userProvider.notifier).setMediaChangedFlag(false);
+    ref.read(errorProvider.notifier).clearError(); // Clear any edit errors
     setState(() => _isEditing = false);
   }
 
+  // --- *** UPDATED Save Handler *** ---
   Future<void> _handleSave() async {
-    print("[ProfileScreen] Starting Save Process...");
-    ref.read(errorProvider.notifier).clearError(); // Clear previous errors
+    print("[ProfileScreen _handleSave] Starting Save Process...");
+    final errorNotifier = ref.read(errorProvider.notifier)..clearError();
     if (!mounted) return;
-    setState(() => _isSaving = true);
+    setState(() => _isSaving = true); // Show loading indicator
 
     final userState = ref.read(userProvider);
     final userNotifier = ref.read(userProvider.notifier);
-    List<String> finalMediaUrls =
-        List<String>.from(userState.mediaUrls ?? []); // Start with current URLs
+    final mediaRepo = ref.read(mediaRepositoryProvider);
+    final userRepo = ref.read(userRepositoryProvider);
+
+    // Use original data for comparison if available, else current state
+    final initialMediaUrls =
+        _originalProfileData?.mediaUrls ?? userState.mediaUrls ?? [];
+    final currentMediaIdentifiers =
+        List<String>.from(userState.mediaUrls ?? []); // List from userProvider
+
+    List<String> finalMediaUrls = []; // To store the final list of S3 URLs
+    List<Map<String, String>> filesToUploadDetails = [];
+    List<MediaUploadModel> fileModelsToUpload = []; // Keep models for S3 upload
 
     try {
-      // --- Media Upload Logic (if changed) ---
-      if (userState.mediaChangedDuringEdit) {
-        print("[ProfileScreen] Media changed, initiating upload...");
-        final mediaUploadNotifier = ref.read(mediaUploadProvider.notifier);
-        final currentMediaItems = userState.mediaUrls ??
-            []; // List might contain URLs and local paths now
+      // --- Identify Files vs Existing URLs ---
+      print("[ProfileScreen _handleSave] Identifying files vs URLs...");
+      for (int i = 0; i < currentMediaIdentifiers.length; i++) {
+        final identifier = currentMediaIdentifiers[i];
+        if (identifier.isEmpty) continue; // Skip empty slots
 
-        // Identify new files to upload
-        final List<File> filesToUpload = [];
-        final List<int> fileIndices = []; // Track original indices of files
-        final List<String> existingUrls = []; // Track existing URLs in order
-
-        // Prepare the list for the upload provider based on the mixed list
-        List<File?> filesForProvider = List.filled(6, null);
-
-        for (int i = 0; i < currentMediaItems.length && i < 6; i++) {
-          final item = currentMediaItems[i];
-          File potentialFile = File(item); // Try treating it as a path
-          if (await potentialFile.exists()) {
-            // Check if it's a local file path
-            filesToUpload.add(potentialFile);
-            fileIndices.add(i);
-            filesForProvider[i] =
-                potentialFile; // Place file at correct index for provider
-            print("   - Found new file at index $i: ${potentialFile.path}");
-          } else if (item.startsWith('http')) {
-            existingUrls.add(item); // Keep existing URLs
-            print("   - Found existing URL at index $i: $item");
-            // No file to upload for this slot
-          } else {
-            print(
-                "   - Warning: Item at index $i is neither a valid file path nor a URL: $item");
+        bool isLocalFile = false;
+        File? potentialFile;
+        try {
+          // Check if it's an absolute path (common on mobile) or relative
+          Uri? uri = Uri.tryParse(identifier);
+          if (uri != null &&
+              !uri.isAbsolute &&
+              !identifier.startsWith('http')) {
+            // If it's not an absolute URI and not HTTP(S), treat as potential file path
+            isLocalFile = true;
+          } else if (identifier.startsWith('/')) {
+            // Catch explicit absolute paths like /data/user/...
+            isLocalFile = true;
           }
-        }
-        // Ensure minimum 3 media items rule is still met before upload/save
-        if ((existingUrls.length + filesToUpload.length) < 3) {
-          throw ApiException("Minimum of 3 media items required.");
+
+          if (isLocalFile) {
+            potentialFile = File(identifier);
+            // Check existence *only* if it looks like a file path
+            isLocalFile = await potentialFile.exists();
+          }
+        } catch (e) {
+          print("Error checking file path '$identifier': $e");
+          isLocalFile = false;
         }
 
-        if (filesToUpload.isNotEmpty) {
-          // Set files in the provider in their correct order
-          for (int i = 0; i < filesForProvider.length; i++) {
-            if (filesForProvider[i] != null) {
-              mediaUploadNotifier.setMediaFile(i, filesForProvider[i]!);
-            } else {
-              // If you have a clear method in provider, call it here for slots that are now empty
-              // mediaUploadNotifier.removeMedia(i);
-            }
-          }
-
-          print("[ProfileScreen] Calling uploadAllMedia...");
-          final uploadSuccess = await mediaUploadNotifier.uploadAllMedia();
-
-          if (!uploadSuccess) {
-            print("[ProfileScreen] Media upload failed.");
-            throw ApiException("Failed to upload media. Please try again.");
-          }
-          print("[ProfileScreen] Media upload successful.");
-
-          // --- Reconstruct the final URL list ---
-          final uploadedItemsState =
-              ref.read(mediaUploadProvider); // Get the state AFTER upload
-          final Map<String, String> uploadedFileNameToUrl = {};
-          for (final uploadedItem in uploadedItemsState) {
-            if (uploadedItem != null &&
-                uploadedItem.status == UploadStatus.success &&
-                uploadedItem.presignedUrl != null) {
-              // Assuming presignedUrl IS the final URL after upload (adjust if not)
-              uploadedFileNameToUrl[uploadedItem.fileName] =
-                  uploadedItem.presignedUrl!;
-            }
-          }
-
-          // Build the final list based on the original order
-          final List<String> reconstructedUrls = [];
-          for (final itemPathOrUrl in currentMediaItems) {
-            File potentialFile = File(itemPathOrUrl);
-            if (await potentialFile.exists()) {
-              final fileName = potentialFile.path.split('/').last;
-              if (uploadedFileNameToUrl.containsKey(fileName)) {
-                reconstructedUrls.add(uploadedFileNameToUrl[fileName]!);
-              } else {
-                print("Warning: Uploaded file URL not found for $fileName");
-              }
-            } else if (itemPathOrUrl.startsWith('http')) {
-              reconstructedUrls.add(itemPathOrUrl);
-            }
-          }
-          finalMediaUrls = reconstructedUrls;
-          print(
-              "[ProfileScreen] Final reconstructed Media URLs: $finalMediaUrls");
+        if (isLocalFile && potentialFile != null) {
+          print("  - Found Local File at index $i: ${potentialFile.path}");
+          final fileName = path.basename(potentialFile.path);
+          final mimeType =
+              lookupMimeType(potentialFile.path) ?? 'application/octet-stream';
+          filesToUploadDetails.add({'filename': fileName, 'type': mimeType});
+          // Store the model WITH the file object for later upload
+          fileModelsToUpload.add(MediaUploadModel(
+            file: potentialFile,
+            fileName: fileName,
+            fileType: mimeType,
+            // presignedUrl will be added later
+          ));
+        } else if (identifier.startsWith('http')) {
+          print("  - Found Existing URL at index $i: $identifier");
+          // Add existing URL directly to the final list for now
+          // We'll reconstruct the order later
         } else {
           print(
-              "[ProfileScreen] Media marked changed, but no new files found to upload.");
-          // Use the potentially reordered/deleted list directly
-          finalMediaUrls = currentMediaItems
-              .where((item) => item.startsWith('http'))
-              .toList();
-          if (finalMediaUrls.length < 3) {
-            throw ApiException(
-                "Minimum of 3 media items required after edits.");
-          }
-        }
-      } else {
-        print("[ProfileScreen] Media not changed, using existing URLs.");
-        finalMediaUrls = userState.mediaUrls ?? [];
-        if (finalMediaUrls.length < 3) {
-          throw ApiException("Minimum of 3 media items required.");
+              "  - Warning: Skipping invalid identifier at index $i: $identifier");
         }
       }
-      // --- End Media Upload Logic ---
+      print(
+          "[ProfileScreen _handleSave] Files to upload: ${fileModelsToUpload.length}");
+
+      // --- Upload Files if Needed ---
+      Map<String, String> uploadedUrlMap =
+          {}; // Map original path -> new S3 URL
+      if (fileModelsToUpload.isNotEmpty) {
+        print(
+            "[ProfileScreen _handleSave] Getting presigned URLs for ${fileModelsToUpload.length} files...");
+        final presignedUrlsResponse =
+            await mediaRepo.getEditPresignedUrls(filesToUploadDetails);
+
+        if (presignedUrlsResponse.length != fileModelsToUpload.length) {
+          throw ApiException("Mismatch in number of presigned URLs received.");
+        }
+
+        // Prepare models with URLs for upload
+        List<Future<bool>> uploadFutures = [];
+        for (int i = 0; i < fileModelsToUpload.length; i++) {
+          final fileModel = fileModelsToUpload[i];
+          final urlData = presignedUrlsResponse.firstWhere(
+              (u) =>
+                  u['filename'] == fileModel.fileName &&
+                  u['type'] == fileModel.fileType,
+              orElse: () => throw ApiException(
+                  "Could not find presigned URL for ${fileModel.fileName}"));
+          final presignedUrl = urlData['url'] as String;
+
+          final modelWithUrl =
+              fileModel.copyWith(presignedUrl: () => presignedUrl);
+          fileModelsToUpload[i] = modelWithUrl; // Update the model in the list
+
+          print(
+              "[ProfileScreen _handleSave] Uploading ${fileModel.fileName}...");
+          // Use retryUpload for robustness
+          uploadFutures.add(mediaRepo.retryUpload(modelWithUrl).then((success) {
+            if (success) {
+              // Store mapping from original file path to S3 URL
+              uploadedUrlMap[fileModel.file.path] = presignedUrl
+                  .split('?')
+                  .first; // Store URL without query params
+            }
+            return success;
+          }));
+        }
+
+        final uploadResults = await Future.wait(uploadFutures);
+        if (uploadResults.any((success) => !success)) {
+          // Find which one failed for better logging (optional)
+          for (int i = 0; i < uploadResults.length; ++i) {
+            if (!uploadResults[i]) {
+              print("❌ Upload failed for: ${fileModelsToUpload[i].fileName}");
+            }
+          }
+          throw ApiException("One or more media uploads failed.");
+        }
+        print("[ProfileScreen _handleSave] All media uploads successful.");
+      } else {
+        print("[ProfileScreen _handleSave] No new files to upload.");
+      }
+
+      // --- Reconstruct Final URL List ---
+      print("[ProfileScreen _handleSave] Reconstructing final URL list...");
+      for (final identifier in currentMediaIdentifiers) {
+        if (identifier.isEmpty) continue;
+
+        if (uploadedUrlMap.containsKey(identifier)) {
+          // It was a local file that was successfully uploaded
+          final s3Url = uploadedUrlMap[identifier];
+          if (s3Url != null) {
+            finalMediaUrls.add(s3Url);
+            print("  - Adding New URL: $s3Url (from $identifier)");
+          } else {
+            print(
+                "  - Warning: Uploaded file path $identifier not found in URL map.");
+          }
+        } else if (identifier.startsWith('http')) {
+          // It was an existing URL
+          finalMediaUrls.add(identifier);
+          print("  - Adding Existing URL: $identifier");
+        }
+        // Skip invalid identifiers already warned about
+      }
+      print("[ProfileScreen _handleSave] Final URLs: $finalMediaUrls");
+
+      // --- Validate Final Media Count ---
+      if (finalMediaUrls.length < 3) {
+        throw ApiException(
+            "Profile must have at least 3 media items after saving.");
+      }
 
       // --- Prepare PATCH Payload ---
-      // Get the latest state which includes edits from other screens
-      final latestUserState = ref.read(userProvider);
+      final latestUserState = ref.read(userProvider); // Read latest state again
       Map<String, dynamic> payload = latestUserState.toJsonForEdit();
-      // IMPORTANT: Overwrite media_urls in payload with the potentially updated list
-      payload['media_urls'] = finalMediaUrls;
+      payload['media_urls'] =
+          finalMediaUrls; // Use the final reconstructed list
 
-      // Remove non-editable fields explicitly just in case they slipped in
-      payload.remove('name');
-      payload.remove('last_name');
-      payload.remove('date_of_birth');
-      payload.remove('latitude');
-      payload.remove('longitude');
-      payload.remove('gender');
-      payload.remove('id'); // Don't send ID in payload
+      // Remove non-editable fields just in case
+      payload.removeWhere((key, value) => [
+            'name',
+            'last_name',
+            'date_of_birth',
+            'latitude',
+            'longitude',
+            'gender',
+            'id',
+            'email',
+            'phone_number',
+            'created_at',
+            'verification_status',
+            'role',
+            'verification_pic'
+          ].contains(key));
 
-      print("[ProfileScreen] Preparing PATCH payload: $payload");
+      print("[ProfileScreen _handleSave] Preparing PATCH payload: $payload");
 
       // --- Call API ---
-      final userRepository = ref.read(userRepositoryProvider);
-      final bool success = await userRepository.editProfile(payload);
+      print("[ProfileScreen _handleSave] Calling userRepo.editProfile...");
+      final bool success = await userRepo.editProfile(payload);
 
       if (success) {
-        print("[ProfileScreen] Profile edit successful.");
-        // Update user provider with the final media URLs and reset flags
+        print("[ProfileScreen _handleSave] Profile edit successful.");
+        // Update user provider with final URLs and reset flags
         userNotifier.updateMediaUrls(
-            finalMediaUrls); // Updates URLs and resets mediaChanged flag
-        userNotifier.setMediaChangedFlag(false); // Explicitly reset flag
-
-        // Optionally refetch profile for absolute certainty (might be redundant)
-        // await userNotifier.fetchProfile();
+            finalMediaUrls); // updateMediaUrls now resets the flag internally
+        _originalProfileData = ref
+            .read(userProvider); // Update original data after successful save
 
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
@@ -10920,47 +11143,41 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
         }
       } else {
         print(
-            "[ProfileScreen] Profile edit failed (API returned false or non-success).");
-        // Error should ideally be thrown by the repository/service layer
+            "[ProfileScreen _handleSave] Profile edit failed (API returned false).");
         if (mounted && ref.read(errorProvider) == null) {
-          // Check if error already exists
-          ref
-              .read(errorProvider.notifier)
+          errorNotifier
               .setError(AppError.server("Failed to save profile changes."));
         }
       }
     } on ApiException catch (e) {
-      print("[ProfileScreen] Save failed: API Exception - ${e.message}");
-      if (mounted)
-        ref.read(errorProvider.notifier).setError(AppError.server(e.message));
+      print(
+          "[ProfileScreen _handleSave] Save failed: API Exception - ${e.message}");
+      if (mounted) errorNotifier.setError(AppError.server(e.message));
     } catch (e, stack) {
-      print("[ProfileScreen] Save failed: Unexpected error - $e");
-      print(stack); // Print stack trace for debugging
-      if (mounted)
-        ref
-            .read(errorProvider.notifier)
+      print("[ProfileScreen _handleSave] Save failed: Unexpected error - $e");
+      print(stack);
+      if (mounted) {
+        errorNotifier
             .setError(AppError.generic("An unexpected error occurred."));
+      }
     } finally {
-      if (mounted) setState(() => _isSaving = false);
+      if (mounted) setState(() => _isSaving = false); // Hide loading indicator
     }
   }
+  // --- *** END UPDATED Save Handler *** ---
 
-  // --- END NEW Edit Mode Handlers ---
-
-  // --- Helper Methods (some adapted from HomeProfileCard) ---
-
+  // --- Helper Methods --- (Keep capitalizeFirstLetter, _buildTopIconButton, _buildEmptySection, _buildDetailChip, _buildSmallEditButton as is)
   String capitalizeFirstLetter(String text) {
     if (text.isEmpty) return text;
     return text[0].toUpperCase() + text.substring(1);
   }
 
-  // --- UPDATED Top Icon Button Builder ---
   Widget _buildTopIconButton({
     required IconData icon,
     required String tooltip,
     required VoidCallback onPressed,
-    bool isDisabled = false, // Added disabled state
-    Color? color, // Optional color override
+    bool isDisabled = false,
+    Color? color,
   }) {
     final iconColor =
         isDisabled ? Colors.grey[400] : (color ?? const Color(0xFF8B5CF6));
@@ -10968,42 +11185,37 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
       icon: Container(
         padding: const EdgeInsets.all(8),
         decoration: BoxDecoration(
-          color: isDisabled
-              ? Colors.grey[200]
-              : Colors.grey[100], // Different bg when disabled
+          color: isDisabled ? Colors.grey[200] : Colors.grey[100],
           borderRadius: BorderRadius.circular(12),
         ),
         child: Icon(icon, color: iconColor, size: 20),
       ),
-      tooltip: isDisabled ? null : tooltip, // No tooltip if disabled
+      tooltip: isDisabled ? null : tooltip,
       onPressed: isDisabled ? null : onPressed,
     );
   }
-  // --- END UPDATED ---
 
   Widget _buildEmptySection(
       String title, String message, IconData icon, VoidCallback? onEditTap) {
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.symmetric(vertical: 30, horizontal: 20),
-      margin: const EdgeInsets.symmetric(vertical: 16),
+      margin: const EdgeInsets.symmetric(
+          vertical: 16), // Keep margin for consistency
       decoration: BoxDecoration(
           color: Colors.grey[50],
           borderRadius: BorderRadius.circular(16),
           border: Border.all(color: Colors.grey[200]!)),
-      child: Stack(// Use stack for edit button
-          children: [
+      child: Stack(children: [
         Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Padding(
-              padding: const EdgeInsets.only(bottom: 16.0),
-              child: Text(title,
-                  style: GoogleFonts.poppins(
-                      fontSize: 18,
-                      fontWeight: FontWeight.w600,
-                      color: Colors.grey[800])),
-            ),
+            Text(title,
+                style: GoogleFonts.poppins(
+                    fontSize: 18,
+                    fontWeight: FontWeight.w600,
+                    color: Colors.grey[800])),
+            const SizedBox(height: 16), // Add space below title
             Icon(icon, size: 40, color: Colors.grey[400]),
             const SizedBox(height: 12),
             Text(message,
@@ -11012,12 +11224,12 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                     GoogleFonts.poppins(fontSize: 14, color: Colors.grey[600])),
           ],
         ),
-        // Edit button overlay (visible only in edit mode)
         if (_isEditing && onEditTap != null)
           Positioned(
             top: 8,
             right: 8,
-            child: _buildSmallEditButton(onPressed: onEditTap),
+            child: _buildSmallEditButton(
+                onPressed: onEditTap, tooltip: 'Add $title'),
           ),
       ]),
     );
@@ -11037,385 +11249,432 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(icon,
-              size: subtle ? 16 : 18,
-              color: subtle ? Colors.grey.shade600 : const Color(0xFF8B5CF6)),
+          Icon(
+            icon,
+            size: subtle ? 16 : 18,
+            color: subtle ? Colors.grey.shade600 : const Color(0xFF8B5CF6),
+          ),
           const SizedBox(width: 6),
           Flexible(
-            child: Text(label,
-                style: GoogleFonts.poppins(
-                    fontSize: subtle ? 13 : 14,
-                    fontWeight: FontWeight.w500,
-                    color: subtle ? Colors.grey.shade700 : Colors.grey[800]),
-                overflow: TextOverflow.ellipsis),
+            // Allow text to wrap if needed
+            child: Text(
+              label,
+              style: GoogleFonts.poppins(
+                fontSize: subtle ? 13 : 14,
+                fontWeight: FontWeight.w500,
+                color: subtle ? Colors.grey.shade700 : Colors.grey[800],
+              ),
+              overflow: TextOverflow.ellipsis, // Prevent long text overflow
+              maxLines: 2,
+            ),
           ),
         ],
       ),
     );
   }
 
-  // --- NEW: Small Edit Button ---
   Widget _buildSmallEditButton(
       {required VoidCallback onPressed,
       IconData icon = Icons.edit_outlined,
       String? tooltip = 'Edit'}) {
     return Material(
-      // Provides ink splash effect
       color: Colors.white.withOpacity(0.8),
       shape: const CircleBorder(),
       child: InkWell(
         customBorder: const CircleBorder(),
         onTap: onPressed,
         child: Container(
-          padding: const EdgeInsets.all(6), // Smaller padding
+          padding: const EdgeInsets.all(6),
           decoration: BoxDecoration(
             shape: BoxShape.circle,
             boxShadow: [
               BoxShadow(color: Colors.black.withOpacity(0.1), blurRadius: 3)
             ],
           ),
-          child: Icon(icon,
-              color: const Color(0xFF8B5CF6), size: 18), // Smaller icon
+          child: Icon(icon, color: const Color(0xFF8B5CF6), size: 18),
         ),
       ),
     );
   }
-  // --- END NEW ---
+  // --- END Helper Methods ---
 
   @override
   Widget build(BuildContext context) {
     final user = ref.watch(userProvider);
     final isLoadingProfile = ref.watch(userLoadingProvider);
-    final apiError =
-        ref.watch(errorProvider); // Watch for API errors during save
+    // Watch for API errors specifically during save
+    final apiError = ref.watch(errorProvider);
 
-    // --- Loading State ---
+    // --- Loading State --- (Keep as is)
     if (isLoadingProfile && user.name == null && !_isEditing) {
-      // Show loading only on initial load
-      // ... (loading scaffold remains the same) ...
       return Scaffold(
         backgroundColor: Colors.white,
         appBar: AppBar(
-          title: Text("Profile",
-              style: GoogleFonts.poppins(fontWeight: FontWeight.w600)),
-          backgroundColor: Colors.white,
-          foregroundColor: Colors.black,
-          elevation: 0,
-          automaticallyImplyLeading: false,
-          actions: [
-            _buildTopIconButton(
-                icon: Icons.edit_outlined,
-                tooltip: 'Edit Profile',
-                onPressed: () {},
-                isDisabled: true),
-            const SizedBox(width: 8),
-            _buildTopIconButton(
-                icon: Icons.settings_outlined,
-                tooltip: 'Settings',
-                onPressed: () {},
-                isDisabled: true),
-            const SizedBox(width: 8),
-          ],
-        ),
+            title: Text("Profile",
+                style: GoogleFonts.poppins(fontWeight: FontWeight.w600)),
+            backgroundColor: Colors.white,
+            foregroundColor: Colors.black,
+            elevation: 0,
+            automaticallyImplyLeading: false,
+            actions: [
+              _buildTopIconButton(
+                  icon: Icons.edit_outlined,
+                  tooltip: 'Edit Profile',
+                  onPressed: () {},
+                  isDisabled: true),
+              const SizedBox(width: 8),
+              _buildTopIconButton(
+                  icon: Icons.settings_outlined,
+                  tooltip: 'Settings',
+                  onPressed: () {},
+                  isDisabled: true),
+              const SizedBox(width: 8),
+            ]),
         body: const Center(
             child: CircularProgressIndicator(color: Color(0xFF8B5CF6))),
       );
     }
 
-    // --- Error State (Show general API errors if not saving) ---
+    // --- Error State (Display non-saving errors) ---
+    // Only show general API errors if NOT currently in the saving process
     if (apiError != null && !_isSaving) {
       return Scaffold(
         backgroundColor: Colors.white,
         appBar: AppBar(
-          /* ... AppBar ... */
-          title: Text("Profile",
+          title: Text("Profile Error",
               style: GoogleFonts.poppins(fontWeight: FontWeight.w600)),
           backgroundColor: Colors.white,
           foregroundColor: Colors.black,
           elevation: 0,
           automaticallyImplyLeading: false,
           actions: [
-            /* ... Actions (can be disabled) ... */
             _buildTopIconButton(
                 icon: Icons.edit_outlined,
                 tooltip: 'Edit Profile',
-                onPressed: _enterEditMode), // Still allow entering edit maybe?
+                onPressed: () {},
+                isDisabled: true),
             const SizedBox(width: 8),
             _buildTopIconButton(
                 icon: Icons.settings_outlined,
                 tooltip: 'Settings',
-                onPressed: () => Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                        builder: (context) => const SettingsScreen()))),
+                onPressed: () {},
+                isDisabled: true),
             const SizedBox(width: 8),
           ],
         ),
         body: Center(
-            child: Padding(
-          padding: const EdgeInsets.all(20.0),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              const Icon(Icons.error_outline, color: Colors.red, size: 50),
-              const SizedBox(height: 15),
-              Text(apiError.message,
-                  textAlign: TextAlign.center, style: GoogleFonts.poppins()),
-              const SizedBox(height: 20),
-              ElevatedButton(
-                onPressed: () {
-                  ref.read(errorProvider.notifier).clearError();
-                  ref.read(userProvider.notifier).fetchProfile(); // Retry fetch
-                },
-                child: const Text("Retry"),
-              )
-            ],
+          child: Padding(
+            padding: const EdgeInsets.all(20.0),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                const Icon(Icons.error_outline, color: Colors.red, size: 50),
+                const SizedBox(height: 15),
+                Text("Could not load profile",
+                    style: GoogleFonts.poppins(
+                        fontSize: 18, fontWeight: FontWeight.w600),
+                    textAlign: TextAlign.center),
+                const SizedBox(height: 8),
+                Text(apiError.message,
+                    textAlign: TextAlign.center,
+                    style: GoogleFonts.poppins(color: Colors.grey[600])),
+                const SizedBox(height: 20),
+                ElevatedButton(
+                  onPressed: () {
+                    ref.read(errorProvider.notifier).clearError();
+                    ref.read(userProvider.notifier).fetchProfile();
+                  },
+                  style: ElevatedButton.styleFrom(
+                      backgroundColor: const Color(0xFF8B5CF6),
+                      foregroundColor: Colors.white),
+                  child: const Text("Retry"),
+                )
+              ],
+            ),
           ),
-        )),
+        ),
       );
     }
 
-    // --- Prepare Content Blocks (Logic from HomeProfileCard) ---
+    // --- Prepare Content Blocks (Logic remains the same) ---
     final List<dynamic> contentBlocks = [];
-    final mediaUrls =
-        user.mediaUrls ?? []; // Use potentially modified list from provider
+    final currentMedia = user.mediaUrls ?? [];
     final prompts = user.prompts;
 
-    // 1. Header (Not editable, always show)
     contentBlocks.add("header_section");
 
-    // 2. Media Section (Uses _buildMediaGallery wrapper now)
-    contentBlocks.add("media_gallery");
+    if (currentMedia.isNotEmpty) {
+      // Add the first media item or an empty placeholder if editing
+      contentBlocks
+          .add({"type": "media", "value": currentMedia[0], "index": 0});
+    } else if (_isEditing) {
+      contentBlocks.add("empty_media_section");
+    }
 
-    // 3. First Prompt (if available, else empty section)
     if (prompts.isNotEmpty) {
       contentBlocks.add(prompts[0]);
-    } else {
+    } else if (_isEditing) {
       contentBlocks.add("empty_prompt_section");
     }
 
-    // 4. Vitals Section
-    contentBlocks.add("vitals_section");
+    contentBlocks.add("vitals_section"); // Always add vitals section wrapper
 
-    // 5. Interleave remaining media and prompts (Starting from index 1)
-    int mediaBlockIndex = 1; // Index within the displayed media blocks
+    int mediaIndex = 1;
     int promptIndex = 1;
+    // Use max of lengths OR 6/3 if editing to show empty slots potentially
+    int maxMediaSlots = _isEditing ? 6 : currentMedia.length;
+    int maxPromptSlots = _isEditing ? 3 : prompts.length;
+    int maxRemaining = max(maxMediaSlots, maxPromptSlots);
 
-    // Find the actual number of remaining media items to display
-    int remainingMediaCount =
-        mediaUrls.length - 1; // Exclude the first one (handled in gallery)
-
-    int maxRemaining = max(remainingMediaCount, prompts.length - 1);
-
-    for (int i = 0; i < maxRemaining; i++) {
-      // Add remaining prompts first
-      if (promptIndex < prompts.length) {
-        contentBlocks.add(prompts[promptIndex]);
+    for (int i = 1; i < maxRemaining; i++) {
+      // Add Media (existing or empty slot if editing)
+      if (mediaIndex < maxMediaSlots) {
+        if (mediaIndex < currentMedia.length) {
+          contentBlocks.add({
+            "type": "media",
+            "value": currentMedia[mediaIndex],
+            "index": mediaIndex
+          });
+        } else if (_isEditing) {
+          // Add placeholder for potential add in media picker
+          contentBlocks.add({"type": "empty_media_slot", "index": mediaIndex});
+        }
+        mediaIndex++;
+      }
+      // Add Prompt (existing or empty slot if editing)
+      if (promptIndex < maxPromptSlots) {
+        if (promptIndex < prompts.length) {
+          contentBlocks.add(prompts[promptIndex]);
+        } else if (_isEditing) {
+          // Add placeholder for potential add in prompt editor
+          contentBlocks
+              .add({"type": "empty_prompt_slot", "index": promptIndex});
+        }
         promptIndex++;
       }
-      // Add remaining media after prompts (if any) - Now handled by Media Gallery
-      // if (mediaBlockIndex < remainingMediaCount) {
-      //    // Calculate the correct URL index (since first is handled by gallery)
-      //    if (mediaBlockIndex < mediaUrls.length) { // Double check bounds
-      //       contentBlocks.add(mediaUrls[mediaBlockIndex]);
-      //    }
-      //    mediaBlockIndex++;
-      // }
-    }
-    // Add remaining prompts if media ran out first
-    while (promptIndex < prompts.length) {
-      contentBlocks.add(prompts[promptIndex]);
-      promptIndex++;
     }
 
-    // 6. Add Audio Prompt (if available, else empty section)
+    // Add Audio Prompt (existing or empty slot if editing)
     if (user.audioPrompt != null) {
       contentBlocks.add(user.audioPrompt!);
-    } else {
+    } else if (_isEditing) {
       contentBlocks.add("empty_audio_section");
     }
     // --- End Content Block Preparation ---
 
-    // --- Build UI using SliverAppBar and ListView ---
+    // --- Build UI ---
     return Scaffold(
       backgroundColor: Colors.white,
-      body: RefreshIndicator(
-        color: const Color(0xFF8B5CF6),
-        onRefresh: () async {
-          if (!_isEditing) {
-            // Allow refresh only when not editing
-            await ref.read(userProvider.notifier).fetchProfile();
-          }
-        },
-        child: CustomScrollView(
-          physics: const BouncingScrollPhysics(
-              parent: AlwaysScrollableScrollPhysics()),
-          slivers: [
-            SliverAppBar(
-              pinned: true,
-              floating: false,
-              elevation: 1,
-              backgroundColor: Colors.white,
-              foregroundColor: Colors.black,
-              automaticallyImplyLeading: false,
-              title: Text(_isEditing ? "Edit Profile" : "Profile",
-                  style: GoogleFonts.poppins(fontWeight: FontWeight.w600)),
-              actions: _isEditing
-                  ? [
-                      // Actions in Edit Mode
-                      if (_isSaving) // Show loading indicator instead of buttons
-                        const Padding(
-                          padding: EdgeInsets.all(16.0),
-                          child: SizedBox(
-                              width: 20,
-                              height: 20,
-                              child: CircularProgressIndicator(strokeWidth: 2)),
-                        )
-                      else ...[
+      body: Stack(// Use Stack for loading overlay
+          children: [
+        RefreshIndicator(
+          color: const Color(0xFF8B5CF6),
+          onRefresh: () async {
+            if (!_isEditing) {
+              ref
+                  .read(errorProvider.notifier)
+                  .clearError(); // Clear error on refresh
+              await ref.read(userProvider.notifier).fetchProfile();
+            }
+          },
+          child: CustomScrollView(
+            physics: const BouncingScrollPhysics(
+                parent: AlwaysScrollableScrollPhysics()),
+            slivers: [
+              SliverAppBar(
+                pinned: true,
+                floating: false,
+                elevation: 1,
+                backgroundColor: Colors.white,
+                foregroundColor: Colors.black,
+                automaticallyImplyLeading: false,
+                title: Text(_isEditing ? "Edit Profile" : "Profile",
+                    style: GoogleFonts.poppins(fontWeight: FontWeight.w600)),
+                actions: _isEditing
+                    ? [
+                        /* Save/Cancel Actions */
                         TextButton(
-                          onPressed: _cancelEditMode,
-                          child: Text("Cancel",
-                              style: GoogleFonts.poppins(color: Colors.grey)),
-                        ),
+                            onPressed: _isSaving
+                                ? null
+                                : _cancelEditMode, // Disable during save
+                            child: Text("Cancel",
+                                style: GoogleFonts.poppins(
+                                    color: _isSaving
+                                        ? Colors.grey[400]
+                                        : Colors.grey))),
                         TextButton(
-                          onPressed: _handleSave,
-                          child: Text("Save",
-                              style: GoogleFonts.poppins(
-                                  color: const Color(0xFF8B5CF6),
-                                  fontWeight: FontWeight.bold)),
-                        ),
+                            onPressed: _isSaving
+                                ? null
+                                : _handleSave, // Disable during save
+                            child: Text("Save",
+                                style: GoogleFonts.poppins(
+                                    color: _isSaving
+                                        ? Colors.grey[400]
+                                        : const Color(0xFF8B5CF6),
+                                    fontWeight: FontWeight.bold))),
+                        const SizedBox(width: 8),
+                      ]
+                    : [
+                        /* View Mode Actions */
+                        _buildTopIconButton(
+                            icon: Icons.edit_outlined,
+                            tooltip: 'Edit Profile',
+                            onPressed: _enterEditMode),
+                        const SizedBox(width: 8),
+                        _buildTopIconButton(
+                            icon: Icons.settings_outlined,
+                            tooltip: 'Settings',
+                            onPressed: () => Navigator.push(
+                                context,
+                                MaterialPageRoute(
+                                    builder: (context) =>
+                                        const SettingsScreen()))),
                         const SizedBox(width: 8),
                       ],
-                    ]
-                  : [
-                      // Actions in View Mode
-                      _buildTopIconButton(
-                          icon: Icons.edit_outlined,
-                          tooltip: 'Edit Profile',
-                          onPressed: _enterEditMode),
-                      const SizedBox(width: 8),
-                      _buildTopIconButton(
-                          icon: Icons.settings_outlined,
-                          tooltip: 'Settings',
-                          onPressed: () => Navigator.push(
-                              context,
-                              MaterialPageRoute(
-                                  builder: (context) =>
-                                      const SettingsScreen()))),
-                      const SizedBox(width: 8),
-                    ],
-            ),
+              ),
 
-            // Use SliverList with ListView.builder equivalent logic
-            SliverPadding(
-              padding: const EdgeInsets.only(top: 8.0),
-              sliver: SliverList(
-                delegate: SliverChildBuilderDelegate(
-                  (context, index) {
-                    final item = contentBlocks[index];
-                    final double bottomPadding = 24.0; // Consistent spacing
-                    final double horizontalPadding =
-                        16.0; // Consistent horizontal padding
+              // --- Main Content List ---
+              SliverPadding(
+                padding: const EdgeInsets.only(top: 8.0),
+                sliver: SliverList(
+                  delegate: SliverChildBuilderDelegate(
+                    (context, index) {
+                      final item = contentBlocks[index];
+                      final double bottomPadding = 24.0;
+                      final double horizontalPadding = 16.0;
+                      Widget contentWidget;
 
-                    Widget contentWidget;
+                      // Build content based on type
+                      if (item is String && item == "header_section") {
+                        contentWidget = _buildHeaderBlock(user);
+                      }
+                      // Handle Empty Sections (Placeholders shown during edit)
+                      else if (item is String &&
+                          item == "empty_media_section") {
+                        contentWidget = _buildEmptySection(
+                            "Photos & Videos",
+                            "Add photos and videos!",
+                            Icons.add_photo_alternate_outlined,
+                            () => Navigator.push(
+                                context,
+                                MaterialPageRoute(
+                                    builder: (context) =>
+                                        const MediaPickerScreen(
+                                            isEditing: true))));
+                      } else if (item is String &&
+                          item == "empty_prompt_section") {
+                        contentWidget = _buildEmptySection(
+                            "About Me",
+                            "Add prompt answers!",
+                            Icons.chat_bubble_outline,
+                            () => Navigator.push(
+                                context,
+                                MaterialPageRoute(
+                                    builder: (context) => ProfileAnswersScreen(
+                                        isEditing: true))));
+                      } else if (item is String &&
+                          item == "empty_audio_section") {
+                        contentWidget = _buildEmptySection(
+                            "Voice Prompt",
+                            "Record a voice prompt!",
+                            Icons.mic_none_rounded,
+                            () => Navigator.push(
+                                context,
+                                MaterialPageRoute(
+                                    builder: (context) =>
+                                        const VoicePromptScreen(
+                                            isEditing: true))));
+                      } else if (item is Map &&
+                          item["type"] == "empty_media_slot") {
+                        contentWidget = _buildEmptyMediaSlot(() =>
+                            Navigator.push(
+                                context,
+                                MaterialPageRoute(
+                                    builder: (context) =>
+                                        const MediaPickerScreen(
+                                            isEditing: true))));
+                      } else if (item is Map &&
+                          item["type"] == "empty_prompt_slot") {
+                        contentWidget = _buildEmptyPromptSlot(
+                            item["index"],
+                            () => Navigator.push(
+                                context,
+                                MaterialPageRoute(
+                                    builder: (context) => TextSelectPromptScreen(
+                                        isEditing:
+                                            true)))); // Pass index if needed later
+                      }
 
-                    // Build content based on type
-                    if (item is String && item == "header_section") {
-                      contentWidget = _buildHeaderBlock(user);
-                    } else if (item is String && item == "media_gallery") {
-                      contentWidget = _buildMediaGallery(
-                          context, ref, mediaUrls); // Use gallery builder
-                    }
-                    // Handle empty sections with edit callbacks
-                    else if (item is String && item == "empty_media_section") {
-                      contentWidget = _buildEmptySection(
-                          "Photos & Videos",
-                          "Add photos and videos to show off your personality!",
-                          Icons.add_photo_alternate_outlined,
-                          () => Navigator.push(
-                              context,
-                              MaterialPageRoute(
-                                  builder: (context) => const MediaPickerScreen(
-                                      isEditing: true))));
-                    } else if (item is String &&
-                        item == "empty_prompt_section") {
-                      contentWidget = _buildEmptySection(
-                          "About Me",
-                          "Add prompt answers to share more about yourself!",
-                          Icons.chat_bubble_outline,
-                          () => Navigator.push(
-                              context,
-                              MaterialPageRoute(
-                                  builder: (context) =>
-                                      ProfileAnswersScreen(isEditing: true))));
-                    } else if (item is String &&
-                        item == "empty_audio_section") {
-                      contentWidget = _buildEmptySection(
-                          "Voice Prompt",
-                          "Record a voice prompt to let matches hear your voice!",
-                          Icons.mic_none_rounded,
-                          () => Navigator.push(
-                              context,
-                              MaterialPageRoute(
-                                  builder: (context) => const VoicePromptScreen(
-                                      isEditing: true))));
-                    }
-                    // Handle individual items
-                    // else if (item is String && item.startsWith('http')) { // Media items are now handled by the gallery
-                    //   contentWidget = _buildMediaItem(item);
-                    // }
-                    else if (item is Prompt) {
-                      // Find the original index of this prompt for editing
-                      int promptEditIndex = user.prompts
-                          .indexWhere((p) => p.question == item.question);
-                      contentWidget = _buildPromptItem(item,
-                          onEditTap: () => Navigator.push(
-                              context,
-                              MaterialPageRoute(
-                                  builder: (context) => TextSelectPromptScreen(
-                                      isEditing: true,
-                                      editIndex: promptEditIndex >= 0
-                                          ? promptEditIndex
-                                          : null))));
-                    } else if (item is AudioPromptModel) {
-                      contentWidget = _buildAudioItem(item,
-                          onEditTap: () => Navigator.push(
-                              context,
-                              MaterialPageRoute(
-                                  builder: (context) => const VoicePromptScreen(
-                                      isEditing: true))));
-                    } else if (item is String && item == "vitals_section") {
-                      contentWidget = _buildVitalsBlock(user,
-                          onEditTap: () =>
-                              _navigateToVitalsEditFlow() // Navigate to first vitals screen
-                          );
-                    } else {
-                      contentWidget = const SizedBox.shrink();
-                    }
+                      // Handle Content Items
+                      else if (item is Map && item["type"] == "media") {
+                        String displayValue = item["value"];
+                        bool isLocalFile =
+                            Uri.tryParse(displayValue)?.isAbsolute == false ||
+                                displayValue.startsWith('/');
+                        // Use _buildMediaItem, passing isLocalFile flag derived more robustly if needed
+                        contentWidget = _buildMediaItem(
+                            context, ref, displayValue, item["index"],
+                            isLocalFile: isLocalFile);
+                      } else if (item is Prompt) {
+                        int promptEditIndex = user.prompts
+                            .indexWhere((p) => p.question == item.question);
+                        contentWidget = _buildPromptItem(item,
+                            onEditTap: () => Navigator.push(
+                                context,
+                                MaterialPageRoute(
+                                    builder: (context) =>
+                                        TextSelectPromptScreen(
+                                            isEditing: true,
+                                            editIndex: promptEditIndex >= 0
+                                                ? promptEditIndex
+                                                : null))));
+                      } else if (item is AudioPromptModel) {
+                        contentWidget = _buildAudioItem(item,
+                            onEditTap: () => Navigator.push(
+                                context,
+                                MaterialPageRoute(
+                                    builder: (context) =>
+                                        const VoicePromptScreen(
+                                            isEditing: true))));
+                      } else if (item is String && item == "vitals_section") {
+                        contentWidget = _buildVitalsBlock(user,
+                            onEditTap: _navigateToVitalsEditFlow);
+                      } else {
+                        contentWidget = const SizedBox.shrink();
+                      }
 
-                    // Wrap content with Padding
-                    return Padding(
-                      padding: EdgeInsets.fromLTRB(horizontalPadding, 0,
-                          horizontalPadding, bottomPadding),
-                      child: contentWidget,
-                    );
-                  },
-                  childCount: contentBlocks.length,
+                      return Padding(
+                        padding: EdgeInsets.fromLTRB(horizontalPadding, 0,
+                            horizontalPadding, bottomPadding),
+                        child: contentWidget,
+                      );
+                    },
+                    childCount: contentBlocks.length,
+                  ),
                 ),
               ),
-            ),
-            // Add final padding at the bottom if needed
-            const SliverToBoxAdapter(child: SizedBox(height: 20)),
-          ],
+              const SliverToBoxAdapter(child: SizedBox(height: 20)),
+            ],
+          ),
         ),
-      ),
+        // --- Loading Overlay ---
+        if (_isSaving)
+          Positioned.fill(
+            child: Container(
+              color: Colors.black.withOpacity(0.5),
+              child: const Center(
+                child: CircularProgressIndicator(color: Color(0xFF8B5CF6)),
+              ),
+            ),
+          ),
+      ]),
     );
   }
 
-  // --- Block Builder Widgets (Adapted for ProfileScreen with Edit Icons) ---
+  // --- Block Builder Widgets (Adapted for ProfileScreen) ---
 
   Widget _buildHeaderBlock(UserModel user) {
-    // (No edit icon needed here based on requirements)
+    // (Keep as is)
     final age = user.age;
     final capitalizedName =
         user.name != null ? capitalizeFirstLetter(user.name!) : "Your Name";
@@ -11436,139 +11695,201 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
               height: 1.2),
         ),
         const SizedBox(height: 12),
-        if (user.gender != null ||
-            (user.hometown != null && user.hometown!.isNotEmpty))
-          Wrap(
-            spacing: 10,
-            runSpacing: 8,
+        Wrap(
+          spacing: 10,
+          runSpacing: 8,
+          children: [
+            // Non-editable
+            if (user.gender != null)
+              _buildDetailChip(Icons.person_outline_rounded, user.gender!.label,
+                  subtle: true),
+            // Editable - Hometown (Now editable via Vitals flow)
+            if (user.hometown != null && user.hometown!.isNotEmpty)
+              _buildEditableChip(
+                icon: Icons.location_on_outlined,
+                label: user.hometown!,
+                onEditTap: () => Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                        builder: (context) =>
+                            const HometownScreen(isEditing: true))),
+                subtle: true, // Keep subtle look
+              )
+            else if (_isEditing)
+              _buildAddChip(
+                  label: "Add Hometown",
+                  onAddTap: () => Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                          builder: (context) =>
+                              const HometownScreen(isEditing: true))),
+                  subtle: true),
+
+            // Editable - Dating Intention
+            if (user.datingIntention != null)
+              _buildEditableChip(
+                  icon: Icons.favorite_border_rounded,
+                  label: user.datingIntention!.label,
+                  onEditTap: () => Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                          builder: (context) =>
+                              const DatingIntentionsScreen(isEditing: true))),
+                  subtle: true)
+            else if (_isEditing)
+              _buildAddChip(
+                  label: "Add Intention",
+                  onAddTap: () => Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                          builder: (context) =>
+                              const DatingIntentionsScreen(isEditing: true))),
+                  subtle: true),
+          ],
+        ),
+      ],
+    );
+  }
+
+  // --- Modified Media Item Builder ---
+  Widget _buildMediaItem(
+      BuildContext context, WidgetRef ref, String urlOrPath, int index,
+      {required bool isLocalFile}) {
+    bool isVideo = false;
+    if (!isLocalFile) {
+      isVideo = urlOrPath.toLowerCase().contains('.mp4') ||
+          urlOrPath.toLowerCase().contains('.mov');
+    } else {
+      String ext = path.basename(urlOrPath).split('.').last.toLowerCase();
+      isVideo = ['mp4', 'mov', 'avi', 'mkv', 'mpeg', '3gp', 'ts'].contains(ext);
+    }
+
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(10),
+      child: AspectRatio(
+        aspectRatio: 4 / 5.5,
+        child: Container(
+          decoration: BoxDecoration(color: Colors.grey[200]),
+          child: Stack(
+            fit: StackFit.expand,
             children: [
-              // These are not editable per requirements
-              if (user.gender != null)
-                _buildDetailChip(
-                    Icons.person_outline_rounded, user.gender!.label,
-                    subtle: true),
-              if (user.hometown != null && user.hometown!.isNotEmpty)
-                _buildDetailChip(Icons.location_on_outlined, user.hometown!,
-                    subtle: true),
-              // --- ADD EDITABLE CHIP ---
-              if (user.datingIntention != null)
-                _buildEditableChip(
-                    icon: Icons.favorite_border_rounded,
-                    label: user.datingIntention!.label,
-                    onEditTap: () => Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                            builder: (context) =>
-                                const DatingIntentionsScreen(isEditing: true))),
-                    subtle: true)
-              else if (_isEditing) // Show add button if editing and no intention set
-                _buildAddChip(
-                    label: "Add Intention",
-                    onAddTap: () => Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                            builder: (context) =>
-                                const DatingIntentionsScreen(isEditing: true))),
-                    subtle: true),
+              // Display Image/Video Thumbnail
+              if (isLocalFile)
+                Image.file(File(urlOrPath),
+                    fit: BoxFit.cover,
+                    errorBuilder: (_, __, ___) =>
+                        const Icon(Icons.broken_image))
+              else
+                Image.network(urlOrPath,
+                    fit: BoxFit.cover,
+                    loadingBuilder: (ctx, child, prog) => prog == null
+                        ? child
+                        : Center(
+                            child: CircularProgressIndicator(
+                                value: prog.expectedTotalBytes != null
+                                    ? prog.cumulativeBytesLoaded /
+                                        prog.expectedTotalBytes!
+                                    : null,
+                                color: Colors.grey[400])),
+                    errorBuilder: (ctx, err, st) => Center(
+                        child: Icon(Icons.image_not_supported_outlined,
+                            color: Colors.grey[400], size: 40))),
+              // Video indicator
+              if (isVideo)
+                Center(
+                  child: Container(
+                    padding: const EdgeInsets.all(10),
+                    decoration: BoxDecoration(
+                        color: Colors.black.withOpacity(0.5),
+                        shape: BoxShape.circle),
+                    child: const Icon(Icons.play_arrow_rounded,
+                        color: Colors.white, size: 30),
+                  ),
+                ),
+
+              // Edit Button (Top Right, conditionally shown ONLY FOR THE FIRST IMAGE)
+              if (_isEditing && index == 0)
+                Positioned(
+                  top: 8,
+                  right: 8,
+                  child: _buildSmallEditButton(
+                      icon: Icons.edit, // Use edit icon
+                      tooltip: "Edit Media Gallery",
+                      onPressed: () => Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                              builder: (context) =>
+                                  const MediaPickerScreen(isEditing: true)))),
+                ),
             ],
           ),
-      ],
+        ),
+      ),
     );
   }
 
-  // --- NEW: Media Gallery Builder ---
-  Widget _buildMediaGallery(
-      BuildContext context, WidgetRef ref, List<String> mediaUrls) {
-    // Use a GridView or similar to display media items.
-    // Add an Edit button visible only in _isEditing mode.
-    return Stack(
-      children: [
-        if (mediaUrls.isEmpty)
-          _buildEmptySection(
-            "Photos & Videos",
-            "Add photos and videos to show off your personality!",
-            Icons.add_photo_alternate_outlined,
-            () => Navigator.push(
-                context,
-                MaterialPageRoute(
-                    builder: (context) =>
-                        const MediaPickerScreen(isEditing: true))),
-          )
-        else
-          Container(
-            // Simple GridView example - adjust styling as needed
-            constraints: BoxConstraints(
-                maxHeight:
-                    MediaQuery.of(context).size.height * 0.5), // Limit height
-            child: GridView.builder(
-              shrinkWrap: true,
-              physics:
-                  const NeverScrollableScrollPhysics(), // Disable grid scrolling, rely on CustomScrollView
-              gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                crossAxisCount: 3,
-                crossAxisSpacing: 8,
-                mainAxisSpacing: 8,
-                childAspectRatio: 1.0, // Square aspect ratio
-              ),
-              itemCount: mediaUrls.length,
-              itemBuilder: (context, index) {
-                final url = mediaUrls[index];
-                final isVideo = url.toLowerCase().endsWith('.mp4') ||
-                    url.toLowerCase().endsWith('.mov');
-                return ClipRRect(
-                  borderRadius: BorderRadius.circular(12),
-                  child: Stack(
-                    fit: StackFit.expand,
-                    children: [
-                      Image.network(
-                        url,
-                        fit: BoxFit.cover,
-                        errorBuilder: (_, __, ___) => Container(
-                            color: Colors.grey[200],
-                            child: const Icon(Icons.broken_image)),
-                        loadingBuilder: (_, child, progress) => progress == null
-                            ? child
-                            : Center(
-                                child: CircularProgressIndicator(
-                                    value: progress.expectedTotalBytes != null
-                                        ? progress.cumulativeBytesLoaded /
-                                            progress.expectedTotalBytes!
-                                        : null)),
-                      ),
-                      if (isVideo)
-                        const Center(
-                            child: Icon(Icons.play_circle_fill,
-                                color: Colors.white70, size: 30)),
-                    ],
-                  ),
-                );
-              },
+  // --- NEW: Empty Media Slot ---
+  Widget _buildEmptyMediaSlot(VoidCallback onEditTap) {
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(10),
+      child: AspectRatio(
+        aspectRatio: 4 / 5.5,
+        child: Material(
+          color: Colors.grey[100],
+          child: InkWell(
+            onTap: onEditTap, // Navigate to media picker
+            child: Center(
+              child: Icon(Icons.add_photo_alternate_outlined,
+                  size: 40, color: Colors.grey[400]),
             ),
           ),
-
-        // Centralized Edit Button for the Gallery
-        if (_isEditing && mediaUrls.isNotEmpty)
-          Positioned(
-            top: 8,
-            right: 8,
-            child: _buildSmallEditButton(
-              tooltip: "Edit Media",
-              onPressed: () => Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                      builder: (context) =>
-                          const MediaPickerScreen(isEditing: true))),
-            ),
-          ),
-      ],
+        ),
+      ),
     );
   }
-  // --- END NEW Media Gallery Builder ---
+
+  // --- NEW: Empty Prompt Slot ---
+  Widget _buildEmptyPromptSlot(int index, VoidCallback onEditTap) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+          color: Colors.grey[50],
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: Colors.grey[200]!)),
+      child: Material(
+        // Wrap with Material for InkWell effect
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: onEditTap, // Navigate to prompt selection/writing
+          borderRadius: BorderRadius.circular(16), // Match container radius
+          child: Padding(
+            // Add padding inside InkWell for content
+            padding: const EdgeInsets.symmetric(
+                vertical: 20), // Adjust vertical padding
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center, // Center content
+              children: [
+                Icon(Icons.add_circle_outline,
+                    color: Colors.grey[400], size: 24),
+                const SizedBox(width: 8),
+                Text(
+                  "Add prompt #${index + 1}",
+                  style: GoogleFonts.poppins(
+                      fontSize: 16, color: Colors.grey[600]),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
 
   Widget _buildPromptItem(Prompt prompt, {required VoidCallback onEditTap}) {
+    // (Keep as is)
     if (prompt.answer.trim().isEmpty && !_isEditing)
-      return const SizedBox.shrink(); // Hide empty in view mode
-
+      return const SizedBox.shrink();
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.all(20),
@@ -11584,7 +11905,7 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
         ],
       ),
       child: Stack(
-        // Use Stack for edit button
+        clipBehavior: Clip.none, // Allow button overflow slightly
         children: [
           Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -11602,7 +11923,7 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                         color: Colors.grey[850],
                         height: 1.5,
                         fontWeight: FontWeight.w500))
-              else if (_isEditing) // Show placeholder if editing and empty
+              else if (_isEditing)
                 Text("Tap edit to add your answer...",
                     style: GoogleFonts.poppins(
                         fontSize: 16,
@@ -11610,12 +11931,12 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                         fontStyle: FontStyle.italic)),
             ],
           ),
-          // Edit button overlay
-          if (_isEditing)
+          if (_isEditing) // Show edit button only in edit mode
             Positioned(
-              top: -8, // Adjust position
-              right: -8, // Adjust position
-              child: _buildSmallEditButton(onPressed: onEditTap),
+              top: -12,
+              right: -12,
+              child: _buildSmallEditButton(
+                  onPressed: onEditTap, tooltip: "Edit Prompt"),
             ),
         ],
       ),
@@ -11624,49 +11945,34 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
 
   Widget _buildAudioItem(AudioPromptModel audio,
       {required VoidCallback onEditTap}) {
+    // (Keep as is)
     final bool isThisPlaying = _currentAudioUrl == audio.audioUrl && _isPlaying;
     final bool isThisPaused = _currentAudioUrl == audio.audioUrl &&
         !_isPlaying &&
         _audioPlayer.state == PlayerState.paused;
 
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Padding(
-          padding: const EdgeInsets.only(bottom: 8.0),
-          child: Row(
-            // Add Row for title and edit button
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: Colors.grey[200]!),
+        boxShadow: [
+          BoxShadow(
+              color: Colors.grey.withOpacity(0.06),
+              blurRadius: 10,
+              offset: const Offset(0, 3))
+        ],
+      ),
+      child: Stack(
+        clipBehavior: Clip.none,
+        children: [
+          Row(
             children: [
-              Text("Voice Prompt",
-                  style: GoogleFonts.poppins(
-                      fontSize: 20,
-                      fontWeight: FontWeight.w600,
-                      color: const Color(0xFF1A1A1A))),
-              if (_isEditing)
-                _buildSmallEditButton(
-                    onPressed: onEditTap, tooltip: "Edit Voice Prompt"),
-            ],
-          ),
-        ),
-        GestureDetector(
-          onTap: () => _playOrPauseAudio(audio.audioUrl),
-          child: Container(
-            padding: const EdgeInsets.all(16),
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(16),
-              border: Border.all(color: Colors.grey[200]!),
-              boxShadow: [
-                BoxShadow(
-                    color: Colors.grey.withOpacity(0.06),
-                    blurRadius: 10,
-                    offset: const Offset(0, 3))
-              ],
-            ),
-            child: Row(
-              children: [
-                Container(
+              InkWell(
+                onTap: () => _playOrPauseAudio(audio.audioUrl),
+                borderRadius: BorderRadius.circular(24),
+                child: Container(
                   width: 48,
                   height: 48,
                   decoration: BoxDecoration(
@@ -11685,37 +11991,44 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                       color: Colors.white,
                       size: 28),
                 ),
-                const SizedBox(width: 16),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(audio.prompt.label,
-                          style: GoogleFonts.poppins(
-                              fontSize: 15,
-                              fontWeight: FontWeight.w500,
-                              color: const Color(0xFF1A1A1A))),
-                      const SizedBox(height: 4),
-                      Text(
-                          isThisPlaying
-                              ? "Playing..."
-                              : (isThisPaused ? "Paused" : "Tap to listen"),
-                          style: GoogleFonts.poppins(
-                              fontSize: 13, color: Colors.grey[600])),
-                    ],
-                  ),
+              ),
+              const SizedBox(width: 16),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(audio.prompt.label,
+                        style: GoogleFonts.poppins(
+                            fontSize: 15,
+                            fontWeight: FontWeight.w500,
+                            color: const Color(0xFF1A1A1A))),
+                    const SizedBox(height: 4),
+                    Text(
+                        isThisPlaying
+                            ? "Playing..."
+                            : (isThisPaused ? "Paused" : "Tap to listen"),
+                        style: GoogleFonts.poppins(
+                            fontSize: 13, color: Colors.grey[600])),
+                  ],
                 ),
-              ],
-            ),
+              ),
+            ],
           ),
-        ),
-      ],
+          if (_isEditing)
+            Positioned(
+              top: -12,
+              right: -12,
+              child: _buildSmallEditButton(
+                  onPressed: onEditTap, tooltip: "Edit Voice Prompt"),
+            ),
+        ],
+      ),
     );
   }
 
   Widget _buildVitalsBlock(UserModel user, {required VoidCallback onEditTap}) {
+    // (Keep as is)
     final List<Widget> vitals = [];
-    // Use _buildEditableChip for editable vitals
     if (user.height != null && user.height!.isNotEmpty)
       vitals.add(_buildEditableChip(
           icon: Icons.height_rounded,
@@ -11734,6 +12047,7 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
               MaterialPageRoute(
                   builder: (context) =>
                       const ReligionScreen(isEditing: true)))));
+    // Editable Job/Edu via this block's edit button
     if (user.jobTitle != null && user.jobTitle!.isNotEmpty)
       vitals.add(_buildEditableChip(
           icon: Icons.work_outline_rounded,
@@ -11752,6 +12066,7 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
               MaterialPageRoute(
                   builder: (context) =>
                       const StudyLocationScreen(isEditing: true)))));
+    // Editable Habits
     if (user.drinkingHabit != null)
       vitals.add(_buildEditableChip(
           icon: Icons.local_bar_outlined,
@@ -11823,57 +12138,51 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                         const SmokingScreen(isEditing: true)))));
     }
 
-    if (vitals.isEmpty && !_isEditing) {
-      // Hide if empty and not editing
-      return const SizedBox.shrink();
-    }
-    if (vitals.isEmpty && _isEditing) {
-      // Show empty section if editing and empty
-      return _buildEmptySection(
-          "Vitals & Habits",
-          "Add more details like your height, job, habits, etc.",
-          Icons.list_alt_rounded,
-          onEditTap // Pass the main edit tap handler
-          );
-    }
+    if (vitals.isEmpty && !_isEditing) return const SizedBox.shrink();
+    if (vitals.isEmpty && _isEditing)
+      return _buildEmptySection("Vitals & Habits", "Add more details!",
+          Icons.list_alt_rounded, onEditTap);
 
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Padding(
-          padding: const EdgeInsets.only(bottom: 12.0),
-          child: Row(
-            // Row for title and edit button
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+    return Container(
+        width: double.infinity,
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: Colors.grey[200]!),
+          boxShadow: [
+            BoxShadow(
+                color: Colors.grey.withOpacity(0.06),
+                blurRadius: 10,
+                offset: const Offset(0, 3))
+          ],
+        ),
+        child: Stack(clipBehavior: Clip.none, children: [
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text("Vitals & Habits",
-                  style: GoogleFonts.poppins(
-                      fontSize: 20,
-                      fontWeight: FontWeight.w600,
-                      color: const Color(0xFF1A1A1A))),
-              if (_isEditing &&
-                  vitals.isNotEmpty) // Show edit only if editing and not empty
-                _buildSmallEditButton(
-                    onPressed: onEditTap, tooltip: "Edit Vitals"),
+              Padding(
+                padding: const EdgeInsets.only(bottom: 12.0),
+                child: Text("Vitals & Habits",
+                    style: GoogleFonts.poppins(
+                        fontSize: 18,
+                        fontWeight: FontWeight.w600,
+                        color: const Color(0xFF1A1A1A))),
+              ),
+              Wrap(spacing: 8, runSpacing: 8, children: vitals),
             ],
           ),
-        ),
-        Container(
-            padding: const EdgeInsets.symmetric(
-                horizontal: 0, vertical: 8), // Reduced padding
-            width: double.infinity,
-            // Removed background decoration - let chips handle their own style
-            child: Wrap(
-              // Use Wrap for better layout
-              spacing: 8,
-              runSpacing: 8,
-              children: vitals,
-            )),
-      ],
-    );
+          if (_isEditing)
+            Positioned(
+              top: -12,
+              right: -12,
+              child: _buildSmallEditButton(
+                  onPressed: onEditTap, tooltip: "Edit Vitals"),
+            ),
+        ]));
   }
 
-  // --- NEW: Editable Chip Widget ---
+  // --- Editable Chip Widget --- (Keep as is)
   Widget _buildEditableChip({
     required IconData icon,
     required String label,
@@ -11882,7 +12191,6 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
   }) {
     if (label.isEmpty) return const SizedBox.shrink();
     return InkWell(
-      // Make chip tappable in edit mode
       onTap: _isEditing ? onEditTap : null,
       borderRadius: BorderRadius.circular(20),
       child: Container(
@@ -11910,7 +12218,6 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                             subtle ? Colors.grey.shade700 : Colors.grey[800]),
                     overflow: TextOverflow.ellipsis)),
             if (_isEditing) ...[
-              // Show mini edit icon if editing
               const SizedBox(width: 6),
               Icon(Icons.edit, size: 14, color: Colors.grey[500]),
             ]
@@ -11919,9 +12226,8 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
       ),
     );
   }
-  // --- END NEW Editable Chip ---
 
-  // --- NEW: Add Chip Widget ---
+  // --- Add Chip Widget --- (Keep as is)
   Widget _buildAddChip({
     required String label,
     required VoidCallback onAddTap,
@@ -11936,10 +12242,8 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
         decoration: BoxDecoration(
           color: Colors.transparent,
           borderRadius: BorderRadius.circular(20),
-          border: Border.all(
-              color: Colors.grey.shade400,
-              style: BorderStyle
-                  .solid), // Dashed border? DottedBorder package needed
+          border:
+              Border.all(color: Colors.grey.shade400, style: BorderStyle.solid),
         ),
         child: Row(
           mainAxisSize: MainAxisSize.min,
@@ -11959,18 +12263,14 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
       ),
     );
   }
-  // --- END NEW Add Chip ---
 
-  // Helper to navigate to the start of the vitals editing flow
-  // This might need refinement if you want specific edit targets
+  // Helper to navigate to the start of the vitals editing flow (Keep as is)
   void _navigateToVitalsEditFlow() {
-    // Start with Height as an example
     Navigator.push(
         context,
         MaterialPageRoute(
             builder: (context) =>
                 const HeightSelectionScreen(isEditing: true)));
-    // You might chain navigations or create a dedicated "Edit Vitals" screen
   }
 } // End of _ProfileScreenState
 
@@ -13654,28 +13954,32 @@ File: views/textpromptsselect.dart
 import 'package:dtx/models/user_model.dart';
 import 'package:dtx/views/writeprompt.dart';
 import 'package:flutter/material.dart';
-// Removed unused Riverpod import
-// Removed unused google_fonts import
+import 'package:flutter_riverpod/flutter_riverpod.dart'; // Import Riverpod
+import 'package:dtx/providers/user_provider.dart'; // Import UserProvider
 import 'package:dtx/utils/app_enums.dart';
+import 'package:google_fonts/google_fonts.dart'; // Import GoogleFonts
 
-class TextSelectPromptScreen extends StatefulWidget {
+// Change StatefulWidget to ConsumerStatefulWidget
+class TextSelectPromptScreen extends ConsumerStatefulWidget {
   final int? editIndex;
-  final bool isEditing; // <<< ADDED
+  final bool isEditing;
 
   const TextSelectPromptScreen({
     super.key,
     this.editIndex,
-    this.isEditing = false, // <<< ADDED default
+    this.isEditing = false,
   });
 
   @override
-  State<TextSelectPromptScreen> createState() => _TextSelectPromptScreenState();
+  ConsumerState<TextSelectPromptScreen> createState() =>
+      _TextSelectPromptScreenState();
 }
 
-class _TextSelectPromptScreenState extends State<TextSelectPromptScreen> {
+// Change State to ConsumerState
+class _TextSelectPromptScreenState
+    extends ConsumerState<TextSelectPromptScreen> {
   PromptCategory selectedCategory = PromptCategory.storyTime;
   bool showAllPrompts = false;
-  // Removed unused selectedPrompt state
 
   List<PromptType> get currentPrompts {
     if (showAllPrompts) {
@@ -13686,8 +13990,27 @@ class _TextSelectPromptScreenState extends State<TextSelectPromptScreen> {
     return selectedCategory.getPrompts();
   }
 
+  // Function to check for duplicates
+  bool _isDuplicate(PromptType selectedPromptType) {
+    final existingPrompts = ref.read(userProvider).prompts;
+    for (int i = 0; i < existingPrompts.length; i++) {
+      // Skip check if editing the current index
+      if (widget.isEditing && widget.editIndex == i) {
+        continue;
+      }
+      if (existingPrompts[i].question == selectedPromptType) {
+        return true; // Found a duplicate
+      }
+    }
+    return false; // No duplicate found
+  }
+
   @override
   Widget build(BuildContext context) {
+    // Read existing prompts to disable selected ones
+    final existingPromptQuestions = ref.watch(userProvider
+        .select((user) => user.prompts.map((p) => p.question).toSet()));
+
     return Scaffold(
       backgroundColor: Colors.white,
       body: SafeArea(
@@ -13705,9 +14028,7 @@ class _TextSelectPromptScreenState extends State<TextSelectPromptScreen> {
                       });
                     },
                     child: Text(
-                      showAllPrompts
-                          ? 'View by Category'
-                          : 'View all', // Toggle text
+                      showAllPrompts ? 'View by Category' : 'View all',
                       style: TextStyle(
                         color: const Color(0xFF8b5cf6),
                         fontSize: 16,
@@ -13716,16 +14037,16 @@ class _TextSelectPromptScreenState extends State<TextSelectPromptScreen> {
                       ),
                     ),
                   ),
-                  const Text(
-                    'Prompts',
-                    style: TextStyle(
+                  Text(
+                    'Prompts', // Keep title centered
+                    style: GoogleFonts.poppins(
+                      // Use GoogleFonts if desired
                       fontSize: 18,
                       fontWeight: FontWeight.bold,
                     ),
                   ),
                   GestureDetector(
-                    onTap: () =>
-                        Navigator.pop(context), // Always pop back from here
+                    onTap: () => Navigator.pop(context),
                     child: const Icon(Icons.close),
                   ),
                 ],
@@ -13733,6 +14054,7 @@ class _TextSelectPromptScreenState extends State<TextSelectPromptScreen> {
             ),
             if (!showAllPrompts)
               SingleChildScrollView(
+                // ... Category chips (unchanged) ...
                 scrollDirection: Axis.horizontal,
                 padding: const EdgeInsets.symmetric(horizontal: 16),
                 child: Row(
@@ -13780,25 +14102,49 @@ class _TextSelectPromptScreenState extends State<TextSelectPromptScreen> {
                 itemCount: currentPrompts.length,
                 itemBuilder: (context, index) {
                   final promptType = currentPrompts[index];
+                  final bool isAlreadySelected =
+                      existingPromptQuestions.contains(promptType);
+                  final bool isEditingThisPrompt = widget.isEditing &&
+                      widget.editIndex != null &&
+                      ref.read(userProvider).prompts.length >
+                          widget.editIndex! &&
+                      ref
+                              .read(userProvider)
+                              .prompts[widget.editIndex!]
+                              .question ==
+                          promptType;
+
+                  final bool isDisabled = isAlreadySelected &&
+                      !isEditingThisPrompt; // Disable if selected elsewhere
+
                   return GestureDetector(
-                    onTap: () {
-                      final category = promptType.getCategory();
-                      // Navigate to WriteAnswerScreen, potentially replacing this one
-                      // if we don't want the user coming back here after writing.
-                      // Using push ensures they can come back to select a different prompt if needed.
-                      Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                          builder: (context) => WriteAnswerScreen(
-                            category: category,
-                            question: promptType,
-                            editIndex: widget.editIndex,
-                            isEditing:
-                                widget.isEditing, // <<< Pass editing flag
-                          ),
-                        ),
-                      );
-                    },
+                    onTap: isDisabled
+                        ? null
+                        : () async {
+                            // Make onTap async
+                            final category = promptType.getCategory();
+                            // Navigate and wait for result
+                            final result = await Navigator.push(
+                              // <-- Use await
+                              context,
+                              MaterialPageRoute(
+                                builder: (context) => WriteAnswerScreen(
+                                  category: category,
+                                  question: promptType,
+                                  editIndex: widget.editIndex,
+                                  isEditing: widget.isEditing,
+                                ),
+                              ),
+                            );
+
+                            // If NOT editing and WriteAnswerScreen popped with success (true)
+                            if (!widget.isEditing &&
+                                result == true &&
+                                context.mounted) {
+                              // Pop this screen (TextSelectPromptScreen) to go back to ProfileAnswersScreen
+                              Navigator.pop(context);
+                            }
+                          },
                     child: Container(
                       padding: const EdgeInsets.symmetric(vertical: 16),
                       decoration: BoxDecoration(
@@ -13811,9 +14157,12 @@ class _TextSelectPromptScreenState extends State<TextSelectPromptScreen> {
                       ),
                       child: Text(
                         promptType.label,
-                        style: const TextStyle(
+                        style: TextStyle(
                           fontSize: 16,
-                          color: Colors.black87,
+                          // Dim text if disabled
+                          color: isDisabled ? Colors.grey[400] : Colors.black87,
+                          // Add strike-through if disabled? (Optional)
+                          // decoration: isDisabled ? TextDecoration.lineThrough : null,
                         ),
                       ),
                     ),
@@ -14430,6 +14779,8 @@ class _WriteAnswerScreenState extends ConsumerState<WriteAnswerScreen> {
 
   void _saveAnswer() {
     final answerText = _answerController.text.trim();
+    bool actionTaken = false; // Flag to check if any action was performed
+
     if (answerText.isNotEmpty) {
       final newPrompt = Prompt(
         category: widget.category,
@@ -14437,54 +14788,56 @@ class _WriteAnswerScreenState extends ConsumerState<WriteAnswerScreen> {
         answer: answerText,
       );
 
-      // Determine the correct index to update/add
       int targetIndex =
           widget.editIndex ?? ref.read(userProvider).prompts.length;
 
-      // If editIndex is provided and valid, update. Otherwise, add if not full.
       if (widget.editIndex != null &&
           widget.editIndex! < ref.read(userProvider).prompts.length) {
         ref
             .read(userProvider.notifier)
             .updatePromptAtIndex(widget.editIndex!, newPrompt);
         print("Updated prompt at index: ${widget.editIndex}");
+        actionTaken = true;
       } else if (ref.read(userProvider).prompts.length < 3) {
         ref.read(userProvider.notifier).addPrompt(newPrompt);
         print("Added new prompt.");
+        actionTaken = true;
       } else {
-        // This case should ideally be prevented by the UI, but as a fallback:
         print("Error: Cannot add prompt, maximum reached.");
         ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(content: Text("You can only have 3 prompts.")));
-        return; // Don't pop
+        return;
       }
 
-      // Navigate back differently based on mode
+      // Navigate back
       if (widget.isEditing) {
-        // Pop twice: once for this screen, once for TextSelectPromptScreen
+        // Pop twice for editing
         int popCount = 0;
-        Navigator.of(context).popUntil((route) {
-          return popCount++ == 2;
-        });
+        Navigator.of(context).popUntil((route) => popCount++ == 2);
       } else {
-        // Onboarding: Pop back to ProfileAnswersScreen
-        Navigator.of(context).pop(); // Pop WriteAnswerScreen
-        // Note: Onboarding flow might need adjustment if ProfileAnswersScreen isn't the direct previous route.
-        // If TextSelectPromptScreen should also be popped in onboarding:
-        // Navigator.of(context).popUntil((route) => route.isFirst); // Or pop back to specific route
+        // Onboarding: Pop once and signal success
+        Navigator.of(context).pop(true); // <-- Signal success
       }
-    } else {
-      // If user clears text and hits Done, consider it as removing the prompt if editing existing
-      if (widget.isEditing && widget.editIndex != null) {
-        print(
-            "Removing prompt at index: ${widget.editIndex} due to empty answer.");
-        ref.read(userProvider.notifier).removePromptAtIndex(widget.editIndex!);
-        // Pop twice
-        int popCount = 0;
-        Navigator.of(context).popUntil((route) {
-          return popCount++ == 2;
-        });
-      }
+    } else if (widget.isEditing && widget.editIndex != null) {
+      // Handle clearing existing prompt during edit
+      print(
+          "Removing prompt at index: ${widget.editIndex} due to empty answer.");
+      ref.read(userProvider.notifier).removePromptAtIndex(widget.editIndex!);
+      actionTaken = true;
+      // Pop twice for editing
+      int popCount = 0;
+      Navigator.of(context).popUntil((route) => popCount++ == 2);
+    } else if (!widget.isEditing) {
+      // Don't allow saving empty prompt during onboarding if "Done" is pressed
+      ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text("Please enter an answer.")));
+      return; // Stay on the screen
+    }
+
+    // If no action was taken but user pressed Done (e.g., editing non-existent index with empty text)
+    if (!actionTaken) {
+      // Just pop back once (likely from TextSelectPromptScreen)
+      Navigator.of(context).pop(false); // Signal no change made
     }
   }
 

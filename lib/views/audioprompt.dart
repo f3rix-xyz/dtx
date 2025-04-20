@@ -1,4 +1,3 @@
-// File: lib/views/audioprompt.dart
 import 'dart:async';
 import 'dart:io'; // Keep for File checks
 
@@ -12,7 +11,7 @@ import 'package:dtx/providers/auth_provider.dart'; // Keep for status check
 import 'package:dtx/providers/error_provider.dart';
 import 'package:dtx/providers/media_upload_provider.dart'; // <<< ADDED for general media
 import 'package:dtx/providers/service_provider.dart'; // Keep for repository access
-import 'package:dtx/providers/user_provider.dart';
+import 'package:dtx/providers/user_provider.dart'; // <<< ENSURE IMPORT
 import 'package:dtx/services/api_service.dart';
 import 'package:dtx/utils/app_enums.dart';
 import 'package:dtx/views/audiopromptsselect.dart';
@@ -274,6 +273,7 @@ class _VoicePromptScreenState extends ConsumerState<VoicePromptScreen> {
 
   // --- *** MODIFIED SAVE METHOD *** ---
   Future<void> _saveProfileAndNavigate() async {
+    // <-- Added async
     print(
         '[VoicePromptScreen] Starting _saveProfileAndNavigate (isEditing: ${widget.isEditing})');
     final errorNotifier = ref.read(errorProvider.notifier);
@@ -438,8 +438,13 @@ class _VoicePromptScreenState extends ConsumerState<VoicePromptScreen> {
           }
         } else {
           // Onboarding success
-          final finalStatus =
-              await authNotifier.checkAuthStatus(updateState: true);
+          // *** --- START FIX: FETCH PROFILE BEFORE NAVIGATION --- ***
+          print('[VoicePromptScreen Onboarding] Fetching updated profile...');
+          await userNotifier.fetchProfile(); // <<< ADDED: Fetch fresh data
+          print('[VoicePromptScreen Onboarding] Profile fetch complete.');
+          // *** --- END FIX ---
+          final finalStatus = await authNotifier.checkAuthStatus(
+              updateState: true); // Check status again after save
           if (mounted) {
             print(
                 '[VoicePromptScreen Onboarding] Navigating to MainNavigationScreen. Status: $finalStatus');
@@ -488,7 +493,7 @@ class _VoicePromptScreenState extends ConsumerState<VoicePromptScreen> {
                 _audioPath == null)) &&
         !_isRecording; // Allow saving null in edit mode
 
-    // --- UI Code (Mostly unchanged, uses local state _selectedPrompt, _audioPath, _existingAudioUrl) ---
+    // --- UI Code (Unchanged) ---
     return Scaffold(
       /* ... Scaffold setup ... */
       backgroundColor: Colors.white,

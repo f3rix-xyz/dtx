@@ -1,8 +1,8 @@
 // File: lib/views/media.dart
 import 'dart:io';
-import 'dart:typed_data';
+import 'dart:typed_data'; // Keep if thumbnail generation is used (not shown, but possible)
 import 'package:dtx/providers/error_provider.dart';
-import 'package:dtx/providers/media_upload_provider.dart'; // Keep for potential size checks?
+import 'package:dtx/providers/media_upload_provider.dart';
 import 'package:dtx/providers/user_provider.dart';
 import 'package:dtx/views/prompt.dart'; // Keep for onboarding flow
 import 'package:flutter/material.dart';
@@ -11,26 +11,11 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:reorderable_grid_view/reorderable_grid_view.dart';
 import 'package:dotted_border/dotted_border.dart';
-import '../models/error_model.dart'; // Keep
+import 'package:path/path.dart' as p; // Use prefix for path
+import 'package:mime/mime.dart'; // Use mime package
 
-// Wrapper class remains the same
-class EditableMediaItem {
-  final String? url;
-  final File? file;
-  final MediaType type;
-  final UniqueKey key;
-
-  EditableMediaItem({
-    this.url,
-    this.file,
-    required this.type,
-    required this.key,
-  }) : assert(
-            url != null || file != null, 'Either url or file must be provided');
-
-  bool get isNewFile => file != null;
-  String get displayIdentifier => url ?? file!.path; // Use path for new files
-}
+import '../models/error_model.dart';
+import '../models/media_upload_model.dart'; // Import MediaUploadModel
 
 class MediaPickerScreen extends ConsumerStatefulWidget {
   final bool isEditing;
@@ -45,11 +30,11 @@ class MediaPickerScreen extends ConsumerStatefulWidget {
 }
 
 class _MediaPickerState extends ConsumerState<MediaPickerScreen> {
-  late List<EditableMediaItem?> _editableMedia;
-  bool _isForwardButtonEnabled = false;
-  bool _mediaHasChanged = false;
+  // Holds String URLs for existing media, MediaUploadModel for new/local files, or null for empty slots.
+  List<dynamic> _displayItems = List.filled(6, null);
+  bool _isInitialized = false; // Track initialization
 
-  // Allowed types (keep as before)
+  // Keep allowed types
   final Set<String> _allowedImageMime = {
     'image/jpeg',
     'image/png',
@@ -88,37 +73,99 @@ class _MediaPickerState extends ConsumerState<MediaPickerScreen> {
   @override
   void initState() {
     super.initState();
-    _initializeMedia();
-    WidgetsBinding.instance
-        .addPostFrameCallback((_) => _updateForwardButtonState());
+    WidgetsBinding.instance.addPostFrameCallback((_) => _initializeMedia());
   }
 
+  // *** --- START FIX: Modified Initialization Logic --- ***
   void _initializeMedia() {
-    _editableMedia = List.filled(6, null);
-    if (widget.isEditing) {
-      final currentUrls = ref.read(userProvider).mediaUrls ?? [];
-      for (int i = 0; i < currentUrls.length && i < 6; i++) {
-        final url = currentUrls[i];
-        final isVideo = url.toLowerCase().endsWith('.mp4') ||
-            url.toLowerCase().endsWith('.mov');
-        _editableMedia[i] = EditableMediaItem(
-          url: url,
-          type: isVideo ? MediaType.video : MediaType.image,
-          key: UniqueKey(),
-        );
+    if (_isInitialized && !widget.isEditing)
+      return; // Prevent re-init on onboarding if already done
+    // Allow re-initialization if entering edit mode again
+    print(
+        "[MediaPickerScreen] Initializing Media (isEditing: ${widget.isEditing})...");
+
+    final mediaUploadNotifier = ref.read(mediaUploadProvider.notifier);
+    final currentUser = ref.read(userProvider);
+
+    // Clear the mediaUploadProvider state ONLY when entering the screen.
+    // It tracks *unsaved* local file selections made during THIS session.
+    mediaUploadNotifier.state = List.filled(6, null);
+    print("[MediaPickerScreen] Cleared mediaUploadProvider state.");
+
+    List<dynamic> tempDisplayItems =
+        List.filled(6, null); // Use local temp list
+
+    // Populate based on current user state (URLs or local paths from previous edits)
+    final currentIdentifiers = currentUser.mediaUrls ?? [];
+    print(
+        "[MediaPickerScreen] Populating from userProvider identifiers: $currentIdentifiers");
+
+    for (int i = 0; i < currentIdentifiers.length && i < 6; i++) {
+      final identifier = currentIdentifiers[i];
+      if (identifier.isNotEmpty) {
+        // 1. Check if it's an HTTP URL
+        if (identifier.startsWith('http')) {
+          tempDisplayItems[i] = identifier; // Store the URL string
+          print("  - Slot $i: Existing URL: $identifier");
+        }
+        // 2. Check if it's a potentially valid local file path
+        else if (identifier.contains('/') || identifier.contains('\\')) {
+          try {
+            final file = File(identifier);
+            // IMPORTANT: We cannot call file.exists() synchronously here.
+            // Assume if it's a path stored previously, it *was* valid.
+            // We'll create a MediaUploadModel optimistically. If the file is
+            // deleted later, the UI build (_buildMediaPlaceholder) will handle the error.
+
+            final fileName = p.basename(file.path);
+            final mimeType = lookupMimeType(file.path) ??
+                'application/octet-stream'; // Default MIME
+
+            tempDisplayItems[i] = MediaUploadModel(
+                file: file,
+                fileName: fileName,
+                fileType: mimeType,
+                status: UploadStatus.idle // Local files are initially idle
+                );
+            print(
+                "  - Slot $i: Local File Path (from previous edit): $identifier");
+          } catch (e) {
+            print(
+                "  - Slot $i: Error processing potential path '$identifier': $e. Treating as empty.");
+            tempDisplayItems[i] = null;
+          }
+        }
+        // 3. Otherwise, treat as invalid/empty
+        else {
+          print(
+              "  - Slot $i: Invalid identifier '$identifier'. Treating as empty.");
+          tempDisplayItems[i] = null;
+        }
       }
     }
-    // Ensure list has 6 elements
-    while (_editableMedia.length < 6) {
-      _editableMedia.add(null);
-    }
+
+    // Update local state for UI building
+    setState(() {
+      _displayItems = tempDisplayItems; // Use the populated temp list
+      _isInitialized = true;
+      _updateForwardButtonState(); // Update button based on initial state
+    });
+    print(
+        "[MediaPickerScreen] Initialization complete. Display Items: ${_displayItems.map((item) {
+      if (item is MediaUploadModel) return "File: ${item.fileName}";
+      if (item is String)
+        return "URL: ${item.substring(item.length - 10)}"; // Show end of URL
+      return 'null';
+    }).toList()}");
   }
+  // *** --- END FIX --- ***
 
   @override
   void dispose() {
     super.dispose();
   }
 
+  // *** --- START FIX: Modified _pickMedia --- ***
   Future<void> _pickMedia(int index) async {
     ref.read(errorProvider.notifier).clearError();
     final ImagePicker picker = ImagePicker();
@@ -126,10 +173,13 @@ class _MediaPickerState extends ConsumerState<MediaPickerScreen> {
 
     if (media != null) {
       final mimeType = media.mimeType?.toLowerCase();
-      final extension = media.path.split('.').last.toLowerCase();
+      final fileName = p.basename(media.path);
+      final extension =
+          p.extension(media.path).toLowerCase().replaceAll('.', '');
       final filePath = media.path.replaceFirst('file://', '');
       final file = File(filePath);
 
+      // Validation...
       final isValidImage = _allowedImageMime.contains(mimeType) ||
           _allowedImageExtensions.contains(extension);
       final isValidVideo = _allowedVideoMime.contains(mimeType) ||
@@ -141,63 +191,170 @@ class _MediaPickerState extends ConsumerState<MediaPickerScreen> {
       if (isImage && fileSize > 10 * 1024 * 1024) {
         ref.read(errorProvider.notifier).setError(
             AppError.validation("Image is too large. Maximum size is 10 MB."));
-        _clearSlot(index);
+        // Don't clear slot here, let validation prevent update below
         return;
       }
       if (isVideo && fileSize > 50 * 1024 * 1024) {
         ref.read(errorProvider.notifier).setError(
             AppError.validation("Video is too large. Maximum size is 50 MB."));
-        _clearSlot(index);
         return;
       }
-      if (index == 0 && !isValidImage) {
+      // --- End Basic Validation ---
+
+      // --- First Item Image Validation (using temp state) ---
+      final tempDisplayItems = List.from(_displayItems);
+      final potentialNewModel = MediaUploadModel(
+          file: file,
+          fileName: fileName,
+          fileType: mimeType ?? (isVideo ? 'video/mp4' : 'image/jpeg'));
+      tempDisplayItems[index] =
+          potentialNewModel; // Simulate adding the new file
+
+      final firstItem = tempDisplayItems[0];
+      bool firstIsImage = false;
+      if (firstItem is MediaUploadModel) {
+        firstIsImage = firstItem.fileType.startsWith('image/');
+      } else if (firstItem is String) {
+        final lowerUrl = firstItem.toLowerCase();
+        firstIsImage = [
+          '.jpg',
+          '.jpeg',
+          '.png',
+          '.gif',
+          '.webp',
+          '.bmp',
+          '.tiff'
+        ].any((ext) => lowerUrl.endsWith(ext));
+      }
+
+      if (index == 0 && !firstIsImage) {
         await _showErrorDialog(context, isMainImage: true);
-        _clearSlot(index);
-        return;
+        return; // Prevent update if first item isn't image
       }
+      // --- End First Item Validation ---
+
       if (!isValidImage && !isValidVideo) {
         await _showErrorDialog(context);
-        _clearSlot(index);
         return;
       }
+      // --- End Format Validation ---
 
-      setState(() {
-        _editableMedia[index] = EditableMediaItem(
+      // If all validations pass, create the final model
+      final newModel = MediaUploadModel(
           file: file,
-          type: isVideo ? MediaType.video : MediaType.image,
-          key: UniqueKey(),
-        );
-        _mediaHasChanged = true;
+          fileName: fileName,
+          fileType: mimeType ??
+              (isVideo ? 'video/mp4' : 'image/jpeg'), // Provide fallback MIME
+          status: UploadStatus.idle // Initial status
+          );
+
+      // Update provider state (only holds NEW files selected in *this* session)
+      // Need to copy current provider state and update the specific index
+      final currentProviderState =
+          List<MediaUploadModel?>.from(ref.read(mediaUploadProvider));
+      currentProviderState[index] = newModel;
+      ref.read(mediaUploadProvider.notifier).state = currentProviderState;
+      print(
+          "[MediaPickerScreen] Updated mediaUploadProvider at index $index with ${newModel.fileName}");
+
+      // Update local display state for UI
+      setState(() {
+        _displayItems[index] = newModel; // Update the display list directly
         _updateForwardButtonState();
       });
+      // Signal change if editing
+      if (widget.isEditing) {
+        ref.read(userProvider.notifier).setMediaChangedFlag(true);
+      }
     }
   }
+  // *** --- END FIX --- ***
 
+  // *** --- START FIX: Modified _clearSlot --- ***
   void _clearSlot(int index) {
-    // Prevent clearing main photo if <= 3 items
-    final currentCount = _countSelectedMedia();
-    if (index == 0 && currentCount <= 3 && _editableMedia[index] != null) {
-      ref.read(errorProvider.notifier).setError(AppError.validation(
-          "Cannot remove the main photo when less than 3 items are present."));
-      return;
-    }
-    // Prevent clearing any item if it would result in less than 3 items remaining
-    if (_editableMedia[index] != null && currentCount <= 3) {
+    // Count selected based on the local display list
+    final currentCount = _displayItems.where((item) => item != null).length;
+
+    // --- Minimum Items Validation ---
+    // Check if clearing this slot would result in less than 3 items
+    bool wouldBeLessThanMin =
+        (_displayItems[index] != null && currentCount <= 3);
+    if (wouldBeLessThanMin) {
       ref
           .read(errorProvider.notifier)
           .setError(AppError.validation("Minimum of 3 media items required."));
       return;
     }
+    // --- End Minimum Items Validation ---
+
+    // --- First Item Image Validation ---
+    // Simulate state after clearing to check if first item is still valid
+    final tempDisplayItems = List.from(_displayItems);
+    tempDisplayItems[index] = null; // Simulate removal
+
+    final firstItemAfterClear = tempDisplayItems[0];
+    bool firstIsImageAfterClear = false;
+    if (firstItemAfterClear is MediaUploadModel) {
+      firstIsImageAfterClear =
+          firstItemAfterClear.fileType.startsWith('image/');
+    } else if (firstItemAfterClear is String) {
+      final lowerUrl = firstItemAfterClear.toLowerCase();
+      firstIsImageAfterClear = [
+        '.jpg',
+        '.jpeg',
+        '.png',
+        '.gif',
+        '.webp',
+        '.bmp',
+        '.tiff'
+      ].any((ext) => lowerUrl.endsWith(ext));
+    }
+
+    // If clearing the first item AND there are other items left,
+    // but the new first item isn't an image, prevent clearing.
+    if (index == 0 && currentCount > 1 && !firstIsImageAfterClear) {
+      ref.read(errorProvider.notifier).setError(AppError.validation(
+          "Cannot remove the main photo if the next item is not a photo. Reorder first."));
+      return;
+    }
+    // --- End First Item Validation ---
+
+    // --- If validations pass, proceed with clearing ---
+    ref.read(errorProvider.notifier).clearError(); // Clear any previous error
+
+    // Check if the item being cleared was a NEWLY added local file in this session
+    final itemToClear = _displayItems[index];
+    if (itemToClear is MediaUploadModel) {
+      // If it was a local file selected in THIS session, remove it from the mediaUploadProvider
+      final currentProviderState =
+          List<MediaUploadModel?>.from(ref.read(mediaUploadProvider));
+      if (index < currentProviderState.length) {
+        // Safety check
+        currentProviderState[index] = null; // Clear slot in provider state
+        ref.read(mediaUploadProvider.notifier).state = currentProviderState;
+        print(
+            "[MediaPickerScreen] Cleared slot $index in mediaUploadProvider.");
+      }
+    } else {
+      print(
+          "[MediaPickerScreen] Cleared slot $index which contained an existing URL or was empty.");
+    }
+
+    // Update local state for UI
     setState(() {
-      _editableMedia[index] = null;
-      _mediaHasChanged = true;
+      _displayItems[index] = null; // Clear the local display slot
       _updateForwardButtonState();
     });
+    // Signal change if editing
+    if (widget.isEditing) {
+      ref.read(userProvider.notifier).setMediaChangedFlag(true);
+    }
   }
+  // *** --- END FIX --- ***
 
   Future<void> _showErrorDialog(BuildContext context,
       {bool isMainImage = false}) async {
-    // ... (same as before) ...
+    // (Keep as is)
     return showDialog(
       context: context,
       builder: (context) => AlertDialog(
@@ -215,92 +372,131 @@ class _MediaPickerState extends ConsumerState<MediaPickerScreen> {
     );
   }
 
+  // *** --- START FIX: Modified _reorderMedia --- ***
   void _reorderMedia(int oldGridIndex, int newGridIndex) {
-    if (oldGridIndex == 0 || newGridIndex == 0) return;
+    ref.read(errorProvider.notifier).clearError(); // Clear previous errors
+
+    // Create a mutable copy of the local display list
+    List<dynamic> reorderedDisplayItems = List.from(_displayItems);
+    final item = reorderedDisplayItems.removeAt(oldGridIndex);
+    reorderedDisplayItems.insert(newGridIndex, item);
+
+    // --- VALIDATION: Ensure first slot is an image AFTER reorder ---
+    final firstItem = reorderedDisplayItems[0];
+    bool firstIsImage = false;
+    if (firstItem is MediaUploadModel) {
+      firstIsImage = firstItem.fileType.startsWith('image/');
+    } else if (firstItem is String) {
+      final lowerUrl = firstItem.toLowerCase();
+      firstIsImage = ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp', '.tiff']
+          .any((ext) => lowerUrl.endsWith(ext));
+    }
+
+    if (firstItem == null || !firstIsImage) {
+      // Also check if first item is null
+      ref
+          .read(errorProvider.notifier)
+          .setError(AppError.validation("The first item must be a photo."));
+      // Do NOT update state if invalid
+      return;
+    }
+    // --- End Validation ---
+
+    // Update local state for UI
     setState(() {
-      final EditableMediaItem? item = _editableMedia.removeAt(oldGridIndex);
-      if (item != null) {
-        _editableMedia.insert(newGridIndex, item);
-        _mediaHasChanged = true;
-      } else {
-        _editableMedia.insert(newGridIndex, null);
-      }
-      while (_editableMedia.length > 6) {
-        _editableMedia.removeLast();
-      }
-      while (_editableMedia.length < 6) {
-        _editableMedia.add(null);
-      }
+      _displayItems = reorderedDisplayItems;
       _updateForwardButtonState();
     });
-  }
 
-  int _countSelectedMedia() {
-    return _editableMedia.where((item) => item != null).length;
-  }
+    // --- Update mediaUploadProvider state ---
+    // Reconstruct the provider state to match the new order,
+    // containing only the MediaUploadModels (representing NEW files).
+    List<MediaUploadModel?> newProviderState = List.filled(6, null);
+    for (int i = 0; i < reorderedDisplayItems.length; i++) {
+      if (reorderedDisplayItems[i] is MediaUploadModel) {
+        newProviderState[i] = reorderedDisplayItems[i] as MediaUploadModel;
+      }
+    }
+    ref.read(mediaUploadProvider.notifier).state = newProviderState;
+    print("[MediaPickerScreen] Reordered. Updated mediaUploadProvider state.");
+    // --- End Provider State Update ---
 
-  void _updateForwardButtonState() {
-    int selectedCount = _countSelectedMedia();
-    setState(() {
-      _isForwardButtonEnabled = selectedCount >= 3;
-    });
-  }
-
-  void _handleDone() {
-    if (!_isForwardButtonEnabled) return;
-
-    // --- *** CORE CHANGE for EDITING *** ---
+    // Signal change if editing
     if (widget.isEditing) {
-      // Create the list of strings (URLs or local paths)
-      final List<String> finalMediaIdentifiers = _editableMedia
-          .where((item) => item != null)
-          .map((item) => item!.displayIdentifier) // Use url or file path
-          .toList();
+      ref.read(userProvider.notifier).setMediaChangedFlag(true);
+    }
+  }
+  // *** --- END FIX --- ***
 
-      // Update the user provider directly with this mixed list
-      ref.read(userProvider.notifier).updateMediaUrls(finalMediaIdentifiers);
+  // Count selected based on local display list
+  int _countSelectedMedia() {
+    return _displayItems.where((item) => item != null).length;
+  }
 
-      // Set the flag if changes were made
-      if (_mediaHasChanged) {
-        ref.read(userProvider.notifier).setMediaChangedFlag(true);
-      }
-      print("[MediaPickerScreen Edit] Updated provider. Popping back.");
-      Navigator.of(context).pop(); // Pop back to ProfileScreen
-    } else {
-      // --- ONBOARDING Flow (remains the same conceptually) ---
-      final List<File> filesToUpload = _editableMedia
-          .where((item) => item?.isNewFile == true)
-          .map((item) => item!.file!)
-          .toList();
+  // Update button state based on local display list
+  void _updateForwardButtonState() {
+    // No need to call setState here as this is called within setState blocks elsewhere
+    // Logic to determine button state is moved to the build method.
+  }
 
-      if (filesToUpload.isEmpty) {
-        print(
-            "[MediaPickerScreen Onboarding] No files selected? Navigating anyway.");
-        Navigator.pushReplacement(
-            context,
-            MaterialPageRoute(
-                builder: (context) => const ProfileAnswersScreen()));
-        return;
-      }
+  // *** --- START FIX: Modified _handleDone --- ***
+  void _handleDone() {
+    final currentCount = _countSelectedMedia(); // Use local count
+    final errorNotifier = ref.read(errorProvider.notifier)..clearError();
 
-      final uploadNotifier = ref.read(mediaUploadProvider.notifier);
-      // Create a temporary list matching the desired order
-      List<File?> orderedFilesForUpload = List.filled(6, null);
-      for (int i = 0; i < _editableMedia.length; i++) {
-        if (_editableMedia[i]?.isNewFile == true) {
-          orderedFilesForUpload[i] = _editableMedia[i]!.file;
+    // Validate minimum items
+    if (currentCount < 3) {
+      errorNotifier
+          .setError(AppError.validation("Minimum 3 media items required."));
+      return;
+    }
+
+    // Validate first item is image (check local display list)
+    final firstItem = _displayItems[0];
+    bool firstIsImage = false;
+    if (firstItem is MediaUploadModel) {
+      firstIsImage = firstItem.fileType.startsWith('image/');
+    } else if (firstItem is String) {
+      final lowerUrl = firstItem.toLowerCase();
+      firstIsImage = ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp', '.tiff']
+          .any((ext) => lowerUrl.endsWith(ext));
+    }
+
+    if (firstItem == null || !firstIsImage) {
+      // Check for null as well
+      errorNotifier
+          .setError(AppError.validation("The first item must be a photo."));
+      return;
+    }
+
+    // If editing, update user provider state with local file paths/URLs
+    if (widget.isEditing) {
+      List<String> identifiers = [];
+      for (final item in _displayItems) {
+        // Iterate through local display list
+        if (item is MediaUploadModel) {
+          identifiers.add(item.file.path); // Add local path
+        } else if (item is String) {
+          identifiers.add(item); // Add existing URL
         }
+        // Null items are skipped, resulting in potentially fewer than 6 items in the final list
       }
-      // Set the files in the provider
-      for (int i = 0; i < orderedFilesForUpload.length; i++) {
-        if (orderedFilesForUpload[i] != null) {
-          uploadNotifier.setMediaFile(i, orderedFilesForUpload[i]!);
-        } else {
-          // uploadNotifier.removeMedia(i); // If provider needs explicit removal
-        }
-      }
+
+      // Update user provider with the final list of identifiers
+      ref.read(userProvider.notifier).updateMediaUrls(identifiers);
+      // If any local file was picked/reordered/cleared, this flag should be true
+      ref
+          .read(userProvider.notifier)
+          .setMediaChangedFlag(true); // Ensure flag is set if changes were made
       print(
-          "[MediaPickerScreen Onboarding] Files set in provider. Navigating to Prompts.");
+          "[MediaPickerScreen Edit] Updated userProvider state with identifiers: $identifiers. Popping back.");
+      Navigator.of(context).pop();
+    } else {
+      // --- ONBOARDING Flow ---
+      // Provider state (mediaUploadProvider) already holds the MediaUploadModels.
+      // No further action needed here before navigation.
+      print(
+          "[MediaPickerScreen Onboarding] Files ready in provider. Navigating to Prompts.");
       Navigator.pushReplacement(
           context,
           MaterialPageRoute(
@@ -308,12 +504,35 @@ class _MediaPickerState extends ConsumerState<MediaPickerScreen> {
       // --- End ONBOARDING Flow ---
     }
   }
+  // *** --- END FIX --- ***
 
   @override
   Widget build(BuildContext context) {
-    // ... (build method remains the same, header and bottom bar logic unchanged) ...
+    // Watch provider only for errors, maybe? Grid uses local state.
+    // final providerState = ref.watch(mediaUploadProvider); // Less relevant now
     final errorState = ref.watch(errorProvider);
     final screenSize = MediaQuery.of(context).size;
+
+    // Calculate enabled state within build using local list
+    final int selectedCount = _countSelectedMedia();
+    bool firstIsImage = true;
+    final firstItem = _displayItems[0]; // Check local list
+    if (firstItem is MediaUploadModel) {
+      firstIsImage = firstItem.fileType.startsWith('image/');
+    } else if (firstItem is String) {
+      final lowerUrl = firstItem.toLowerCase();
+      firstIsImage = ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp', '.tiff']
+          .any((ext) => lowerUrl.endsWith(ext));
+    } else {
+      firstIsImage = false; // Cannot proceed if first slot is null
+    }
+
+    final bool isForwardButtonEnabled = selectedCount >= 3 && firstIsImage;
+
+    // Show loading if not initialized yet
+    if (!_isInitialized) {
+      return const Scaffold(body: Center(child: CircularProgressIndicator()));
+    }
 
     return Scaffold(
       backgroundColor: const Color(0xFFFAFAFA), // Lighter background
@@ -323,7 +542,7 @@ class _MediaPickerState extends ConsumerState<MediaPickerScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // --- Adjusted Header for Edit Mode ---
+              // --- Header (keep as is) ---
               Padding(
                 padding: EdgeInsets.only(
                   top: screenSize.height * 0.02,
@@ -355,11 +574,11 @@ class _MediaPickerState extends ConsumerState<MediaPickerScreen> {
                     ),
                     if (widget.isEditing)
                       TextButton(
-                        onPressed: _isForwardButtonEnabled ? _handleDone : null,
+                        onPressed: isForwardButtonEnabled ? _handleDone : null,
                         child: Text(
                           "Done",
                           style: GoogleFonts.poppins(
-                            color: _isForwardButtonEnabled
+                            color: isForwardButtonEnabled
                                 ? const Color(0xFF8B5CF6)
                                 : Colors.grey,
                             fontWeight: FontWeight.w600,
@@ -415,10 +634,11 @@ class _MediaPickerState extends ConsumerState<MediaPickerScreen> {
                     crossAxisCount: 2,
                     mainAxisSpacing: 16,
                     crossAxisSpacing: 16,
-                    childAspectRatio: 0.95,
+                    childAspectRatio: 0.95, // Adjust aspect ratio if needed
                     shrinkWrap: true,
                     physics: const BouncingScrollPhysics(),
-                    children: List.generate(_editableMedia.length,
+                    // *** FIX: Use _displayItems.length ***
+                    children: List.generate(_displayItems.length,
                         (index) => _buildMediaPlaceholder(index)),
                     onReorder: _reorderMedia,
                   ),
@@ -436,13 +656,15 @@ class _MediaPickerState extends ConsumerState<MediaPickerScreen> {
                     ),
                   ),
                 ),
-              // --- Hide Bottom Bar in Edit Mode ---
+              // --- Bottom Bar (keep as is) ---
               if (!widget.isEditing)
                 Container(
                   padding: EdgeInsets.symmetric(
                     vertical: screenSize.height * 0.02,
                     horizontal: screenSize.width * 0.04,
                   ),
+                  margin:
+                      const EdgeInsets.only(top: 10), // Add margin if needed
                   decoration: BoxDecoration(
                     color: Colors.white,
                     borderRadius: BorderRadius.circular(16),
@@ -461,7 +683,7 @@ class _MediaPickerState extends ConsumerState<MediaPickerScreen> {
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(
-                            "${_countSelectedMedia()}/6 Selected",
+                            "${selectedCount}/6 Selected",
                             style: GoogleFonts.poppins(
                               fontSize: screenSize.width * 0.04,
                               fontWeight: FontWeight.w600,
@@ -478,17 +700,19 @@ class _MediaPickerState extends ConsumerState<MediaPickerScreen> {
                         ],
                       ),
                       GestureDetector(
-                        onTap: _handleDone,
+                        onTap: isForwardButtonEnabled
+                            ? _handleDone
+                            : null, // Use calculated state
                         child: AnimatedContainer(
                           duration: const Duration(milliseconds: 200),
                           width: 60,
                           height: 60,
                           decoration: BoxDecoration(
-                            color: _isForwardButtonEnabled
+                            color: isForwardButtonEnabled
                                 ? const Color(0xFF8B5CF6)
                                 : Colors.grey[300],
                             borderRadius: BorderRadius.circular(30),
-                            boxShadow: _isForwardButtonEnabled
+                            boxShadow: isForwardButtonEnabled
                                 ? [
                                     BoxShadow(
                                       color: const Color(0xFF8B5CF6)
@@ -501,7 +725,7 @@ class _MediaPickerState extends ConsumerState<MediaPickerScreen> {
                           ),
                           child: Icon(
                             Icons.arrow_forward_rounded,
-                            color: _isForwardButtonEnabled
+                            color: isForwardButtonEnabled
                                 ? Colors.white
                                 : Colors.grey[500],
                             size: 28,
@@ -512,7 +736,10 @@ class _MediaPickerState extends ConsumerState<MediaPickerScreen> {
                   ),
                 ),
               // --- End Hide Bottom Bar ---
-              SizedBox(height: widget.isEditing ? 0 : screenSize.height * 0.02),
+              SizedBox(
+                  height: widget.isEditing
+                      ? 16
+                      : screenSize.height * 0.02), // Adjusted bottom padding
             ],
           ),
         ),
@@ -520,11 +747,70 @@ class _MediaPickerState extends ConsumerState<MediaPickerScreen> {
     );
   }
 
-  // --- Placeholder builder remains the same conceptually ---
+  // *** --- START FIX: Modified _buildMediaPlaceholder --- ***
   Widget _buildMediaPlaceholder(int index) {
-    final item = _editableMedia[index];
+    final item = _displayItems[index]; // Read from local display list
+    final key = ValueKey(item is String
+        ? item
+        : (item as MediaUploadModel?)?.file.path ?? 'empty_$index');
+
+    bool isVideo = false;
+    bool isImage = false;
+    Widget imageWidget = Container(); // Default empty
+
+    if (item is MediaUploadModel) {
+      final file = item.file;
+      final mimeType = item.fileType;
+      isImage = mimeType.startsWith('image/');
+      isVideo = mimeType.startsWith('video/');
+      if (isImage) {
+        imageWidget = Image.file(file, fit: BoxFit.cover,
+            errorBuilder: (_, error, stack) {
+          print("Error loading local file ${file.path}: $error");
+          return const Icon(Icons.broken_image);
+        });
+      } else if (isVideo) {
+        imageWidget = Container(
+            color: Colors.grey[300],
+            child: const Center(
+                child: Icon(Icons.videocam_outlined,
+                    color: Colors.grey, size: 40)));
+      }
+    } else if (item is String && item.startsWith('http')) {
+      final lowerUrl = item.toLowerCase();
+      isImage = ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp', '.tiff']
+          .any((ext) => lowerUrl.endsWith(ext));
+      isVideo = ['.mp4', '.mov', '.avi', '.mpeg', '.mpg', '.3gp', '.ts', '.mkv']
+          .any((ext) => lowerUrl.endsWith(ext));
+      if (isImage) {
+        imageWidget = Image.network(item,
+            fit: BoxFit.cover,
+            loadingBuilder: (ctx, child, prog) => prog == null
+                ? child
+                : Center(
+                    child: CircularProgressIndicator(
+                        value: prog.expectedTotalBytes != null
+                            ? prog.cumulativeBytesLoaded /
+                                prog.expectedTotalBytes!
+                            : null,
+                        color: Colors.grey[400])),
+            errorBuilder: (ctx, err, st) {
+              print("Error loading network image $item: $err");
+              return Center(
+                  child: Icon(Icons.image_not_supported_outlined,
+                      color: Colors.grey[400], size: 40));
+            });
+      } else if (isVideo) {
+        imageWidget = Container(
+            color: Colors.grey[300],
+            child: const Center(
+                child: Icon(Icons.videocam_outlined,
+                    color: Colors.grey, size: 40)));
+      }
+    }
+
     return GestureDetector(
-      key: item?.key ?? ValueKey('empty_$index'),
+      key: key, // Use the generated key
       onTap: () => _pickMedia(index),
       child: DottedBorder(
         dashPattern: const [6, 3],
@@ -542,29 +828,12 @@ class _MediaPickerState extends ConsumerState<MediaPickerScreen> {
           child: Stack(
             fit: StackFit.expand,
             children: [
-              if (item != null)
+              if (item != null) // Show image/video placeholder if item exists
                 ClipRRect(
-                  borderRadius: BorderRadius.circular(16),
-                  child: item.isNewFile
-                      ? (item.type == MediaType.image
-                          ? Image.file(item.file!, fit: BoxFit.cover)
-                          : Container(
-                              color: Colors.grey[300],
-                              child: const Center(
-                                  child: Icon(Icons.videocam_outlined,
-                                      color: Colors.grey, size: 40))))
-                      : (item.type == MediaType.image
-                          ? Image.network(item.url!,
-                              fit: BoxFit.cover,
-                              errorBuilder: (_, __, ___) =>
-                                  const Icon(Icons.broken_image))
-                          : Container(
-                              color: Colors.grey[300],
-                              child: const Center(
-                                  child: Icon(Icons.videocam_outlined,
-                                      color: Colors.grey, size: 40)))),
-                ),
-              if (item == null)
+                    borderRadius: BorderRadius.circular(16),
+                    child: imageWidget),
+
+              if (item == null) // Show Add icon if slot is empty
                 Center(
                   child: Column(
                     mainAxisAlignment: MainAxisAlignment.center,
@@ -585,12 +854,13 @@ class _MediaPickerState extends ConsumerState<MediaPickerScreen> {
                     ],
                   ),
                 ),
-              if (item?.type == MediaType.video)
+              if (isVideo) // Show video overlay if it's a video
                 const Center(
                   child: Icon(Icons.play_circle_fill_rounded,
                       color: Colors.white70, size: 48),
                 ),
-              if (widget.isEditing && item != null)
+              // Show remove button if item exists (local or remote)
+              if (item != null)
                 Positioned(
                   top: 4,
                   right: 4,
@@ -613,6 +883,7 @@ class _MediaPickerState extends ConsumerState<MediaPickerScreen> {
       ),
     );
   }
+  // *** --- END FIX --- ***
 }
 
-enum MediaType { image, video } // Keep enum
+enum MediaType { image, video }

@@ -1,4 +1,3 @@
-// File: views/profile_screens.dart
 import 'dart:math';
 import 'dart:io';
 
@@ -19,7 +18,9 @@ import 'package:dtx/views/textpromptsselect.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_fonts/google_fonts.dart';
-import 'package:audioplayers/audioplayers.dart';
+import 'package:audioplayers/audioplayers.dart'; // Keep for local player
+import 'package:path/path.dart' as path; // Import path package
+import 'package:mime/mime.dart'; // Import mime package
 
 import 'package:dtx/models/user_model.dart';
 import 'package:dtx/providers/user_provider.dart';
@@ -27,11 +28,14 @@ import 'package:dtx/utils/app_enums.dart';
 import 'package:dtx/views/settings_screen.dart';
 import 'package:dtx/providers/error_provider.dart';
 import 'package:dtx/models/error_model.dart';
-import 'package:dtx/providers/service_provider.dart';
-import 'package:dtx/providers/media_upload_provider.dart';
-import 'package:dtx/services/api_service.dart';
-// Import audio player provider for audio playback UI state
+import 'package:dtx/providers/service_provider.dart'; // Keep
+import 'package:dtx/providers/media_upload_provider.dart'; // Keep
+import 'package:dtx/services/api_service.dart'; // Keep
+// Import audio player provider for audio playback UI state (Global player, not local)
+// Keep import if global player UI is needed elsewhere, but playback uses local _audioPlayer
 import 'package:dtx/providers/audio_player_provider.dart';
+// Import MediaRepository provider
+import 'package:dtx/repositories/media_repository.dart'; // Import MediaRepository
 
 class ProfileScreen extends ConsumerStatefulWidget {
   const ProfileScreen({Key? key}) : super(key: key);
@@ -42,10 +46,9 @@ class ProfileScreen extends ConsumerStatefulWidget {
 
 class _ProfileScreenState extends ConsumerState<ProfileScreen> {
   // Retain state for Audio Player, Edit Mode, Saving, Original Data
-  final AudioPlayer _audioPlayer =
-      AudioPlayer(); // Use LOCAL player for this screen
+  final AudioPlayer _audioPlayer = AudioPlayer();
   bool _isPlaying = false;
-  String? _currentAudioUrl; // Track which URL is playing LOCALLY
+  String? _currentAudioUrl;
   bool _isEditing = false;
   bool _isSaving = false;
   UserModel? _originalProfileData; // To store data before editing starts
@@ -53,7 +56,12 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
   @override
   void initState() {
     super.initState();
-    // Setup local audio player listeners
+    // Fetch profile if needed (e.g., if user lands directly here after login)
+    // Moved fetching logic primarily to MainNavigationScreen
+    _setupLocalAudioPlayerListeners();
+  }
+
+  void _setupLocalAudioPlayerListeners() {
     _audioPlayer.onPlayerStateChanged.listen((state) {
       if (mounted) {
         setState(() {
@@ -76,13 +84,12 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
 
   @override
   void dispose() {
-    // Dispose local audio player
     try {
       if (_audioPlayer.state == PlayerState.playing ||
           _audioPlayer.state == PlayerState.paused) {
         _audioPlayer.stop();
       }
-      _audioPlayer.release(); // Use release for better resource cleanup
+      _audioPlayer.release();
       _audioPlayer.dispose();
     } catch (e) {
       print("Error releasing/disposing local audio player: $e");
@@ -90,7 +97,7 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
     super.dispose();
   }
 
-  // --- Local Audio Control ---
+  // --- Local Audio Control --- (Keep as is)
   Future<void> _playOrPauseAudio(String audioUrl) async {
     if (!mounted) return;
     try {
@@ -101,13 +108,12 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
           _currentAudioUrl == audioUrl) {
         await _audioPlayer.resume();
       } else {
-        // Stop any previous playback before starting new
         if (currentState == PlayerState.playing ||
             currentState == PlayerState.paused) {
           await _audioPlayer.stop();
         }
-        await _audioPlayer.setSource(UrlSource(audioUrl)); // Set source first
-        await _audioPlayer.resume(); // Start playing
+        await _audioPlayer.setSource(UrlSource(audioUrl));
+        await _audioPlayer.resume();
         if (mounted) setState(() => _currentAudioUrl = audioUrl);
       }
     } catch (e) {
@@ -123,199 +129,241 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
     }
   }
 
-  // --- Edit Mode Handlers (_enterEditMode, _cancelEditMode, _handleSave) ---
+  // --- Edit Mode Handlers (_enterEditMode, _cancelEditMode) ---
   void _enterEditMode() {
-    _originalProfileData = ref.read(userProvider);
+    _originalProfileData = ref.read(userProvider); // Store original state
+    ref.read(userProvider.notifier).setMediaChangedFlag(false); // Reset flag
     setState(() => _isEditing = true);
   }
 
   void _cancelEditMode() {
     if (_originalProfileData != null) {
-      ref.read(userProvider.notifier).state = _originalProfileData!;
+      // Restore state ONLY if media hasn't changed during the edit process
+      // If media DID change, it's complex to revert provider state easily,
+      // so we might just refetch or accept the userProvider's current state.
+      // For simplicity, let's just refetch if media changed.
+      if (!ref.read(userProvider).mediaChangedDuringEdit) {
+        print("[ProfileScreen] Cancelling edit, restoring original data.");
+        ref.read(userProvider.notifier).state = _originalProfileData!;
+      } else {
+        print("[ProfileScreen] Cancelling edit, media changed, refetching.");
+        // Optionally clear the flag before refetching
+        ref.read(userProvider.notifier).setMediaChangedFlag(false);
+        ref.read(userProvider.notifier).fetchProfile();
+      }
     } else {
-      ref.read(userProvider.notifier).fetchProfile();
+      print("[ProfileScreen] Cancelling edit, no original data, refetching.");
+      ref
+          .read(userProvider.notifier)
+          .fetchProfile(); // Refetch if original is missing
     }
-    ref.read(userProvider.notifier).setMediaChangedFlag(false);
+    ref.read(errorProvider.notifier).clearError(); // Clear any edit errors
     setState(() => _isEditing = false);
   }
 
+  // --- *** UPDATED Save Handler *** ---
   Future<void> _handleSave() async {
-    print("[ProfileScreen] Starting Save Process...");
-    ref.read(errorProvider.notifier).clearError();
+    print("[ProfileScreen _handleSave] Starting Save Process...");
+    final errorNotifier = ref.read(errorProvider.notifier)..clearError();
     if (!mounted) return;
-    setState(() => _isSaving = true);
+    setState(() => _isSaving = true); // Show loading indicator
 
     final userState = ref.read(userProvider);
     final userNotifier = ref.read(userProvider.notifier);
-    List<String> finalMediaUrls = List<String>.from(userState.mediaUrls ?? []);
+    final mediaRepo = ref.read(mediaRepositoryProvider);
+    final userRepo = ref.read(userRepositoryProvider);
+
+    // Use original data for comparison if available, else current state
+    final initialMediaUrls =
+        _originalProfileData?.mediaUrls ?? userState.mediaUrls ?? [];
+    final currentMediaIdentifiers =
+        List<String>.from(userState.mediaUrls ?? []); // List from userProvider
+
+    List<String> finalMediaUrls = []; // To store the final list of S3 URLs
+    List<Map<String, String>> filesToUploadDetails = [];
+    List<MediaUploadModel> fileModelsToUpload = []; // Keep models for S3 upload
 
     try {
-      // --- Media Upload Logic ---
-      if (userState.mediaChangedDuringEdit) {
-        print("[ProfileScreen] Media changed, initiating upload...");
-        final mediaUploadNotifier = ref.read(mediaUploadProvider.notifier);
-        final currentMediaItems = userState.mediaUrls ?? []; // Mixed list
+      // --- Identify Files vs Existing URLs ---
+      print("[ProfileScreen _handleSave] Identifying files vs URLs...");
+      for (int i = 0; i < currentMediaIdentifiers.length; i++) {
+        final identifier = currentMediaIdentifiers[i];
+        if (identifier.isEmpty) continue; // Skip empty slots
 
-        final List<File> filesToUpload = [];
-        List<File?> filesForProvider = List.filled(6, null);
-
-        for (int i = 0; i < currentMediaItems.length && i < 6; i++) {
-          final item = currentMediaItems[i];
-          try {
-            // More robust check if it's a local file path
-            if (Uri.tryParse(item)?.isAbsolute == false ||
-                item.startsWith('/')) {
-              File potentialFile = File(item);
-              if (await potentialFile.exists()) {
-                filesToUpload.add(potentialFile);
-                filesForProvider[i] = potentialFile;
-                print("   - Found new file at index $i: ${potentialFile.path}");
-                continue; // Move to next item
-              }
-            }
-            // If it's not a local file, assume it's an existing URL (or invalid)
-            if (item.startsWith('http')) {
-              print("   - Found existing URL at index $i: $item");
-            } else if (item.isNotEmpty) {
-              // Avoid logging empty strings if list was padded
-              print(
-                  "   - Warning: Item at index $i is neither a valid file path nor a URL: $item");
-            }
-          } catch (e) {
-            print("Error checking file existence for item '$item': $e");
+        bool isLocalFile = false;
+        File? potentialFile;
+        try {
+          // Check if it's an absolute path (common on mobile) or relative
+          Uri? uri = Uri.tryParse(identifier);
+          if (uri != null &&
+              !uri.isAbsolute &&
+              !identifier.startsWith('http')) {
+            // If it's not an absolute URI and not HTTP(S), treat as potential file path
+            isLocalFile = true;
+          } else if (identifier.startsWith('/')) {
+            // Catch explicit absolute paths like /data/user/...
+            isLocalFile = true;
           }
+
+          if (isLocalFile) {
+            potentialFile = File(identifier);
+            // Check existence *only* if it looks like a file path
+            isLocalFile = await potentialFile.exists();
+          }
+        } catch (e) {
+          print("Error checking file path '$identifier': $e");
+          isLocalFile = false;
         }
 
-        // Check minimum media rule *before* upload attempt
-        int finalMediaCount =
-            currentMediaItems.where((item) => item.isNotEmpty).length;
-        if (finalMediaCount < 3) {
-          throw ApiException("Minimum of 3 media items required.");
-        }
-
-        if (filesToUpload.isNotEmpty) {
-          // Set files in the provider
-          for (int i = 0; i < filesForProvider.length; i++) {
-            if (filesForProvider[i] != null) {
-              mediaUploadNotifier.setMediaFile(i, filesForProvider[i]!);
-            } else {
-              mediaUploadNotifier
-                  .removeMedia(i); // Explicitly remove if slot is now empty
-            }
-          }
-
-          print("[ProfileScreen] Calling uploadAllMedia...");
-          final uploadSuccess = await mediaUploadNotifier.uploadAllMedia();
-
-          if (!uploadSuccess) {
-            print("[ProfileScreen] Media upload failed.");
-            throw ApiException("Failed to upload media. Please try again.");
-          }
-          print("[ProfileScreen] Media upload successful.");
-
-          // --- SAFER Reconstruction ---
-          final List<String> saferReconstructedUrls = [];
-          List<String?> currentItemsAfterEdit = List.from(
-              userState.mediaUrls ?? []); // Take the potentially modified list
-
-          int uploadedFileIndex =
-              0; // Track index within successfully uploaded files
-          // Get the state *after* upload completes
-          final uploadedItemsState = ref.read(mediaUploadProvider);
-          List<String> successfulUploadUrls = uploadedItemsState
-              .where((item) =>
-                  item != null &&
-                  item.status == UploadStatus.success &&
-                  item.presignedUrl != null)
-              .map((item) => item!.presignedUrl!)
-              .toList();
-
-          for (int i = 0; i < currentItemsAfterEdit.length && i < 6; i++) {
-            String item = currentItemsAfterEdit[i] ?? '';
-            bool isPotentiallyFile =
-                Uri.tryParse(item)?.isAbsolute == false || item.startsWith('/');
-
-            if (item.isEmpty) continue; // Skip empty slots
-
-            bool fileExisted = false;
-            if (isPotentiallyFile) {
-              try {
-                File fileCheck = File(item);
-                fileExisted = await fileCheck.exists();
-              } catch (e) {
-                // Handle potential errors if path is invalid format for File()
-                print("Error creating File object for check: $e");
-                fileExisted = false;
-              }
-            }
-
-            if (fileExisted) {
-              // If it was a file, use the corresponding uploaded URL
-              if (uploadedFileIndex < successfulUploadUrls.length) {
-                saferReconstructedUrls
-                    .add(successfulUploadUrls[uploadedFileIndex]);
-                uploadedFileIndex++;
-              } else {
-                print(
-                    "Warning: Mismatch between files marked for upload and successful uploads. Missing URL for potential file: $item");
-              }
-            } else if (item.startsWith('http')) {
-              // If it's a URL, keep it
-              saferReconstructedUrls.add(item);
-            }
-            // Ignore empty strings or invalid entries implicitly
-          }
-          finalMediaUrls = saferReconstructedUrls;
-
-          print(
-              "[ProfileScreen] Final reconstructed Media URLs: $finalMediaUrls");
+        if (isLocalFile && potentialFile != null) {
+          print("  - Found Local File at index $i: ${potentialFile.path}");
+          final fileName = path.basename(potentialFile.path);
+          final mimeType =
+              lookupMimeType(potentialFile.path) ?? 'application/octet-stream';
+          filesToUploadDetails.add({'filename': fileName, 'type': mimeType});
+          // Store the model WITH the file object for later upload
+          fileModelsToUpload.add(MediaUploadModel(
+            file: potentialFile,
+            fileName: fileName,
+            fileType: mimeType,
+            // presignedUrl will be added later
+          ));
+        } else if (identifier.startsWith('http')) {
+          print("  - Found Existing URL at index $i: $identifier");
+          // Add existing URL directly to the final list for now
+          // We'll reconstruct the order later
         } else {
           print(
-              "[ProfileScreen] Media marked changed, but no new files found to upload.");
-          // Use the potentially reordered/deleted list, filtering out non-URLs and empty strings
-          finalMediaUrls = currentMediaItems
-              .where((item) => item.isNotEmpty && item.startsWith('http'))
-              .toList();
-          // Re-check minimum after potential deletions
-          if (finalMediaUrls.length < 3) {
-            throw ApiException(
-                "Minimum of 3 media items required after edits.");
-          }
-        }
-      } else {
-        print("[ProfileScreen] Media not changed, using existing URLs.");
-        finalMediaUrls = userState.mediaUrls ?? [];
-        // Check minimum media rule even if not changed (in case initial state was invalid)
-        if (finalMediaUrls.length < 3) {
-          throw ApiException("Minimum of 3 media items required.");
+              "  - Warning: Skipping invalid identifier at index $i: $identifier");
         }
       }
-      // --- End Media Upload Logic ---
+      print(
+          "[ProfileScreen _handleSave] Files to upload: ${fileModelsToUpload.length}");
+
+      // --- Upload Files if Needed ---
+      Map<String, String> uploadedUrlMap =
+          {}; // Map original path -> new S3 URL
+      if (fileModelsToUpload.isNotEmpty) {
+        print(
+            "[ProfileScreen _handleSave] Getting presigned URLs for ${fileModelsToUpload.length} files...");
+        final presignedUrlsResponse =
+            await mediaRepo.getEditPresignedUrls(filesToUploadDetails);
+
+        if (presignedUrlsResponse.length != fileModelsToUpload.length) {
+          throw ApiException("Mismatch in number of presigned URLs received.");
+        }
+
+        // Prepare models with URLs for upload
+        List<Future<bool>> uploadFutures = [];
+        for (int i = 0; i < fileModelsToUpload.length; i++) {
+          final fileModel = fileModelsToUpload[i];
+          final urlData = presignedUrlsResponse.firstWhere(
+              (u) =>
+                  u['filename'] == fileModel.fileName &&
+                  u['type'] == fileModel.fileType,
+              orElse: () => throw ApiException(
+                  "Could not find presigned URL for ${fileModel.fileName}"));
+          final presignedUrl = urlData['url'] as String;
+
+          final modelWithUrl =
+              fileModel.copyWith(presignedUrl: () => presignedUrl);
+          fileModelsToUpload[i] = modelWithUrl; // Update the model in the list
+
+          print(
+              "[ProfileScreen _handleSave] Uploading ${fileModel.fileName}...");
+          // Use retryUpload for robustness
+          uploadFutures.add(mediaRepo.retryUpload(modelWithUrl).then((success) {
+            if (success) {
+              // Store mapping from original file path to S3 URL
+              uploadedUrlMap[fileModel.file.path] = presignedUrl
+                  .split('?')
+                  .first; // Store URL without query params
+            }
+            return success;
+          }));
+        }
+
+        final uploadResults = await Future.wait(uploadFutures);
+        if (uploadResults.any((success) => !success)) {
+          // Find which one failed for better logging (optional)
+          for (int i = 0; i < uploadResults.length; ++i) {
+            if (!uploadResults[i]) {
+              print("❌ Upload failed for: ${fileModelsToUpload[i].fileName}");
+            }
+          }
+          throw ApiException("One or more media uploads failed.");
+        }
+        print("[ProfileScreen _handleSave] All media uploads successful.");
+      } else {
+        print("[ProfileScreen _handleSave] No new files to upload.");
+      }
+
+      // --- Reconstruct Final URL List ---
+      print("[ProfileScreen _handleSave] Reconstructing final URL list...");
+      for (final identifier in currentMediaIdentifiers) {
+        if (identifier.isEmpty) continue;
+
+        if (uploadedUrlMap.containsKey(identifier)) {
+          // It was a local file that was successfully uploaded
+          final s3Url = uploadedUrlMap[identifier];
+          if (s3Url != null) {
+            finalMediaUrls.add(s3Url);
+            print("  - Adding New URL: $s3Url (from $identifier)");
+          } else {
+            print(
+                "  - Warning: Uploaded file path $identifier not found in URL map.");
+          }
+        } else if (identifier.startsWith('http')) {
+          // It was an existing URL
+          finalMediaUrls.add(identifier);
+          print("  - Adding Existing URL: $identifier");
+        }
+        // Skip invalid identifiers already warned about
+      }
+      print("[ProfileScreen _handleSave] Final URLs: $finalMediaUrls");
+
+      // --- Validate Final Media Count ---
+      if (finalMediaUrls.length < 3) {
+        throw ApiException(
+            "Profile must have at least 3 media items after saving.");
+      }
 
       // --- Prepare PATCH Payload ---
-      final latestUserState = ref.read(userProvider);
+      final latestUserState = ref.read(userProvider); // Read latest state again
       Map<String, dynamic> payload = latestUserState.toJsonForEdit();
-      payload['media_urls'] = finalMediaUrls; // Use the final list
+      payload['media_urls'] =
+          finalMediaUrls; // Use the final reconstructed list
 
-      payload.remove('name');
-      payload.remove('last_name');
-      payload.remove('date_of_birth');
-      payload.remove('latitude');
-      payload.remove('longitude');
-      payload.remove('gender');
-      payload.remove('id');
+      // Remove non-editable fields just in case
+      payload.removeWhere((key, value) => [
+            'name',
+            'last_name',
+            'date_of_birth',
+            'latitude',
+            'longitude',
+            'gender',
+            'id',
+            'email',
+            'phone_number',
+            'created_at',
+            'verification_status',
+            'role',
+            'verification_pic'
+          ].contains(key));
 
-      print("[ProfileScreen] Preparing PATCH payload: $payload");
+      print("[ProfileScreen _handleSave] Preparing PATCH payload: $payload");
 
       // --- Call API ---
-      final userRepository = ref.read(userRepositoryProvider);
-      final bool success = await userRepository.editProfile(payload);
+      print("[ProfileScreen _handleSave] Calling userRepo.editProfile...");
+      final bool success = await userRepo.editProfile(payload);
 
       if (success) {
-        print("[ProfileScreen] Profile edit successful.");
+        print("[ProfileScreen _handleSave] Profile edit successful.");
         // Update user provider with final URLs and reset flags
-        userNotifier.updateMediaUrls(finalMediaUrls);
-        // userNotifier.setMediaChangedFlag(false); // updateMediaUrls should reset it
+        userNotifier.updateMediaUrls(
+            finalMediaUrls); // updateMediaUrls now resets the flag internally
+        _originalProfileData = ref
+            .read(userProvider); // Update original data after successful save
 
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
@@ -327,31 +375,30 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
         }
       } else {
         print(
-            "[ProfileScreen] Profile edit failed (API returned false or non-success).");
+            "[ProfileScreen _handleSave] Profile edit failed (API returned false).");
         if (mounted && ref.read(errorProvider) == null) {
-          ref
-              .read(errorProvider.notifier)
+          errorNotifier
               .setError(AppError.server("Failed to save profile changes."));
         }
       }
     } on ApiException catch (e) {
-      print("[ProfileScreen] Save failed: API Exception - ${e.message}");
-      if (mounted)
-        ref.read(errorProvider.notifier).setError(AppError.server(e.message));
+      print(
+          "[ProfileScreen _handleSave] Save failed: API Exception - ${e.message}");
+      if (mounted) errorNotifier.setError(AppError.server(e.message));
     } catch (e, stack) {
-      print("[ProfileScreen] Save failed: Unexpected error - $e");
+      print("[ProfileScreen _handleSave] Save failed: Unexpected error - $e");
       print(stack);
-      if (mounted)
-        ref
-            .read(errorProvider.notifier)
+      if (mounted) {
+        errorNotifier
             .setError(AppError.generic("An unexpected error occurred."));
+      }
     } finally {
-      if (mounted) setState(() => _isSaving = false);
+      if (mounted) setState(() => _isSaving = false); // Hide loading indicator
     }
   }
-  // --- End Edit Mode Handlers ---
+  // --- *** END UPDATED Save Handler *** ---
 
-  // --- Helper Methods ---
+  // --- Helper Methods --- (Keep capitalizeFirstLetter, _buildTopIconButton, _buildEmptySection, _buildDetailChip, _buildSmallEditButton as is)
   String capitalizeFirstLetter(String text) {
     if (text.isEmpty) return text;
     return text[0].toUpperCase() + text.substring(1);
@@ -434,17 +481,25 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(icon,
-              size: subtle ? 16 : 18,
-              color: subtle ? Colors.grey.shade600 : const Color(0xFF8B5CF6)),
+          Icon(
+            icon,
+            size: subtle ? 16 : 18,
+            color: subtle ? Colors.grey.shade600 : const Color(0xFF8B5CF6),
+          ),
           const SizedBox(width: 6),
           Flexible(
-              child: Text(label,
-                  style: GoogleFonts.poppins(
-                      fontSize: subtle ? 13 : 14,
-                      fontWeight: FontWeight.w500,
-                      color: subtle ? Colors.grey.shade700 : Colors.grey[800]),
-                  overflow: TextOverflow.ellipsis)),
+            // Allow text to wrap if needed
+            child: Text(
+              label,
+              style: GoogleFonts.poppins(
+                fontSize: subtle ? 13 : 14,
+                fontWeight: FontWeight.w500,
+                color: subtle ? Colors.grey.shade700 : Colors.grey[800],
+              ),
+              overflow: TextOverflow.ellipsis, // Prevent long text overflow
+              maxLines: 2,
+            ),
+          ),
         ],
       ),
     );
@@ -479,41 +534,41 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
   Widget build(BuildContext context) {
     final user = ref.watch(userProvider);
     final isLoadingProfile = ref.watch(userLoadingProvider);
+    // Watch for API errors specifically during save
     final apiError = ref.watch(errorProvider);
 
-    // --- Loading State ---
+    // --- Loading State --- (Keep as is)
     if (isLoadingProfile && user.name == null && !_isEditing) {
       return Scaffold(
         backgroundColor: Colors.white,
         appBar: AppBar(
-          /* ... AppBar ... */
-          title: Text("Profile",
-              style: GoogleFonts.poppins(fontWeight: FontWeight.w600)),
-          backgroundColor: Colors.white,
-          foregroundColor: Colors.black,
-          elevation: 0,
-          automaticallyImplyLeading: false,
-          actions: [
-            _buildTopIconButton(
-                icon: Icons.edit_outlined,
-                tooltip: 'Edit Profile',
-                onPressed: () {},
-                isDisabled: true),
-            const SizedBox(width: 8),
-            _buildTopIconButton(
-                icon: Icons.settings_outlined,
-                tooltip: 'Settings',
-                onPressed: () {},
-                isDisabled: true),
-            const SizedBox(width: 8),
-          ],
-        ),
+            title: Text("Profile",
+                style: GoogleFonts.poppins(fontWeight: FontWeight.w600)),
+            backgroundColor: Colors.white,
+            foregroundColor: Colors.black,
+            elevation: 0,
+            automaticallyImplyLeading: false,
+            actions: [
+              _buildTopIconButton(
+                  icon: Icons.edit_outlined,
+                  tooltip: 'Edit Profile',
+                  onPressed: () {},
+                  isDisabled: true),
+              const SizedBox(width: 8),
+              _buildTopIconButton(
+                  icon: Icons.settings_outlined,
+                  tooltip: 'Settings',
+                  onPressed: () {},
+                  isDisabled: true),
+              const SizedBox(width: 8),
+            ]),
         body: const Center(
             child: CircularProgressIndicator(color: Color(0xFF8B5CF6))),
       );
     }
 
-    // --- Error State ---
+    // --- Error State (Display non-saving errors) ---
+    // Only show general API errors if NOT currently in the saving process
     if (apiError != null && !_isSaving) {
       return Scaffold(
         backgroundColor: Colors.white,
@@ -541,7 +596,7 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
         ),
         body: Center(
           child: Padding(
-            padding: const EdgeInsets.all(20.0), // Added padding argument
+            padding: const EdgeInsets.all(20.0),
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
@@ -573,7 +628,7 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
       );
     }
 
-    // --- Prepare Content Blocks (Logic from HomeProfileCard) ---
+    // --- Prepare Content Blocks (Logic remains the same) ---
     final List<dynamic> contentBlocks = [];
     final currentMedia = user.mediaUrls ?? [];
     final prompts = user.prompts;
@@ -581,42 +636,60 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
     contentBlocks.add("header_section");
 
     if (currentMedia.isNotEmpty) {
+      // Add the first media item or an empty placeholder if editing
       contentBlocks
           .add({"type": "media", "value": currentMedia[0], "index": 0});
-    } else {
+    } else if (_isEditing) {
       contentBlocks.add("empty_media_section");
     }
 
     if (prompts.isNotEmpty) {
       contentBlocks.add(prompts[0]);
-    } else {
+    } else if (_isEditing) {
       contentBlocks.add("empty_prompt_section");
     }
 
-    contentBlocks.add("vitals_section");
+    contentBlocks.add("vitals_section"); // Always add vitals section wrapper
 
     int mediaIndex = 1;
     int promptIndex = 1;
-    int maxRemaining = max(currentMedia.length, prompts.length);
+    // Use max of lengths OR 6/3 if editing to show empty slots potentially
+    int maxMediaSlots = _isEditing ? 6 : currentMedia.length;
+    int maxPromptSlots = _isEditing ? 3 : prompts.length;
+    int maxRemaining = max(maxMediaSlots, maxPromptSlots);
 
     for (int i = 1; i < maxRemaining; i++) {
-      if (mediaIndex < currentMedia.length) {
-        contentBlocks.add({
-          "type": "media",
-          "value": currentMedia[mediaIndex],
-          "index": mediaIndex
-        });
+      // Add Media (existing or empty slot if editing)
+      if (mediaIndex < maxMediaSlots) {
+        if (mediaIndex < currentMedia.length) {
+          contentBlocks.add({
+            "type": "media",
+            "value": currentMedia[mediaIndex],
+            "index": mediaIndex
+          });
+        } else if (_isEditing) {
+          // Add placeholder for potential add in media picker
+          contentBlocks.add({"type": "empty_media_slot", "index": mediaIndex});
+        }
         mediaIndex++;
       }
-      if (promptIndex < prompts.length) {
-        contentBlocks.add(prompts[promptIndex]);
+      // Add Prompt (existing or empty slot if editing)
+      if (promptIndex < maxPromptSlots) {
+        if (promptIndex < prompts.length) {
+          contentBlocks.add(prompts[promptIndex]);
+        } else if (_isEditing) {
+          // Add placeholder for potential add in prompt editor
+          contentBlocks
+              .add({"type": "empty_prompt_slot", "index": promptIndex});
+        }
         promptIndex++;
       }
     }
 
+    // Add Audio Prompt (existing or empty slot if editing)
     if (user.audioPrompt != null) {
       contentBlocks.add(user.audioPrompt!);
-    } else {
+    } else if (_isEditing) {
       contentBlocks.add("empty_audio_section");
     }
     // --- End Content Block Preparation ---
@@ -624,194 +697,221 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
     // --- Build UI ---
     return Scaffold(
       backgroundColor: Colors.white,
-      body: RefreshIndicator(
-        color: const Color(0xFF8B5CF6),
-        onRefresh: () async {
-          if (!_isEditing) {
-            await ref.read(userProvider.notifier).fetchProfile();
-          }
-        },
-        child: CustomScrollView(
-          physics: const BouncingScrollPhysics(
-              parent: AlwaysScrollableScrollPhysics()),
-          slivers: [
-            SliverAppBar(
-              pinned: true,
-              floating: false,
-              elevation: 1,
-              backgroundColor: Colors.white,
-              foregroundColor: Colors.black,
-              automaticallyImplyLeading: false,
-              title: Text(_isEditing ? "Edit Profile" : "Profile",
-                  style: GoogleFonts.poppins(fontWeight: FontWeight.w600)),
-              actions: _isEditing
-                  ? [
-                      /* Save/Cancel Actions */
-                      if (_isSaving)
-                        const Padding(
-                          padding: EdgeInsets.all(16.0),
-                          child: SizedBox(
-                              width: 20,
-                              height: 20,
-                              child: CircularProgressIndicator(strokeWidth: 2)),
-                        )
-                      else ...[
+      body: Stack(// Use Stack for loading overlay
+          children: [
+        RefreshIndicator(
+          color: const Color(0xFF8B5CF6),
+          onRefresh: () async {
+            if (!_isEditing) {
+              ref
+                  .read(errorProvider.notifier)
+                  .clearError(); // Clear error on refresh
+              await ref.read(userProvider.notifier).fetchProfile();
+            }
+          },
+          child: CustomScrollView(
+            physics: const BouncingScrollPhysics(
+                parent: AlwaysScrollableScrollPhysics()),
+            slivers: [
+              SliverAppBar(
+                pinned: true,
+                floating: false,
+                elevation: 1,
+                backgroundColor: Colors.white,
+                foregroundColor: Colors.black,
+                automaticallyImplyLeading: false,
+                title: Text(_isEditing ? "Edit Profile" : "Profile",
+                    style: GoogleFonts.poppins(fontWeight: FontWeight.w600)),
+                actions: _isEditing
+                    ? [
+                        /* Save/Cancel Actions */
                         TextButton(
-                            onPressed: _cancelEditMode,
+                            onPressed: _isSaving
+                                ? null
+                                : _cancelEditMode, // Disable during save
                             child: Text("Cancel",
-                                style:
-                                    GoogleFonts.poppins(color: Colors.grey))),
+                                style: GoogleFonts.poppins(
+                                    color: _isSaving
+                                        ? Colors.grey[400]
+                                        : Colors.grey))),
                         TextButton(
-                            onPressed: _handleSave,
+                            onPressed: _isSaving
+                                ? null
+                                : _handleSave, // Disable during save
                             child: Text("Save",
                                 style: GoogleFonts.poppins(
-                                    color: const Color(0xFF8B5CF6),
+                                    color: _isSaving
+                                        ? Colors.grey[400]
+                                        : const Color(0xFF8B5CF6),
                                     fontWeight: FontWeight.bold))),
                         const SizedBox(width: 8),
+                      ]
+                    : [
+                        /* View Mode Actions */
+                        _buildTopIconButton(
+                            icon: Icons.edit_outlined,
+                            tooltip: 'Edit Profile',
+                            onPressed: _enterEditMode),
+                        const SizedBox(width: 8),
+                        _buildTopIconButton(
+                            icon: Icons.settings_outlined,
+                            tooltip: 'Settings',
+                            onPressed: () => Navigator.push(
+                                context,
+                                MaterialPageRoute(
+                                    builder: (context) =>
+                                        const SettingsScreen()))),
+                        const SizedBox(width: 8),
                       ],
-                    ]
-                  : [
-                      /* View Mode Actions */
-                      _buildTopIconButton(
-                          icon: Icons.edit_outlined,
-                          tooltip: 'Edit Profile',
-                          onPressed: _enterEditMode),
-                      const SizedBox(width: 8),
-                      _buildTopIconButton(
-                          icon: Icons.settings_outlined,
-                          tooltip: 'Settings',
-                          onPressed: () => Navigator.push(
-                              context,
-                              MaterialPageRoute(
-                                  builder: (context) =>
-                                      const SettingsScreen()))),
-                      const SizedBox(width: 8),
-                    ],
-            ),
+              ),
 
-            // --- Main Content List ---
-            SliverPadding(
-              padding: const EdgeInsets.only(top: 8.0),
-              sliver: SliverList(
-                delegate: SliverChildBuilderDelegate(
-                  (context, index) {
-                    final item = contentBlocks[index];
-                    final double bottomPadding = 24.0;
-                    final double horizontalPadding = 16.0;
-                    Widget contentWidget;
+              // --- Main Content List ---
+              SliverPadding(
+                padding: const EdgeInsets.only(top: 8.0),
+                sliver: SliverList(
+                  delegate: SliverChildBuilderDelegate(
+                    (context, index) {
+                      final item = contentBlocks[index];
+                      final double bottomPadding = 24.0;
+                      final double horizontalPadding = 16.0;
+                      Widget contentWidget;
 
-                    // Build content based on type
-                    if (item is String && item == "header_section") {
-                      contentWidget = _buildHeaderBlock(user);
-                    }
-                    // Handle Empty Sections
-                    else if (item is String && item == "empty_media_section") {
-                      contentWidget = _buildEmptySection(
-                          "Photos & Videos",
-                          "Add photos and videos!",
-                          Icons.add_photo_alternate_outlined,
-                          () => Navigator.push(
-                              context,
-                              MaterialPageRoute(
-                                  builder: (context) => const MediaPickerScreen(
-                                      isEditing: true))));
-                    } else if (item is String &&
-                        item == "empty_prompt_section") {
-                      contentWidget = _buildEmptySection(
-                          "About Me",
-                          "Add prompt answers!",
-                          Icons.chat_bubble_outline,
-                          () => Navigator.push(
-                              context,
-                              MaterialPageRoute(
-                                  builder: (context) =>
-                                      ProfileAnswersScreen(isEditing: true))));
-                    } else if (item is String &&
-                        item == "empty_audio_section") {
-                      contentWidget = _buildEmptySection(
-                          "Voice Prompt",
-                          "Record a voice prompt!",
-                          Icons.mic_none_rounded,
-                          () => Navigator.push(
-                              context,
-                              MaterialPageRoute(
-                                  builder: (context) => const VoicePromptScreen(
-                                      isEditing: true))));
-                    }
-                    // Handle Content Items
-                    else if (item is Map && item["type"] == "media") {
-                      String displayValue = item["value"];
-                      bool isLocalFile =
-                          Uri.tryParse(displayValue)?.isAbsolute == false ||
-                              displayValue.startsWith('/');
-                      File? tempFile = isLocalFile ? File(displayValue) : null;
-                      // Check existence async (might cause flicker, but safer)
-                      // A better approach might be to store type info in the list
-                      Future<bool> checkFileExists() async {
-                        if (tempFile == null) return false;
-                        try {
-                          return await tempFile.exists();
-                        } catch (e) {
-                          return false;
-                        }
+                      // Build content based on type
+                      if (item is String && item == "header_section") {
+                        contentWidget = _buildHeaderBlock(user);
+                      }
+                      // Handle Empty Sections (Placeholders shown during edit)
+                      else if (item is String &&
+                          item == "empty_media_section") {
+                        contentWidget = _buildEmptySection(
+                            "Photos & Videos",
+                            "Add photos and videos!",
+                            Icons.add_photo_alternate_outlined,
+                            () => Navigator.push(
+                                context,
+                                MaterialPageRoute(
+                                    builder: (context) =>
+                                        const MediaPickerScreen(
+                                            isEditing: true))));
+                      } else if (item is String &&
+                          item == "empty_prompt_section") {
+                        contentWidget = _buildEmptySection(
+                            "About Me",
+                            "Add prompt answers!",
+                            Icons.chat_bubble_outline,
+                            () => Navigator.push(
+                                context,
+                                MaterialPageRoute(
+                                    builder: (context) => ProfileAnswersScreen(
+                                        isEditing: true))));
+                      } else if (item is String &&
+                          item == "empty_audio_section") {
+                        contentWidget = _buildEmptySection(
+                            "Voice Prompt",
+                            "Record a voice prompt!",
+                            Icons.mic_none_rounded,
+                            () => Navigator.push(
+                                context,
+                                MaterialPageRoute(
+                                    builder: (context) =>
+                                        const VoicePromptScreen(
+                                            isEditing: true))));
+                      } else if (item is Map &&
+                          item["type"] == "empty_media_slot") {
+                        contentWidget = _buildEmptyMediaSlot(() =>
+                            Navigator.push(
+                                context,
+                                MaterialPageRoute(
+                                    builder: (context) =>
+                                        const MediaPickerScreen(
+                                            isEditing: true))));
+                      } else if (item is Map &&
+                          item["type"] == "empty_prompt_slot") {
+                        contentWidget = _buildEmptyPromptSlot(
+                            item["index"],
+                            () => Navigator.push(
+                                context,
+                                MaterialPageRoute(
+                                    builder: (context) => TextSelectPromptScreen(
+                                        isEditing:
+                                            true)))); // Pass index if needed later
                       }
 
-                      contentWidget = FutureBuilder<bool>(
-                          future: checkFileExists(),
-                          builder: (context, snapshot) {
-                            // While checking, show placeholder or previous state?
-                            bool fileDefinitelyExists = snapshot.data == true;
-                            return _buildMediaItem(
-                                context, ref, displayValue, item["index"],
-                                isLocalFile: fileDefinitelyExists);
-                          });
-                    } else if (item is Prompt) {
-                      int promptEditIndex = user.prompts
-                          .indexWhere((p) => p.question == item.question);
-                      contentWidget = _buildPromptItem(item,
-                          onEditTap: () => Navigator.push(
-                              context,
-                              MaterialPageRoute(
-                                  builder: (context) => TextSelectPromptScreen(
-                                      isEditing: true,
-                                      editIndex: promptEditIndex >= 0
-                                          ? promptEditIndex
-                                          : null))));
-                    } else if (item is AudioPromptModel) {
-                      contentWidget = _buildAudioItem(item,
-                          onEditTap: () => Navigator.push(
-                              context,
-                              MaterialPageRoute(
-                                  builder: (context) => const VoicePromptScreen(
-                                      isEditing: true))));
-                    } else if (item is String && item == "vitals_section") {
-                      contentWidget = _buildVitalsBlock(user,
-                          onEditTap: _navigateToVitalsEditFlow);
-                    } else {
-                      contentWidget = const SizedBox.shrink();
-                    }
+                      // Handle Content Items
+                      else if (item is Map && item["type"] == "media") {
+                        String displayValue = item["value"];
+                        bool isLocalFile = false;
+                        // More robust check if it's a local file path vs URL
+                        if (!displayValue.startsWith('http') &&
+                            (displayValue.contains('/') ||
+                                displayValue.contains('\\'))) {
+                          // Basic check: Doesn't start with http and contains path separators
+                          // A more reliable check might involve trying File(displayValue).exists() but that's async
+                          isLocalFile = true;
+                        }
+                        contentWidget = _buildMediaItem(
+                            context, ref, displayValue, item["index"],
+                            isLocalFile: isLocalFile);
+                      } else if (item is Prompt) {
+                        int promptEditIndex = user.prompts
+                            .indexWhere((p) => p.question == item.question);
+                        contentWidget = _buildPromptItem(item,
+                            onEditTap: () => Navigator.push(
+                                context,
+                                MaterialPageRoute(
+                                    builder: (context) =>
+                                        TextSelectPromptScreen(
+                                            isEditing: true,
+                                            editIndex: promptEditIndex >= 0
+                                                ? promptEditIndex
+                                                : null))));
+                      } else if (item is AudioPromptModel) {
+                        contentWidget = _buildAudioItem(item,
+                            onEditTap: () => Navigator.push(
+                                context,
+                                MaterialPageRoute(
+                                    builder: (context) =>
+                                        const VoicePromptScreen(
+                                            isEditing: true))));
+                      } else if (item is String && item == "vitals_section") {
+                        contentWidget = _buildVitalsBlock(user,
+                            onEditTap: _navigateToVitalsEditFlow);
+                      } else {
+                        contentWidget = const SizedBox.shrink();
+                      }
 
-                    return Padding(
-                      padding: EdgeInsets.fromLTRB(horizontalPadding, 0,
-                          horizontalPadding, bottomPadding),
-                      child: contentWidget,
-                    );
-                  },
-                  childCount: contentBlocks.length,
+                      return Padding(
+                        padding: EdgeInsets.fromLTRB(horizontalPadding, 0,
+                            horizontalPadding, bottomPadding),
+                        child: contentWidget,
+                      );
+                    },
+                    childCount: contentBlocks.length,
+                  ),
                 ),
               ),
-            ),
-            const SliverToBoxAdapter(child: SizedBox(height: 20)),
-          ],
+              const SliverToBoxAdapter(child: SizedBox(height: 20)),
+            ],
+          ),
         ),
-      ),
+        // --- Loading Overlay ---
+        if (_isSaving)
+          Positioned.fill(
+            child: Container(
+              color: Colors.black.withOpacity(0.5),
+              child: const Center(
+                child: CircularProgressIndicator(color: Color(0xFF8B5CF6)),
+              ),
+            ),
+          ),
+      ]),
     );
   }
 
-// --- Block Builder Widgets (Adapted for ProfileScreen) ---
+  // --- Block Builder Widgets (Adapted for ProfileScreen) ---
 
   Widget _buildHeaderBlock(UserModel user) {
-    // (Same as before, uses _buildEditableChip and _buildAddChip correctly)
+    // (Keep as is)
     final age = user.age;
     final capitalizedName =
         user.name != null ? capitalizeFirstLetter(user.name!) : "Your Name";
@@ -840,10 +940,28 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
             if (user.gender != null)
               _buildDetailChip(Icons.person_outline_rounded, user.gender!.label,
                   subtle: true),
-            // Non-editable Hometown
+            // Editable - Hometown (Now editable via Vitals flow)
             if (user.hometown != null && user.hometown!.isNotEmpty)
-              _buildDetailChip(Icons.location_on_outlined, user.hometown!,
+              _buildEditableChip(
+                icon: Icons.location_on_outlined,
+                label: user.hometown!,
+                onEditTap: () => Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                        builder: (context) =>
+                            const HometownScreen(isEditing: true))),
+                subtle: true, // Keep subtle look
+              )
+            else if (_isEditing)
+              _buildAddChip(
+                  label: "Add Hometown",
+                  onAddTap: () => Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                          builder: (context) =>
+                              const HometownScreen(isEditing: true))),
                   subtle: true),
+
             // Editable - Dating Intention
             if (user.datingIntention != null)
               _buildEditableChip(
@@ -870,21 +988,27 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
     );
   }
 
-// --- Modified Media Item Builder ---
+  // --- Modified Media Item Builder ---
   Widget _buildMediaItem(
       BuildContext context, WidgetRef ref, String urlOrPath, int index,
       {required bool isLocalFile}) {
-    // Edit button logic integrated here
-    final bool canEdit =
-        _isEditing; // Allow editing/reordering from the main picker
     bool isVideo = false;
     if (!isLocalFile) {
-      isVideo = urlOrPath.toLowerCase().contains('.mp4') ||
-          urlOrPath.toLowerCase().contains('.mov');
+      // Basic URL check for video extensions
+      final lowerUrl = urlOrPath.toLowerCase();
+      isVideo = ['.mp4', '.mov', '.avi', '.mpeg', '.mpg', '.3gp', '.ts', '.mkv']
+          .any((ext) => lowerUrl.endsWith(ext));
     } else {
-      // Basic check for local video files (might need refinement)
-      String ext = urlOrPath.split('.').last.toLowerCase();
-      isVideo = ['mp4', 'mov', 'avi', 'mkv'].contains(ext);
+      // Use MIME type for local files if possible, fallback to extension
+      final mimeType = lookupMimeType(urlOrPath);
+      if (mimeType != null) {
+        isVideo = mimeType.startsWith('video/');
+      } else {
+        // Fallback extension check for local files
+        String ext = path.basename(urlOrPath).split('.').last.toLowerCase();
+        isVideo = ['mp4', 'mov', 'avi', 'mpeg', 'mpg', '3gp', 'ts', 'mkv']
+            .contains(ext);
+      }
     }
 
     return ClipRRect(
@@ -901,7 +1025,7 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                 Image.file(File(urlOrPath),
                     fit: BoxFit.cover,
                     errorBuilder: (_, __, ___) =>
-                        const Icon(Icons.broken_image)) // Display local file
+                        const Icon(Icons.broken_image))
               else
                 Image.network(urlOrPath,
                     fit: BoxFit.cover,
@@ -923,29 +1047,40 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                   child: Container(
                     padding: const EdgeInsets.all(10),
                     decoration: BoxDecoration(
-                      color: Colors.black.withOpacity(0.5),
-                      shape: BoxShape.circle,
-                    ),
+                        color: Colors.black.withOpacity(0.5),
+                        shape: BoxShape.circle),
                     child: const Icon(Icons.play_arrow_rounded,
                         color: Colors.white, size: 30),
                   ),
                 ),
 
-              // Edit Button (Top Right, conditionally shown ONLY FOR THE FIRST IMAGE)
-              // The MediaPickerScreen handles reordering/deleting others
-              if (_isEditing && index == 0) // Show only for the first image
+              // *** --- START FIX: Edit Button Condition --- ***
+              // Show edit button if _isEditing, regardless of index
+              if (_isEditing)
+                // *** --- END FIX --- ***
                 Positioned(
                   top: 8,
                   right: 8,
                   child: _buildSmallEditButton(
-                      icon: Icons.edit, // Use edit icon for consistency
-                      tooltip:
-                          "Edit Media Gallery", // Tooltip reflects gallery edit
-                      onPressed: () => Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                              builder: (context) =>
-                                  const MediaPickerScreen(isEditing: true)))),
+                      icon: Icons.edit, // Use edit icon
+                      tooltip: "Edit Media Gallery",
+                      onPressed: () async {
+                        // Make async
+                        // --- ADDED: Clear media provider before navigating ---
+                        print(
+                            "[ProfileScreen] Clearing mediaUploadProvider before navigating to MediaPickerScreen (Edit).");
+                        ref.read(mediaUploadProvider.notifier).state =
+                            List.filled(6, null);
+                        // --- END ADDED ---
+                        await Navigator.push(
+                            // Await navigation
+                            context,
+                            MaterialPageRoute(
+                                builder: (context) =>
+                                    const MediaPickerScreen(isEditing: true)));
+                        // Optional: Force rebuild or state sync after returning?
+                        // Not strictly necessary if MediaPickerScreen correctly updates userProvider.
+                      }),
                 ),
             ],
           ),
@@ -954,7 +1089,66 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
     );
   }
 
+  // --- NEW: Empty Media Slot ---
+  Widget _buildEmptyMediaSlot(VoidCallback onEditTap) {
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(10),
+      child: AspectRatio(
+        aspectRatio: 4 / 5.5,
+        child: Material(
+          color: Colors.grey[100],
+          child: InkWell(
+            onTap: onEditTap, // Navigate to media picker
+            child: Center(
+              child: Icon(Icons.add_photo_alternate_outlined,
+                  size: 40, color: Colors.grey[400]),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  // --- NEW: Empty Prompt Slot ---
+  Widget _buildEmptyPromptSlot(int index, VoidCallback onEditTap) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+          color: Colors.grey[50],
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: Colors.grey[200]!)),
+      child: Material(
+        // Wrap with Material for InkWell effect
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: onEditTap, // Navigate to prompt selection/writing
+          borderRadius: BorderRadius.circular(16), // Match container radius
+          child: Padding(
+            // Add padding inside InkWell for content
+            padding: const EdgeInsets.symmetric(
+                vertical: 20), // Adjust vertical padding
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center, // Center content
+              children: [
+                Icon(Icons.add_circle_outline,
+                    color: Colors.grey[400], size: 24),
+                const SizedBox(width: 8),
+                Text(
+                  "Add prompt #${index + 1}",
+                  style: GoogleFonts.poppins(
+                      fontSize: 16, color: Colors.grey[600]),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _buildPromptItem(Prompt prompt, {required VoidCallback onEditTap}) {
+    // (Keep as is)
     if (prompt.answer.trim().isEmpty && !_isEditing)
       return const SizedBox.shrink();
     return Container(
@@ -1000,7 +1194,7 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
           ),
           if (_isEditing) // Show edit button only in edit mode
             Positioned(
-              top: -12, // Adjust for better positioning
+              top: -12,
               right: -12,
               child: _buildSmallEditButton(
                   onPressed: onEditTap, tooltip: "Edit Prompt"),
@@ -1012,14 +1206,13 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
 
   Widget _buildAudioItem(AudioPromptModel audio,
       {required VoidCallback onEditTap}) {
-    final bool isThisPlaying =
-        _currentAudioUrl == audio.audioUrl && _isPlaying; // Use local state
+    // (Keep as is)
+    final bool isThisPlaying = _currentAudioUrl == audio.audioUrl && _isPlaying;
     final bool isThisPaused = _currentAudioUrl == audio.audioUrl &&
         !_isPlaying &&
-        _audioPlayer.state == PlayerState.paused; // Use local state
+        _audioPlayer.state == PlayerState.paused;
 
     return Container(
-      // Removed outer Column
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
         color: Colors.white,
@@ -1033,13 +1226,11 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
         ],
       ),
       child: Stack(
-        // Use Stack for the edit button
         clipBehavior: Clip.none,
         children: [
           Row(
             children: [
               InkWell(
-                // Play/Pause Button
                 onTap: () => _playOrPauseAudio(audio.audioUrl),
                 borderRadius: BorderRadius.circular(24),
                 child: Container(
@@ -1064,7 +1255,6 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
               ),
               const SizedBox(width: 16),
               Expanded(
-                // Prompt Text
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
@@ -1085,7 +1275,6 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
               ),
             ],
           ),
-          // Edit Button (Top Right)
           if (_isEditing)
             Positioned(
               top: -12,
@@ -1099,8 +1288,8 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
   }
 
   Widget _buildVitalsBlock(UserModel user, {required VoidCallback onEditTap}) {
+    // (Keep as is)
     final List<Widget> vitals = [];
-    // --- Use _buildEditableChip and _buildAddChip ---
     if (user.height != null && user.height!.isNotEmpty)
       vitals.add(_buildEditableChip(
           icon: Icons.height_rounded,
@@ -1119,16 +1308,25 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
               MaterialPageRoute(
                   builder: (context) =>
                       const ReligionScreen(isEditing: true)))));
-    // Display Hometown (Not Editable)
-    if (user.hometown != null && user.hometown!.isNotEmpty)
-      vitals
-          .add(_buildDetailChip(Icons.location_city_outlined, user.hometown!));
-    // Display Job Title (Not Editable)
+    // Editable Job/Edu via this block's edit button
     if (user.jobTitle != null && user.jobTitle!.isNotEmpty)
-      vitals.add(_buildDetailChip(Icons.work_outline_rounded, user.jobTitle!));
-    // Display Education (Not Editable)
+      vitals.add(_buildEditableChip(
+          icon: Icons.work_outline_rounded,
+          label: user.jobTitle!,
+          onEditTap: () => Navigator.push(
+              context,
+              MaterialPageRoute(
+                  builder: (context) =>
+                      const JobTitleScreen(isEditing: true)))));
     if (user.education != null && user.education!.isNotEmpty)
-      vitals.add(_buildDetailChip(Icons.school_outlined, user.education!));
+      vitals.add(_buildEditableChip(
+          icon: Icons.school_outlined,
+          label: user.education!,
+          onEditTap: () => Navigator.push(
+              context,
+              MaterialPageRoute(
+                  builder: (context) =>
+                      const StudyLocationScreen(isEditing: true)))));
     // Editable Habits
     if (user.drinkingHabit != null)
       vitals.add(_buildEditableChip(
@@ -1167,15 +1365,6 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                 MaterialPageRoute(
                     builder: (context) =>
                         const ReligionScreen(isEditing: true)))));
-      // Add chips for non-editable fields if empty during edit
-      if (user.hometown == null || user.hometown!.isEmpty)
-        vitals.add(_buildAddChip(
-            label: "Add Hometown",
-            onAddTap: () => Navigator.push(
-                context,
-                MaterialPageRoute(
-                    builder: (context) =>
-                        const HometownScreen(isEditing: true)))));
       if (user.jobTitle == null || user.jobTitle!.isEmpty)
         vitals.add(_buildAddChip(
             label: "Add Job",
@@ -1192,7 +1381,6 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                 MaterialPageRoute(
                     builder: (context) =>
                         const StudyLocationScreen(isEditing: true)))));
-      // Add chips for editable habits if empty during edit
       if (user.drinkingHabit == null)
         vitals.add(_buildAddChip(
             label: "Add Drinking Habit",
@@ -1211,15 +1399,11 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                         const SmokingScreen(isEditing: true)))));
     }
 
-    if (vitals.isEmpty && !_isEditing) {
-      return const SizedBox.shrink();
-    }
-    if (vitals.isEmpty && _isEditing) {
+    if (vitals.isEmpty && !_isEditing) return const SizedBox.shrink();
+    if (vitals.isEmpty && _isEditing)
       return _buildEmptySection("Vitals & Habits", "Add more details!",
           Icons.list_alt_rounded, onEditTap);
-    }
 
-    // Changed to a Column layout for better wrapping control
     return Container(
         width: double.infinity,
         padding: const EdgeInsets.all(16),
@@ -1259,7 +1443,7 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
         ]));
   }
 
-  // --- Editable Chip Widget ---
+  // --- Editable Chip Widget --- (Keep as is)
   Widget _buildEditableChip({
     required IconData icon,
     required String label,
@@ -1304,14 +1488,14 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
     );
   }
 
-  // --- Add Chip Widget ---
+  // --- Add Chip Widget --- (Keep as is)
   Widget _buildAddChip({
     required String label,
     required VoidCallback onAddTap,
     bool subtle = false,
   }) {
     return InkWell(
-      onTap: onAddTap, // Should always be active in edit mode
+      onTap: onAddTap,
       borderRadius: BorderRadius.circular(20),
       child: Container(
         padding: EdgeInsets.symmetric(
@@ -1341,9 +1525,8 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
     );
   }
 
-  // Helper to navigate to the start of the vitals editing flow
+  // Helper to navigate to the start of the vitals editing flow (Keep as is)
   void _navigateToVitalsEditFlow() {
-    // Example: Navigate to edit Height, then others can be accessed from Profile screen
     Navigator.push(
         context,
         MaterialPageRoute(
