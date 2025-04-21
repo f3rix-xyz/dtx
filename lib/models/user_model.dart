@@ -1,8 +1,9 @@
 // File: lib/models/user_model.dart
-import 'package:dtx/utils/app_enums.dart';
-// No need for 'dart:convert' import here unless used elsewhere in this specific file
+import 'dart:convert';
 
-// --- Prompt Class --- (No changes needed)
+import 'package:dtx/utils/app_enums.dart';
+
+// --- Prompt Class --- (No changes needed from previous correct version)
 class Prompt {
   final PromptCategory category;
   final PromptType question;
@@ -31,9 +32,12 @@ class Prompt {
         .firstWhere((e) => e.value == json['question'], orElse: () {
       print(
           "Warning: Unknown prompt question '${json['question']}' for category '${category.value}', defaulting.");
-      return category.getPrompts().isNotEmpty
-          ? category.getPrompts().first
-          : PromptType.twoTruthsAndALie; // A fallback default
+      // Ensure the default question belongs to the determined category or provide a universal fallback
+      List<PromptType> categoryPrompts = category.getPrompts();
+      return categoryPrompts.isNotEmpty
+          ? categoryPrompts.first // Default to the first prompt of the category
+          : PromptType
+              .twoTruthsAndALie; // Universal fallback if category has no prompts (shouldn't happen)
     });
 
     return Prompt(
@@ -57,7 +61,7 @@ class Prompt {
   }
 }
 
-// --- AudioPromptModel Class --- (No changes needed)
+// --- AudioPromptModel Class --- (No changes needed from previous correct version)
 class AudioPromptModel {
   final AudioPrompt prompt;
   final String audioUrl; // Renamed from answer for clarity
@@ -67,12 +71,11 @@ class AudioPromptModel {
     required this.audioUrl, // Renamed
   });
 
-  // --- UPDATED toJson for PATCH ---
+  // toJson for PATCH
   Map<String, dynamic> toJson() => {
         'question': prompt.value, // Key expected by PATCH
         'answer_url': audioUrl, // Key expected by PATCH
       };
-  // --- END UPDATED toJson ---
 
   factory AudioPromptModel.fromJson(Map<String, dynamic> json) {
     // Parse Question (assuming it's always a map)
@@ -129,7 +132,7 @@ class UserModel {
   final double? longitude;
   final Gender? gender;
   final DatingIntention? datingIntention;
-  final String? height;
+  final String? height; // Store as string e.g., "5' 11\""
   final String? hometown;
   final String? jobTitle;
   final String? education;
@@ -142,8 +145,7 @@ class UserModel {
   final String? verificationStatus;
   final String? verificationPic;
   final String? role;
-  // --- NEW: Internal flag for media changes ---
-  final bool mediaChangedDuringEdit; // Track if media screen was edited
+  final bool mediaChangedDuringEdit;
 
   UserModel({
     this.id,
@@ -169,7 +171,7 @@ class UserModel {
     this.verificationStatus,
     this.verificationPic,
     this.role,
-    this.mediaChangedDuringEdit = false, // Default to false
+    this.mediaChangedDuringEdit = false,
   });
 
   int? get age {
@@ -192,7 +194,7 @@ class UserModel {
     return null;
   }
 
-  // toJson remains the same (might be useful for other things)
+  // toJson (General Purpose)
   Map<String, dynamic> toJson() => {
         'id': id,
         'name': name,
@@ -204,7 +206,7 @@ class UserModel {
         'longitude': longitude,
         'gender': gender?.value,
         'dating_intention': datingIntention?.value,
-        'height': height,
+        'height': height, // Send height string as is
         'hometown': hometown,
         'job_title': jobTitle,
         'education': education,
@@ -213,33 +215,26 @@ class UserModel {
         'smoking_habit': smokingHabit?.value,
         'media_urls': mediaUrls,
         'prompts': prompts.map((prompt) => prompt.toJson()).toList(),
-        // Use AudioPromptModel's toJson which is now formatted for PATCH
-        'audio_prompt': audioPrompt?.toJson(),
+        'audio_prompt': audioPrompt?.toJson(), // Uses AudioPromptModel's toJson
         'verification_status': verificationStatus,
         'verification_pic': verificationPic,
         'role': role,
       };
 
-  // toJsonForProfileUpdate remains the same (for onboarding step 2 POST)
+  // toJsonForProfileUpdate (For Onboarding Step 2 POST)
   Map<String, dynamic> toJsonForProfileUpdate() {
     String? formattedDate(DateTime? dt) {
       if (dt == null) return null;
       return "${dt.year}-${dt.month.toString().padLeft(2, '0')}-${dt.day.toString().padLeft(2, '0')}";
     }
 
-    String? formattedHeight(String? h) {
-      // Height format conversion is likely handled by the backend on POST
-      // but we can keep the frontend format consistent if needed.
-      return h?.replaceAll("' ", "'"); // Example: ensure single space
-    }
-
     final Map<String, dynamic> data = {};
     if (name != null) data['name'] = name;
-    data['last_name'] = lastName ?? ""; // Send empty string if null for POST
+    data['last_name'] = lastName ?? "";
     if (dateOfBirth != null) data['date_of_birth'] = formattedDate(dateOfBirth);
     if (datingIntention != null)
       data['dating_intention'] = datingIntention!.value;
-    if (height != null) data['height'] = formattedHeight(height);
+    if (height != null) data['height'] = height; // Send height string as is
     if (hometown != null) data['hometown'] = hometown;
     if (jobTitle != null) data['job_title'] = jobTitle;
     if (education != null) data['education'] = education;
@@ -249,24 +244,17 @@ class UserModel {
     if (smokingHabit != null) data['smoking_habit'] = smokingHabit!.value;
     if (prompts.isNotEmpty)
       data['prompts'] = prompts.map((p) => p.toJson()).toList();
-    // Note: Audio prompt and media are handled by separate endpoints during initial onboarding POSTs
+    // Audio/Media handled separately during onboarding POSTs
     return data;
   }
 
-  // --- NEW: toJsonForEdit for PATCH request ---
+  // toJsonForEdit (For Profile Edit PATCH)
   Map<String, dynamic> toJsonForEdit() {
-    String? formattedHeight(String? h) {
-      // Apply formatting consistent with API expectation if needed
-      return h?.replaceAll("' ", "'"); // Example
-    }
-
     final Map<String, dynamic> data = {};
-    // --- ONLY include fields that are editable and have values ---
-    // Non-editable: name, last_name, dob, gender, location
+    // Only include editable fields with values
     if (datingIntention != null)
       data['dating_intention'] = datingIntention!.value;
-    if (height != null && height!.isNotEmpty)
-      data['height'] = formattedHeight(height);
+    if (height != null && height!.isNotEmpty) data['height'] = height;
     if (hometown != null && hometown!.isNotEmpty) data['hometown'] = hometown;
     if (jobTitle != null && jobTitle!.isNotEmpty) data['job_title'] = jobTitle;
     if (education != null && education!.isNotEmpty)
@@ -277,19 +265,17 @@ class UserModel {
     if (smokingHabit != null) data['smoking_habit'] = smokingHabit!.value;
 
     // Handle optional fields where null means "remove"
-    if (hometown == null)
-      data['hometown'] = null; // Explicitly set to null if cleared
+    if (hometown == null) data['hometown'] = null;
     if (jobTitle == null) data['job_title'] = null;
     if (education == null) data['education'] = null;
 
-    // Always include prompts, even if empty, to allow removal
+    // Always include prompts (even if empty)
     data['prompts'] = prompts.map((p) => p.toJson()).toList();
 
-    // Include audio_prompt only if it exists
+    // Handle audio prompt (null to remove)
     if (audioPrompt != null) {
-      data['audio_prompt'] = audioPrompt!.toJson(); // Uses the corrected toJson
+      data['audio_prompt'] = audioPrompt!.toJson();
     } else {
-      // To remove audio prompt, explicitly send null
       data['audio_prompt'] = null;
     }
 
@@ -298,224 +284,271 @@ class UserModel {
 
     return data;
   }
-  // --- END NEW ---
 
-  // fromJson remains the same
+  // fromJson Factory
   factory UserModel.fromJson(Map<String, dynamic> json) {
     // --- Helper Functions ---
     String? getString(dynamic field) {
-      if (field is Map && field['Valid'] == true && field['String'] != null) {
-        return field['String'] as String?;
-      } else if (field is String) {
-        return field;
-      } else if (field is int || field is double) {
+      // Handle direct strings first
+      if (field is String) {
+        return field.isNotEmpty ? field : null;
+      }
+      // Handle pgtype.Text map structure
+      if (field is Map && field['Valid'] == true && field['String'] is String) {
+        return field['String'];
+      }
+      // Handle other types (e.g., if backend sends numbers unexpectedly)
+      if (field is num) {
         return field.toString();
       }
-      return null;
+      return null; // Default to null if not a valid string or valid pgtype.Text
     }
 
     String? getHeight(dynamic field) {
-      if (field is Map && field['Valid'] == true && field['String'] != null) {
-        return field['String'] as String?;
-      } else if (field is String) {
-        // Backend might send "5' 11\"" or "5'11\""
-        return field.replaceAll("' ",
-            "'"); // Standardize to single space or no space? Check API doc.
-      } else if (field is int || field is double) {
-        // Convert cm/inches if backend sends numeric height sometimes
-        double totalInches = (field as num) * 0.393701;
+      // Prioritize direct string (e.g., "5' 11\"")
+      if (field is String && field.isNotEmpty) {
+        return field;
+      }
+      // Handle pgtype.Text for height (might be used if nullable)
+      if (field is Map && field['Valid'] == true && field['String'] is String) {
+        return field['String'];
+      }
+      // Handle pgtype.Float8 (inches) - convert TO string format
+      if (field is Map && field['Valid'] == true && field['Float64'] is num) {
+        double totalInches = (field['Float64'] as num).toDouble();
+        if (totalInches <= 0) return null;
         int feet = (totalInches / 12).floor();
         int inches = (totalInches % 12).round();
         if (inches == 12) {
           feet++;
           inches = 0;
         }
-        return "$feet' $inches\""; // Ensure this format matches API exactly
+        return "$feet' $inches\"";
       }
-      return null;
+      // Handle direct number (assume inches) - convert TO string format
+      if (field is num) {
+        double totalInches = field.toDouble();
+        if (totalInches <= 0) return null;
+        int feet = (totalInches / 12).floor();
+        int inches = (totalInches % 12).round();
+        if (inches == 12) {
+          feet++;
+          inches = 0;
+        }
+        return "$feet' $inches\"";
+      }
+      return null; // Default to null
     }
 
     String? getEnumString(dynamic field, String key) {
+      // Prefer direct string
+      if (field is String) {
+        return field;
+      }
+      // Handle pgtype map structure
       if (field is Map && field['Valid'] == true && field[key] != null) {
         return field[key] as String?;
-      } else if (field is String) {
-        // Handle direct string enums
-        return field;
       }
       return null;
     }
 
     DateTime? getDate(dynamic field) {
       String? dateStr;
-      if (field is Map && field['Valid'] == true && field['Time'] != null) {
-        dateStr = field['Time'] as String?;
-      } else if (field is String) {
+      // Prefer direct string
+      if (field is String) {
         dateStr = field;
       }
+      // Handle pgtype map structure
+      else if (field is Map &&
+          field['Valid'] == true &&
+          field['Time'] != null) {
+        dateStr = field['Time'] as String?;
+      }
+
       if (dateStr != null) {
         try {
+          // Handle YYYY-MM-DD or YYYY-MM-DDTHH:MM:SSZ format
           if (dateStr.contains('T')) {
-            return DateTime.parse(dateStr.split('T').first);
+            return DateTime.parse(dateStr.split('T').first).toLocal();
           } else if (RegExp(r'^\d{4}-\d{2}-\d{2}$').hasMatch(dateStr)) {
-            return DateTime.parse(dateStr);
+            return DateTime.parse(dateStr).toLocal();
           }
         } catch (e) {
-          print("Error parsing date: $e, value: $field");
+          print("[UserModel fromJson] Error parsing date: $e, value: $field");
         }
       }
       return null;
     }
 
     double? getDouble(dynamic field) {
+      // Prefer direct number
+      if (field is num) {
+        return field.toDouble();
+      }
+      // Handle pgtype map structure
       if (field is Map && field['Valid'] == true && field['Float64'] != null) {
         return (field['Float64'] as num?)?.toDouble();
-      } else if (field is num) {
-        return field.toDouble();
       }
       return null;
     }
 
     T? parseEnum<T>(List<T> enumValues, dynamic field, String key) {
-      // Use getEnumString which handles both map and direct string
       final valueStr = getEnumString(field, key);
       if (valueStr != null) {
         for (final enumValue in enumValues) {
           try {
-            // Assuming enums have a '.value' getter holding the string representation
             if ((enumValue as dynamic).value.toString() == valueStr) {
               return enumValue;
             }
           } catch (e) {
-            // This catch block is tricky if enums don't uniformly have '.value'
-            // Consider a more robust mapping if enums are inconsistent.
-            // print("Error accessing '.value' for enum ${T.toString()} (value: $valueStr): $e");
-            // Fallback: Check toString() representation (less reliable)
+            // Fallback for enums without .value (less reliable)
             if (enumValue.toString().split('.').last == valueStr) {
-              // print("Fallback enum match using toString() for $valueStr");
               return enumValue;
             }
           }
         }
-        print("Warning: Enum value '$valueStr' not found in ${T.toString()}.");
-        return null;
+        print(
+            "[UserModel fromJson] Warning: Enum value '$valueStr' not found in ${T.toString()}.");
       }
       return null;
     }
 
     List<String>? getMediaUrls(dynamic field) {
-      if (field is List<dynamic>) {
+      // Expecting a List<String> after repository transformation
+      if (field is List) {
         final urls = field
             .where((item) => item is String && item.isNotEmpty)
             .map((item) => item as String)
             .toList();
         return urls.isNotEmpty ? urls : null;
-      } else if (field is List<String>) {
-        // Handle case where it's already List<String>
-        return field.where((s) => s.isNotEmpty).toList().isNotEmpty
-            ? field
-            : null;
       }
-      return null;
+      return null; // Default to null if not a list
     }
 
     int? getId(dynamic idField) {
+      // Prioritize direct int
       if (idField is int) {
         return idField;
       }
+      // Handle string representation
       if (idField is String) {
         return int.tryParse(idField);
       }
-      if (idField is Map &&
-          idField['Valid'] == true &&
-          idField['Int64'] != null) {
+      // Handle potential pgtype structures if backend might send them
+      if (idField is Map && idField['Valid'] == true) {
         if (idField['Int64'] is num) {
           return (idField['Int64'] as num).toInt();
         }
+        if (idField['Int32'] is num) {
+          return (idField['Int32'] as num).toInt();
+        }
       }
-      return null;
+      return null; // Default to null
     }
 
     List<Prompt> getPrompts(Map<String, dynamic> json) {
       List<Prompt> parsedPrompts = [];
-      if (json['prompts'] is List) {
-        final List<dynamic> promptList = json['prompts'];
-        for (var promptData in promptList) {
+      // Expect 'prompts' key based on GetHomeFeedRow and ProfileResponseUser
+      final promptsField = json['prompts'];
+
+      if (promptsField is List) {
+        // If it's a list (likely from ProfileResponseUser)
+        for (var promptData in promptsField) {
           if (promptData is Map<String, dynamic>) {
             try {
               final parsedPrompt = Prompt.fromJson(promptData);
-              // Ensure answer is not just whitespace before adding
               if (parsedPrompt.answer.trim().isNotEmpty) {
                 parsedPrompts.add(parsedPrompt);
-              } else {
-                print(
-                    "[UserModel fromJson] Skipping prompt with empty answer: ${promptData['question']}");
               }
             } catch (e) {
               print(
-                  "[UserModel fromJson] Error parsing prompt: $e, data: $promptData");
+                  "[UserModel fromJson] Error parsing prompt from list: $e, data: $promptData");
             }
           }
         }
+      } else if (promptsField is String) {
+        // If it's a string (likely JSONB from GetHomeFeedRow)
+        try {
+          final List<dynamic> decodedList = jsonDecode(promptsField);
+          for (var promptData in decodedList) {
+            if (promptData is Map<String, dynamic>) {
+              try {
+                final parsedPrompt = Prompt.fromJson(promptData);
+                if (parsedPrompt.answer.trim().isNotEmpty) {
+                  parsedPrompts.add(parsedPrompt);
+                }
+              } catch (e) {
+                print(
+                    "[UserModel fromJson] Error parsing prompt from JSON string: $e, data: $promptData");
+              }
+            }
+          }
+        } catch (e) {
+          print(
+              "[UserModel fromJson] Error decoding prompts JSON string: $e, value: $promptsField");
+        }
       }
-      // API allows max 3, but frontend should handle this limit upstream.
-      // Here we just parse what's given.
       return parsedPrompts;
     }
 
-    // --- REVISED getAudioPrompt Helper ---
     AudioPromptModel? getAudioPrompt(Map<String, dynamic> json, int? userId) {
+      // Check for potential keys (direct or from pgtype)
       final questionData =
-          json['AudioPromptQuestion'] ?? json['audio_prompt_question'];
+          json['audio_prompt_question'] ?? json['AudioPromptQuestion'];
       final answerData =
-          json['AudioPromptAnswer'] ?? json['audio_prompt_answer'];
+          json['audio_prompt_answer'] ?? json['AudioPromptAnswer'];
 
-      // 1. Check Question Validity
-      bool isQuestionValid = questionData is Map &&
+      // Check Question Validity
+      bool isQuestionValid = false;
+      String? questionValue;
+      if (questionData is Map &&
           questionData['Valid'] == true &&
-          questionData['AudioPrompt'] is String &&
-          (questionData['AudioPrompt'] as String).isNotEmpty;
+          questionData['AudioPrompt'] is String) {
+        questionValue = questionData['AudioPrompt'] as String;
+        isQuestionValid = questionValue.isNotEmpty;
+      }
 
-      if (!isQuestionValid) return null; // No valid question, no audio prompt
+      if (!isQuestionValid) return null;
 
-      // 2. Check Answer Validity (String or Valid Map with non-empty String)
+      // Check Answer Validity
       String? audioUrlValue;
       if (answerData is String && answerData.isNotEmpty) {
         audioUrlValue = answerData;
       } else if (answerData is Map &&
           answerData['Valid'] == true &&
-          answerData['String'] is String &&
-          (answerData['String'] as String).isNotEmpty) {
-        audioUrlValue = answerData['String'] as String;
+          answerData['String'] is String) {
+        audioUrlValue = answerData['String'] as String?;
+        if (audioUrlValue != null && audioUrlValue.isEmpty)
+          audioUrlValue = null; // Treat empty string as invalid
       }
 
-      if (audioUrlValue == null)
-        return null; // No valid answer, no audio prompt
+      if (audioUrlValue == null) return null;
 
-      // 3. If BOTH are valid, attempt to create the model using the Factory
+      // If both are valid, create the model
       try {
-        // The factory now handles the map structure directly
-        return AudioPromptModel.fromJson({
-          'audio_prompt_question': questionData,
-          'audio_prompt_answer': answerData,
-        });
+        AudioPrompt promptEnum = AudioPrompt.values.firstWhere(
+            (e) => e.value == questionValue,
+            orElse: () => AudioPrompt.aBoundaryOfMineIs // Fallback
+            );
+        return AudioPromptModel(prompt: promptEnum, audioUrl: audioUrlValue);
       } catch (e) {
         print(
             "[UserModel fromJson getAudioPrompt ID: $userId] Error creating AudioPromptModel: $e");
-        print(" -> Question Data: $questionData");
-        print(" -> Answer Data: $answerData");
         return null;
       }
     }
-    // --- END REVISED getAudioPrompt Helper ---
 
     // --- Parse using helpers ---
+    // Primarily use lowercase keys ('id', 'name', 'media_urls') expected after repository transformation
+    // Include fallback checks for original backend keys (e.g., 'Name', 'MediaUrls') if needed for other sources
     final int? currentUserId =
-        getId(json['id'] ?? json['ID']); // Get ID for logging
+        getId(json['id'] ?? json['ID']); // Check 'id' first
     final parsedUser = UserModel(
-      id: currentUserId, // Use the extracted ID
+      id: currentUserId,
       name: getString(json['name'] ?? json['Name']),
       lastName: getString(json['last_name'] ?? json['LastName']),
-      email: json['email'] as String? ?? json['Email'] as String?,
+      email: json['email'] as String? ??
+          json['Email'] as String?, // Assuming direct string
       phoneNumber: getString(json['phone_number'] ?? json['PhoneNumber']),
       dateOfBirth: getDate(json['date_of_birth'] ?? json['DateOfBirth']),
       latitude: getDouble(json['latitude'] ?? json['Latitude']),
@@ -540,31 +573,21 @@ class UserModel {
           DrinkingSmokingHabits.values,
           json['smoking_habit'] ?? json['SmokingHabit'],
           'DrinkingSmokingHabits'),
-      mediaUrls: getMediaUrls(json['media_urls'] ?? json['MediaUrls']),
+      mediaUrls: getMediaUrls(
+          json['media_urls'] ?? json['MediaUrls']), // Check 'media_urls' first
       verificationStatus: json['verification_status'] as String? ??
           json['VerificationStatus'] as String?,
       verificationPic:
           getString(json['verification_pic'] ?? json['VerificationPic']),
       role: json['role'] as String? ?? json['Role'] as String?,
-      audioPrompt: getAudioPrompt(json, currentUserId), // Pass ID to helper
-      prompts: getPrompts(json),
+      audioPrompt: getAudioPrompt(json, currentUserId),
+      prompts: getPrompts(json), // Use the combined prompt parsing
     );
-
-    // Remove debug print unless needed
-    // print("--- Parsed UserModel (Audio Prompt Check) ---");
-    // print("ID: ${parsedUser.id}");
-    // print("Name: ${parsedUser.name}");
-    // print("Audio Prompt Parsed: ${parsedUser.audioPrompt != null}");
-    // if (parsedUser.audioPrompt != null) {
-    //   print("  -> Question: ${parsedUser.audioPrompt!.prompt.label}");
-    //   print("  -> URL: ${parsedUser.audioPrompt!.audioUrl}");
-    // }
-    // print("------------------------------------------");
 
     return parsedUser;
   }
 
-  // copyWith needs update for mediaChangedDuringEdit
+  // copyWith method
   UserModel copyWith({
     int? Function()? id,
     String? Function()? name,
@@ -589,7 +612,7 @@ class UserModel {
     String? Function()? verificationStatus,
     String? Function()? verificationPic,
     String? Function()? role,
-    bool? mediaChangedDuringEdit, // <<< ADDED parameter
+    bool? mediaChangedDuringEdit,
   }) {
     return UserModel(
       id: id != null ? id() : this.id,
@@ -613,7 +636,7 @@ class UserModel {
           drinkingHabit != null ? drinkingHabit() : this.drinkingHabit,
       smokingHabit: smokingHabit != null ? smokingHabit() : this.smokingHabit,
       mediaUrls: mediaUrls != null ? mediaUrls() : this.mediaUrls,
-      prompts: prompts ?? List.from(this.prompts),
+      prompts: prompts ?? List.from(this.prompts), // Ensure deep copy if needed
       audioPrompt: audioPrompt != null ? audioPrompt() : this.audioPrompt,
       verificationStatus: verificationStatus != null
           ? verificationStatus()
@@ -621,7 +644,6 @@ class UserModel {
       verificationPic:
           verificationPic != null ? verificationPic() : this.verificationPic,
       role: role != null ? role() : this.role,
-      // Pass the value or use existing
       mediaChangedDuringEdit:
           mediaChangedDuringEdit ?? this.mediaChangedDuringEdit,
     );
@@ -631,16 +653,14 @@ class UserModel {
   bool isProfileValid() {
     final dobValid = dateOfBirth != null &&
         DateTime.now().difference(dateOfBirth!).inDays >= (18 * 365.25);
-    // Location/Gender validation is handled in onboarding step 1
     return name != null &&
         name!.trim().isNotEmpty &&
         name!.trim().length >= 3 &&
         dobValid &&
-        datingIntention != null; // Added dating intention check for step 2
-    // Removed location/gender check here as it's handled earlier
+        datingIntention != null;
   }
 
-  // isLocationValid remains the same (used in onboarding step 1)
+  // isLocationValid (used in onboarding step 1)
   bool isLocationValid() {
     return latitude != null &&
         longitude != null &&

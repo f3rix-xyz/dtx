@@ -3,22 +3,26 @@ Directory structure:
     ├── main.dart
     ├── models/
     │   ├── auth_model.dart
+    │   ├── chat_message.dart
     │   ├── error_model.dart
     │   ├── feed_models.dart
     │   ├── filter_model.dart
     │   ├── like_models.dart
     │   ├── location_model.dart
+    │   ├── match_user.dart
     │   ├── media_upload_model.dart
     │   └── user_model.dart
     ├── providers/
     │   ├── audio_player_provider.dart
     │   ├── audio_upload_provider.dart
     │   ├── auth_provider.dart
+    │   ├── conversation_provider.dart
     │   ├── error_provider.dart
     │   ├── feed_provider.dart
     │   ├── filter_provider.dart
     │   ├── liker_profile_provider.dart
     │   ├── location_provider.dart
+    │   ├── matches_provider.dart
     │   ├── media_upload_provider.dart
     │   ├── recieved_likes_provider.dart
     │   ├── service_provider.dart
@@ -26,12 +30,15 @@ Directory structure:
     ├── repositories/
     │   ├── auth_repository.dart
     │   ├── auth_status_repository.dart
+    │   ├── chat_repository.dart
     │   ├── filter_repository.dart
     │   ├── like_repository.dart
+    │   ├── match_repository.dart
     │   ├── media_repository.dart
     │   └── user_repository.dart
     ├── services/
     │   ├── api_service.dart
+    │   ├── chat_service.dart
     │   └── http_service.dart
     ├── utils/
     │   ├── app_enums.dart
@@ -40,6 +47,7 @@ Directory structure:
     ├── views/
     │   ├── audioprompt.dart
     │   ├── audiopromptsselect.dart
+    │   ├── chat_detail_screen.dart
     │   ├── chat_screen.dart
     │   ├── dating_intentions.dart
     │   ├── dob.dart
@@ -54,6 +62,7 @@ Directory structure:
     │   ├── liker_profile_screen.dart
     │   ├── location.dart
     │   ├── main_navigation_screen.dart
+    │   ├── matches_screen.dart
     │   ├── media.dart
     │   ├── name.dart
     │   ├── profile_screens.dart
@@ -75,7 +84,9 @@ Directory structure:
     └── widgets/
         ├── basic_liker_profile_card.dart
         ├── full_liker_profile_card.dart
-        └── home_profile_card.dart
+        ├── home_profile_card.dart
+        ├── match_list_tile.dart
+        └── message_bubble.dart
 
 ================================================
 File: main.dart
@@ -181,6 +192,99 @@ class AuthState {
 
   // Check if user is considered authenticated (has a token)
   bool get isAuthenticated => jwtToken != null && jwtToken!.isNotEmpty;
+}
+
+
+
+================================================
+File: models/chat_message.dart
+================================================
+// lib/models/chat_message.dart
+import 'package:intl/intl.dart';
+
+class ChatMessage {
+  final int messageID;
+  final int senderUserID;
+  final int recipientUserID;
+  final String messageText;
+  final DateTime sentAt;
+  final bool isRead;
+  final DateTime? readAt; // Nullable DateTime
+
+  ChatMessage({
+    required this.messageID,
+    required this.senderUserID,
+    required this.recipientUserID,
+    required this.messageText,
+    required this.sentAt,
+    required this.isRead,
+    this.readAt,
+  });
+
+  // Helper to check if the message was sent by the currently authenticated user
+  bool isMe(int currentUserId) => senderUserID == currentUserId;
+
+  String get formattedTimestamp {
+    // Example formatting, adjust as needed
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final messageDay = DateTime(sentAt.year, sentAt.month, sentAt.day);
+
+    if (messageDay == today) {
+      return DateFormat.jm().format(sentAt.toLocal()); // e.g., 10:30 AM
+    } else if (today.difference(messageDay).inDays == 1) {
+      return 'Yesterday';
+    } else {
+      return DateFormat.yMd().format(sentAt.toLocal()); // e.g., 10/25/2023
+    }
+  }
+
+  factory ChatMessage.fromJson(Map<String, dynamic> json) {
+    // Helper to parse timestamp safely
+    DateTime parseTimestamp(dynamic tsField) {
+      if (tsField is String) {
+        try {
+          // Handle potential 'Z' for UTC time from Go
+          return DateTime.parse(tsField).toLocal();
+        } catch (e) {
+          print("Error parsing timestamp '$tsField': $e");
+          return DateTime.now(); // Fallback
+        }
+      }
+      // Add more checks if backend sends different formats (e.g., Unix timestamp)
+      return DateTime.now(); // Fallback
+    }
+
+    DateTime? parseNullableTimestamp(dynamic tsField) {
+      if (tsField is String) {
+        try {
+          return DateTime.parse(tsField).toLocal();
+        } catch (_) {
+          return null; // Return null if parsing fails
+        }
+      }
+      return null;
+    }
+
+    return ChatMessage(
+      // Use keys matching the JSON response from GetConversationMessages
+      messageID: json['MessageID'] as int? ?? 0,
+      senderUserID: json['SenderUserID'] as int? ?? 0,
+      recipientUserID: json['RecipientUserID'] as int? ?? 0,
+      messageText: json['MessageText'] as String? ?? '',
+      sentAt: parseTimestamp(json['SentAt']),
+      isRead: json['IsRead'] as bool? ?? false,
+      readAt: parseNullableTimestamp(json['ReadAt']),
+    );
+  }
+
+  // Method to convert to the JSON format expected by the WebSocket server
+  Map<String, dynamic> toJsonForSend(int recipientId) {
+    return {
+      'recipient_user_id': recipientId,
+      'text': messageText,
+    };
+  }
 }
 
 
@@ -874,6 +978,43 @@ class LocationState {
     );
   }
 }
+
+
+
+================================================
+File: models/match_user.dart
+================================================
+// lib/models/match_user.dart
+import 'package:dtx/models/user_model.dart'; // Re-use UserModel for consistency?
+
+// Option 1: Simple Match User (if /api/matches returns minimal data)
+// class MatchUser {
+//   final int id;
+//   final String name;
+//   final String? avatarUrl;
+
+//   MatchUser({
+//     required this.id,
+//     required this.name,
+//     this.avatarUrl,
+//   });
+
+//   factory MatchUser.fromJson(Map<String, dynamic> json) {
+//     // Adjust keys based on your ACTUAL /api/matches response
+//     return MatchUser(
+//       id: json['id'] as int? ?? 0,
+//       name: json['name'] as String? ?? 'Unknown Match',
+//       avatarUrl: json['avatar_url'] as String?,
+//     );
+//   }
+// }
+
+// Option 2: Reuse UserModel (if /api/matches returns full user profiles)
+// This might be slightly heavier but avoids creating a separate model if the data is similar
+typedef MatchUser = UserModel; // Use UserModel as the MatchUser type
+
+// If using Option 2, no separate fromJson is needed here,
+// just ensure your repository parses the response using UserModel.fromJson
 
 
 
@@ -2146,6 +2287,182 @@ class AuthNotifier extends StateNotifier<AuthState> {
 
 
 ================================================
+File: providers/conversation_provider.dart
+================================================
+// lib/providers/conversation_provider.dart
+import 'dart:async';
+
+import 'package:dtx/models/chat_message.dart';
+import 'package:dtx/models/error_model.dart';
+import 'package:dtx/providers/service_provider.dart';
+import 'package:dtx/repositories/chat_repository.dart';
+import 'package:dtx/services/api_service.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+
+const int _messagesPageLimit = 30; // Number of messages to fetch per page
+
+class ConversationState {
+  final bool isLoading;
+  final bool isFetchingMore;
+  final List<ChatMessage> messages;
+  final bool hasMore;
+  final AppError? error;
+
+  const ConversationState({
+    this.isLoading = false,
+    this.isFetchingMore = false,
+    this.messages = const [],
+    this.hasMore = true, // Assume more initially
+    this.error,
+  });
+
+  ConversationState copyWith({
+    bool? isLoading,
+    bool? isFetchingMore,
+    List<ChatMessage>? messages,
+    bool? hasMore,
+    AppError? Function()? error,
+  }) {
+    return ConversationState(
+      isLoading: isLoading ?? this.isLoading,
+      isFetchingMore: isFetchingMore ?? this.isFetchingMore,
+      messages: messages ?? this.messages,
+      hasMore: hasMore ?? this.hasMore,
+      error: error != null ? error() : this.error,
+    );
+  }
+}
+
+class ConversationNotifier extends StateNotifier<ConversationState> {
+  final ChatRepository _chatRepository;
+  final int _otherUserId;
+  int _currentOffset = 0;
+
+  ConversationNotifier(this._chatRepository, this._otherUserId)
+      : super(const ConversationState()) {
+    fetchInitialMessages();
+  }
+
+  Future<void> fetchInitialMessages() async {
+    if (state.isLoading) return;
+    print("[ConversationNotifier-$_otherUserId] Fetching initial messages...");
+    state = state.copyWith(isLoading: true, error: () => null);
+    _currentOffset = 0; // Reset offset
+
+    try {
+      final result = await _chatRepository.fetchConversation(
+        otherUserId: _otherUserId,
+        limit: _messagesPageLimit,
+        offset: _currentOffset,
+      );
+      final messages = result['messages'] as List<ChatMessage>;
+      final hasMore = result['hasMore'] as bool;
+
+      _currentOffset += messages.length;
+
+      if (mounted) {
+        state = state.copyWith(
+          isLoading: false,
+          messages: messages,
+          hasMore: hasMore,
+        );
+        print(
+            "[ConversationNotifier-$_otherUserId] Fetched ${messages.length} initial messages. HasMore: $hasMore");
+      }
+    } on ApiException catch (e) {
+      print("[ConversationNotifier-$_otherUserId] API Exception: ${e.message}");
+      if (mounted) {
+        state = state.copyWith(
+            isLoading: false, error: () => AppError.server(e.message));
+      }
+    } catch (e) {
+      print(
+          "[ConversationNotifier-$_otherUserId] Unexpected Error: ${e.toString()}");
+      if (mounted) {
+        state = state.copyWith(
+            isLoading: false,
+            error: () => AppError.generic("Failed to load conversation."));
+      }
+    }
+  }
+
+  Future<void> fetchMoreMessages() async {
+    if (state.isLoading || state.isFetchingMore || !state.hasMore) return;
+    print(
+        "[ConversationNotifier-$_otherUserId] Fetching more messages (offset: $_currentOffset)...");
+    state = state.copyWith(isFetchingMore: true);
+
+    try {
+      final result = await _chatRepository.fetchConversation(
+        otherUserId: _otherUserId,
+        limit: _messagesPageLimit,
+        offset: _currentOffset,
+      );
+      final newMessages = result['messages'] as List<ChatMessage>;
+      final hasMore = result['hasMore'] as bool;
+
+      _currentOffset += newMessages.length;
+
+      if (mounted) {
+        state = state.copyWith(
+          isFetchingMore: false,
+          messages: [...state.messages, ...newMessages], // Prepend new messages
+          hasMore: hasMore,
+        );
+        print(
+            "[ConversationNotifier-$_otherUserId] Fetched ${newMessages.length} more messages. HasMore: $hasMore");
+      }
+    } on ApiException catch (e) {
+      print(
+          "[ConversationNotifier-$_otherUserId] More API Exception: ${e.message}");
+      if (mounted) {
+        state = state.copyWith(
+            isFetchingMore: false,
+            error: () =>
+                AppError.server(e.message)); // Show error fetching more
+      }
+    } catch (e) {
+      print(
+          "[ConversationNotifier-$_otherUserId] More Unexpected Error: ${e.toString()}");
+      if (mounted) {
+        state = state.copyWith(
+            isFetchingMore: false,
+            error: () => AppError.generic("Failed to load more messages."));
+      }
+    }
+  }
+
+  // Add a message sent by the current user (optimistic update maybe?)
+  void addSentMessage(ChatMessage message) {
+    if (!mounted) return;
+    print(
+        "[ConversationNotifier-$_otherUserId] Adding sent message: ${message.messageText}");
+    // Add to the beginning of the list for reversed view
+    state = state.copyWith(messages: [message, ...state.messages]);
+  }
+
+  // Add a message received from the other user
+  void addReceivedMessage(ChatMessage message) {
+    if (!mounted) return;
+    print(
+        "[ConversationNotifier-$_otherUserId] Adding received message: ${message.messageText}");
+    // Add to the beginning of the list for reversed view
+    state = state.copyWith(messages: [message, ...state.messages]);
+    // Potentially mark as read here or trigger read status update? Backend handles read on fetch.
+  }
+}
+
+// Family provider to get conversation for a specific user
+final conversationProvider =
+    StateNotifierProvider.family<ConversationNotifier, ConversationState, int>(
+        (ref, otherUserId) {
+  final repo = ref.watch(chatRepositoryProvider);
+  return ConversationNotifier(repo, otherUserId);
+});
+
+
+
+================================================
 File: providers/error_provider.dart
 ================================================
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -2657,6 +2974,88 @@ class LocationNotifier extends StateNotifier<LocationState> {
 
 
 ================================================
+File: providers/matches_provider.dart
+================================================
+// lib/providers/matches_provider.dart
+import 'package:dtx/models/error_model.dart';
+import 'package:dtx/models/user_model.dart'; // Using UserModel as MatchUser
+import 'package:dtx/providers/service_provider.dart';
+import 'package:dtx/repositories/match_repository.dart';
+import 'package:dtx/services/api_service.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+
+class MatchesState {
+  final bool isLoading;
+  final List<UserModel> matches; // Use UserModel
+  final AppError? error;
+
+  const MatchesState({
+    this.isLoading = false,
+    this.matches = const [],
+    this.error,
+  });
+
+  MatchesState copyWith({
+    bool? isLoading,
+    List<UserModel>? matches,
+    AppError? Function()? error,
+  }) {
+    return MatchesState(
+      isLoading: isLoading ?? this.isLoading,
+      matches: matches ?? this.matches,
+      error: error != null ? error() : this.error,
+    );
+  }
+}
+
+class MatchesNotifier extends StateNotifier<MatchesState> {
+  final MatchRepository _matchRepository;
+
+  MatchesNotifier(this._matchRepository) : super(const MatchesState());
+
+  Future<void> fetchMatches({bool forceRefresh = false}) async {
+    if (state.isLoading) return;
+    if (state.matches.isNotEmpty && !forceRefresh)
+      return; // Don't refetch if already loaded unless forced
+
+    print("[MatchesNotifier] Fetching matches...");
+    state = state.copyWith(isLoading: true, error: () => null);
+
+    try {
+      final matches = await _matchRepository.fetchMatches();
+      if (mounted) {
+        state = state.copyWith(isLoading: false, matches: matches);
+        print("[MatchesNotifier] Fetched ${matches.length} matches.");
+      }
+    } on ApiException catch (e) {
+      print("[MatchesNotifier] API Exception: ${e.message}");
+      if (mounted) {
+        state = state.copyWith(
+          isLoading: false,
+          error: () => AppError.server(e.message),
+        );
+      }
+    } catch (e) {
+      print("[MatchesNotifier] Unexpected Error: ${e.toString()}");
+      if (mounted) {
+        state = state.copyWith(
+          isLoading: false,
+          error: () => AppError.generic("Failed to load matches."),
+        );
+      }
+    }
+  }
+}
+
+final matchesProvider =
+    StateNotifierProvider<MatchesNotifier, MatchesState>((ref) {
+  final repo = ref.watch(matchRepositoryProvider);
+  return MatchesNotifier(repo);
+});
+
+
+
+================================================
 File: providers/media_upload_provider.dart
 ================================================
 import 'dart:io';
@@ -3032,7 +3431,12 @@ File: providers/service_provider.dart
 import 'package:dtx/repositories/filter_repository.dart';
 import 'package:dtx/repositories/user_repository.dart';
 import 'package:dtx/repositories/media_repository.dart';
-import 'package:dtx/repositories/like_repository.dart'; // *** ADDED Import ***
+import 'package:dtx/repositories/like_repository.dart';
+// *** ADDED Imports ***
+import 'package:dtx/repositories/match_repository.dart';
+import 'package:dtx/repositories/chat_repository.dart';
+import 'package:dtx/services/chat_service.dart'; // Import ChatService
+// *** END ADDED Imports ***
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../services/api_service.dart';
 import '../services/http_service.dart';
@@ -3041,6 +3445,17 @@ import '../utils/env_config.dart';
 
 // API Service provider
 final apiServiceProvider = Provider<ApiService>((ref) {
+  // *** Determine WebSocket URL from HTTP Base URL ***
+  final httpBaseUrl = EnvConfig.apiBaseUrl;
+  // Simple replacement, adjust if your URLs differ more significantly
+  final wsBaseUrl = httpBaseUrl
+          .replaceFirst('http://', 'ws://')
+          .replaceFirst('https://', 'wss://') +
+      '/chat'; // Add the specific chat path
+  print("[ServiceProvider] HTTP Base URL: $httpBaseUrl");
+  print("[ServiceProvider] WS Base URL: $wsBaseUrl");
+  // *** End Base URL Determination ***
+
   return HttpService(baseUrl: EnvConfig.apiBaseUrl);
 });
 
@@ -3062,15 +3477,42 @@ final userRepositoryProvider = Provider<UserRepository>((ref) {
   return UserRepository(apiService);
 });
 
-// *** ADDED: Like Repository Provider ***
+// Like Repository Provider
 final likeRepositoryProvider = Provider<LikeRepository>((ref) {
   final apiService = ref.watch(apiServiceProvider);
   return LikeRepository(apiService);
 });
 
+// Filter Repository Provider
 final filterRepositoryProvider = Provider<FilterRepository>((ref) {
   final apiService = ref.watch(apiServiceProvider);
   return FilterRepository(apiService);
+});
+
+// *** ADDED: Match Repository Provider ***
+final matchRepositoryProvider = Provider<MatchRepository>((ref) {
+  final apiService = ref.watch(apiServiceProvider);
+  return MatchRepository(apiService);
+});
+// *** END ADDED ***
+
+// *** ADDED: Chat Repository Provider ***
+final chatRepositoryProvider = Provider<ChatRepository>((ref) {
+  final apiService = ref.watch(apiServiceProvider);
+  return ChatRepository(apiService);
+});
+// *** END ADDED ***
+
+// *** ADDED: Chat Service Provider (Singleton) ***
+final chatServiceProvider = Provider<ChatService>((ref) {
+  final httpBaseUrl = EnvConfig.apiBaseUrl;
+  // Simple replacement, adjust if your URLs differ more significantly
+  final wsBaseUrl = httpBaseUrl
+          .replaceFirst('http://', 'ws://')
+          .replaceFirst('https://', 'wss://') +
+      '/chat'; // Add the specific chat path
+
+  return ChatService(ref, wsBaseUrl);
 });
 // *** END ADDED ***
 
@@ -3518,6 +3960,74 @@ class AuthStatusRepository {
 
 
 ================================================
+File: repositories/chat_repository.dart
+================================================
+// lib/repositories/chat_repository.dart
+import 'package:dtx/models/chat_message.dart';
+import 'package:dtx/services/api_service.dart';
+import 'package:dtx/utils/token_storage.dart';
+
+class ChatRepository {
+  final ApiService _apiService;
+
+  ChatRepository(this._apiService);
+
+  Future<Map<String, dynamic>> fetchConversation({
+    required int otherUserId,
+    required int limit,
+    required int offset,
+  }) async {
+    final String methodName = 'fetchConversation';
+    print(
+        '[ChatRepository $methodName] Fetching conversation with $otherUserId (limit: $limit, offset: $offset)');
+    try {
+      final token = await TokenStorage.getToken();
+      if (token == null) throw ApiException('Authentication token missing');
+      final headers = {'Authorization': 'Bearer $token'};
+
+      final endpoint =
+          '/api/conversation/$otherUserId?limit=$limit&offset=$offset';
+      final response = await _apiService.get(endpoint, headers: headers);
+      // print('[ChatRepository $methodName] API Response: $response'); // Debug careful with PII
+
+      if (response['success'] == true && response['messages'] != null) {
+        final List<dynamic> messagesData = response['messages'] as List? ?? [];
+        final messages = messagesData
+            .map((data) => ChatMessage.fromJson(data as Map<String, dynamic>))
+            .toList();
+        final hasMore = response['has_more'] as bool? ?? false;
+
+        print(
+            '[ChatRepository $methodName] Success. Count: ${messages.length}, HasMore: $hasMore');
+        return {'messages': messages, 'hasMore': hasMore};
+      } else if (response['success'] == true && response['messages'] == null) {
+        print(
+            '[ChatRepository $methodName] No messages found (API returned null).');
+        return {
+          'messages': <ChatMessage>[],
+          'hasMore': false
+        }; // Empty conversation
+      } else {
+        final message =
+            response['message']?.toString() ?? 'Failed to fetch conversation.';
+        print('[ChatRepository $methodName] Fetch failed: $message');
+        throw ApiException(message);
+      }
+    } on ApiException catch (e) {
+      print(
+          '[ChatRepository $methodName] API Exception: ${e.message}, Status: ${e.statusCode}');
+      rethrow;
+    } catch (e) {
+      print('[ChatRepository $methodName] Unexpected Error: $e');
+      throw ApiException(
+          'An unexpected error occurred while fetching conversation: ${e.toString()}');
+    }
+  }
+}
+
+
+
+================================================
 File: repositories/filter_repository.dart
 ================================================
 // lib/repositories/filter_repository.dart
@@ -3862,6 +4372,62 @@ class LikeRepository {
       print('[LikeRepository $methodName] Unexpected Error: $e');
       throw ApiException(
           'An unexpected error occurred while fetching the liker profile: ${e.toString()}');
+    }
+  }
+}
+
+
+
+================================================
+File: repositories/match_repository.dart
+================================================
+// lib/repositories/match_repository.dart
+import 'package:dtx/models/user_model.dart'; // Using UserModel as MatchUser
+import 'package:dtx/services/api_service.dart';
+import 'package:dtx/utils/token_storage.dart';
+
+class MatchRepository {
+  final ApiService _apiService;
+
+  MatchRepository(this._apiService);
+
+  Future<List<UserModel>> fetchMatches() async {
+    final String methodName = 'fetchMatches';
+    print('[MatchRepository $methodName] Fetching matches...');
+    try {
+      final token = await TokenStorage.getToken();
+      if (token == null) throw ApiException('Authentication token missing');
+      final headers = {'Authorization': 'Bearer $token'};
+
+      final response = await _apiService.get('/api/matches', headers: headers);
+      print('[MatchRepository $methodName] API Response: $response');
+
+      if (response['success'] == true && response['matches'] != null) {
+        final List<dynamic> matchesData = response['matches'] as List? ?? [];
+        // Assuming response['matches'] is a list of User JSON objects
+        final matches = matchesData
+            .map((data) => UserModel.fromJson(data as Map<String, dynamic>))
+            .toList();
+        print(
+            '[MatchRepository $methodName] Successfully parsed ${matches.length} matches.');
+        return matches;
+      } else if (response['success'] == true && response['matches'] == null) {
+        print('[MatchRepository $methodName] No matches found.');
+        return []; // Return empty list if matches array is null or missing
+      } else {
+        final message =
+            response['message']?.toString() ?? 'Failed to fetch matches.';
+        print('[MatchRepository $methodName] Fetch failed: $message');
+        throw ApiException(message);
+      }
+    } on ApiException catch (e) {
+      print(
+          '[MatchRepository $methodName] API Exception: ${e.message}, Status: ${e.statusCode}');
+      rethrow;
+    } catch (e) {
+      print('[MatchRepository $methodName] Unexpected Error: $e');
+      throw ApiException(
+          'An unexpected error occurred while fetching matches: ${e.toString()}');
     }
   }
 }
@@ -4500,6 +5066,297 @@ class ApiException implements Exception {
   String toString() =>
       'ApiException: $message ${statusCode != null ? '(Status code: $statusCode)' : ''}';
 }
+
+
+
+================================================
+File: services/chat_service.dart
+================================================
+// lib/services/chat_service.dart
+import 'dart:async';
+import 'dart:convert';
+import 'dart:io'; // For WebSocketException
+// *** ADDED: math import (optional if using bit-shift) ***
+// import 'dart:math';
+
+// *** ADDED: web_socket_channel imports ***
+import 'package:web_socket_channel/io.dart';
+import 'package:web_socket_channel/status.dart' as WebSocketStatus;
+import 'package:web_socket_channel/web_socket_channel.dart';
+// *** END ADDED ***
+
+import 'package:dtx/models/chat_message.dart';
+import 'package:dtx/providers/auth_provider.dart'; // To get token
+import 'package:dtx/providers/conversation_provider.dart'; // To add received messages
+// *** ADDED: userProvider import ***
+import 'package:dtx/providers/user_provider.dart';
+// *** END ADDED ***
+import 'package:dtx/utils/token_storage.dart'; // Fallback for token
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+
+enum WebSocketConnectionState { disconnected, connecting, connected, error }
+
+final webSocketStateProvider = StateProvider<WebSocketConnectionState>(
+    (ref) => WebSocketConnectionState.disconnected);
+
+class ChatService {
+  final Ref _ref;
+  final String _wsUrl;
+  WebSocketChannel? _channel;
+  StreamSubscription? _streamSubscription;
+  Timer? _reconnectTimer;
+  bool _isManualDisconnect = false;
+  int _reconnectAttempts = 0;
+  static const int _maxReconnectAttempts = 5;
+  static const Duration _initialReconnectDelay = Duration(seconds: 2);
+
+  ChatService(this._ref, this._wsUrl) {
+    print("[ChatService] Initialized with URL: $_wsUrl");
+    // Optional: Auto-connect if a token exists? Or connect on demand?
+    // Let's connect on demand for now.
+  }
+
+  Future<void> connect() async {
+    _isManualDisconnect = false; // Reset flag on connect attempt
+    if (_channel != null &&
+        _ref.read(webSocketStateProvider) ==
+            WebSocketConnectionState.connected) {
+      print("[ChatService] Already connected.");
+      return;
+    }
+    if (_ref.read(webSocketStateProvider) ==
+        WebSocketConnectionState.connecting) {
+      print("[ChatService] Connection attempt already in progress.");
+      return;
+    }
+
+    print("[ChatService] Attempting to connect to $_wsUrl...");
+    _updateState(WebSocketConnectionState.connecting);
+
+    String? token =
+        _ref.read(authProvider).jwtToken ?? await TokenStorage.getToken();
+
+    if (token == null) {
+      print("[ChatService] Connection failed: Auth token not found.");
+      _updateState(WebSocketConnectionState.error); // Or disconnected
+      return;
+    }
+
+    try {
+      // Include the token in the connection headers
+      final headers = {'Authorization': 'Bearer $token'};
+      _channel = IOWebSocketChannel.connect(
+        Uri.parse(_wsUrl),
+        headers: headers,
+        // Optional: Add ping interval
+        pingInterval: const Duration(seconds: 15),
+      );
+
+      print("[ChatService] WebSocket channel created. Listening...");
+
+      _streamSubscription = _channel!.stream.listen(
+        _onMessageReceived,
+        onDone: _handleDisconnect,
+        onError: _handleError,
+        cancelOnError: false, // Keep listening after errors if possible
+      );
+
+      // If connection seems successful immediately (no error thrown by connect)
+      _updateState(WebSocketConnectionState.connected);
+      _reconnectAttempts =
+          0; // Reset reconnect attempts on successful connection
+      print("[ChatService] Connection established successfully.");
+    } catch (e) {
+      print("[ChatService] Connection failed: $e");
+      _handleError(e); // Treat connection error as a disconnect/error
+    }
+  }
+
+  void _onMessageReceived(dynamic message) {
+    print("[ChatService] Message received: $message");
+    try {
+      final Map<String, dynamic> decodedMessage = jsonDecode(message);
+
+      // --- Message Handling Logic ---
+      final type = decodedMessage['type'] as String?;
+      final content = decodedMessage['content'] as String?; // For info/error
+      final senderId =
+          decodedMessage['sender_user_id'] as int?; // For actual messages
+      final currentUserId =
+          _ref.read(currentUserIdProvider); // Get current user ID
+
+      if (currentUserId == null) {
+        print("[ChatService] Cannot process message: Current User ID is null.");
+        return;
+      }
+
+      if (type == 'message' && senderId != null) {
+        final chatMessage = ChatMessage.fromJson({
+          // Adapt to ChatMessage structure
+          // We don't get full ChatMessage JSON from WS, create it
+          'MessageID': 0, // Not provided by WS, set to 0 or fetch later?
+          'SenderUserID': senderId,
+          'RecipientUserID': currentUserId, // The current user is recipient
+          'MessageText': decodedMessage['text'] as String? ?? '',
+          'SentAt':
+              DateTime.now().toUtc().toIso8601String(), // Use current time
+          'IsRead': false, // Assume unread initially
+          'ReadAt': null,
+        });
+        // Add message to the correct conversation provider
+        // Need the sender's ID to access the correct provider instance
+        _ref
+            .read(conversationProvider(senderId).notifier)
+            .addReceivedMessage(chatMessage);
+        print(
+            "[ChatService] Added received message to conversation with $senderId");
+      } else if (type == 'error') {
+        print("[ChatService] Received error message: $content");
+        // Optionally show error to user via a global snackbar provider?
+      } else if (type == 'info') {
+        print("[ChatService] Received info message: $content");
+        // Optionally show info to user?
+      } else {
+        print(
+            "[ChatService] Received unknown message structure: $decodedMessage");
+      }
+    } catch (e) {
+      print("[ChatService] Error processing received message: $e");
+    }
+  }
+
+  void sendMessage(int recipientUserId, String text) {
+    if (_channel == null ||
+        _ref.read(webSocketStateProvider) !=
+            WebSocketConnectionState.connected) {
+      print("[ChatService] Cannot send message: Not connected.");
+      // Optionally try to reconnect here?
+      // connect(); // Be careful with potential loops
+      return;
+    }
+
+    // *** FIX: Use currentUserIdProvider ***
+    final currentUserId = _ref.read(currentUserIdProvider);
+    if (currentUserId == null) {
+      print("[ChatService] Cannot send message: Current User ID is null.");
+      return; // Or handle appropriately
+    }
+
+    final messageJson = jsonEncode({
+      'recipient_user_id': recipientUserId,
+      'text': text,
+    });
+
+    print("[ChatService] Sending message: $messageJson");
+    try {
+      _channel!.sink.add(messageJson);
+
+      // --- Optimistic UI Update ---
+      // Create a temporary message object to display immediately
+      final sentMessage = ChatMessage(
+        messageID: 0, // Temporary ID
+        senderUserID: currentUserId, // Current user is sender
+        recipientUserID: recipientUserId,
+        messageText: text,
+        sentAt: DateTime.now(), // Use local time for immediate display
+        isRead: false,
+        readAt: null,
+      );
+      // Add it to the conversation provider
+      _ref
+          .read(conversationProvider(recipientUserId).notifier)
+          .addSentMessage(sentMessage);
+      print(
+          "[ChatService] Added sent message optimistically to conversation with $recipientUserId");
+      // --- End Optimistic Update ---
+    } catch (e) {
+      print("[ChatService] Error sending message: $e");
+      // Handle potential sink errors (e.g., connection closed)
+      _handleError(e);
+    }
+  }
+
+  void _handleDisconnect() {
+    print("[ChatService] WebSocket disconnected.");
+    _channel = null;
+    _streamSubscription?.cancel();
+    _streamSubscription = null;
+    _updateState(WebSocketConnectionState.disconnected);
+
+    // Attempt to reconnect if it wasn't a manual disconnect
+    if (!_isManualDisconnect) {
+      _scheduleReconnect();
+    }
+  }
+
+  void _handleError(dynamic error) {
+    print("[ChatService] WebSocket error: $error");
+    _channel = null; // Assume connection is lost on error
+    _streamSubscription?.cancel(); // Cancel listener on error
+    _streamSubscription = null;
+    _updateState(WebSocketConnectionState.error);
+
+    // Attempt to reconnect if it wasn't a manual disconnect
+    if (!_isManualDisconnect) {
+      _scheduleReconnect();
+    }
+  }
+
+  void _scheduleReconnect() {
+    if (_reconnectTimer?.isActive ?? false) return; // Already scheduled
+    if (_reconnectAttempts >= _maxReconnectAttempts) {
+      print("[ChatService] Max reconnect attempts reached.");
+      _updateState(WebSocketConnectionState.disconnected); // Stay disconnected
+      return;
+    }
+
+    _reconnectAttempts++;
+    // *** FIX: Use bit-shift for power calculation ***
+    final delayMilliseconds =
+        _initialReconnectDelay.inMilliseconds * (1 << (_reconnectAttempts - 1));
+    final delay = Duration(milliseconds: delayMilliseconds);
+    // Or use math.pow:
+    // final delaySeconds = _initialReconnectDelay.inSeconds * pow(2, _reconnectAttempts - 1);
+    // final delay = Duration(seconds: delaySeconds.toInt());
+
+    print(
+        "[ChatService] Scheduling reconnect attempt $_reconnectAttempts/$_maxReconnectAttempts in $delay...");
+
+    _reconnectTimer = Timer(delay, () {
+      print("[ChatService] Attempting reconnect...");
+      connect(); // Try connecting again
+    });
+  }
+
+  void disconnect() {
+    print("[ChatService] Manual disconnect initiated.");
+    _isManualDisconnect = true; // Set flag to prevent auto-reconnect
+    _reconnectTimer?.cancel(); // Cancel any pending reconnect
+    _reconnectAttempts = 0; // Reset attempts on manual disconnect
+    _streamSubscription?.cancel();
+    _channel?.sink.close(WebSocketStatus.normalClosure);
+    _channel = null;
+    _streamSubscription = null;
+    _updateState(WebSocketConnectionState.disconnected);
+    print("[ChatService] Disconnected.");
+  }
+
+  void _updateState(WebSocketConnectionState newState) {
+    // Update provider only if state changes
+    if (_ref.read(webSocketStateProvider) != newState) {
+      _ref.read(webSocketStateProvider.notifier).state = newState;
+      print("[ChatService] WebSocket state updated to: $newState");
+    }
+  }
+}
+
+// Helper to get current user ID - needed often
+final currentUserIdProvider = Provider<int?>((ref) {
+  // Assuming you have user data in userProvider or authProvider
+  // Adjust based on where your user ID is stored
+  return ref.watch(userProvider.select((user) => user.id));
+  // Or: return ref.watch(authProvider).userId; // Ensure authProvider state has userId if using this
+});
 
 
 
@@ -5903,6 +6760,323 @@ class AudioSelectPromptScreen extends ConsumerWidget {
                   );
                 },
               ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+
+
+================================================
+File: views/chat_detail_screen.dart
+================================================
+// lib/views/chat_detail_screen.dart
+import 'dart:async';
+
+import 'package:dtx/models/chat_message.dart';
+import 'package:dtx/providers/conversation_provider.dart';
+import 'package:dtx/providers/error_provider.dart';
+import 'package:dtx/providers/service_provider.dart'; // For ChatService
+import 'package:dtx/providers/user_provider.dart'; // For current user ID
+import 'package:dtx/services/chat_service.dart'; // For WebSocketState
+import 'package:dtx/widgets/message_bubble.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:google_fonts/google_fonts.dart';
+
+class ChatDetailScreen extends ConsumerStatefulWidget {
+  final int matchUserId;
+  final String matchName;
+  final String? matchAvatarUrl;
+
+  const ChatDetailScreen({
+    super.key,
+    required this.matchUserId,
+    required this.matchName,
+    this.matchAvatarUrl,
+  });
+
+  @override
+  ConsumerState<ChatDetailScreen> createState() => _ChatDetailScreenState();
+}
+
+class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
+  final TextEditingController _messageController = TextEditingController();
+  final ScrollController _scrollController = ScrollController();
+
+  @override
+  void initState() {
+    super.initState();
+    // Ensure WebSocket connection is active when entering chat
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final chatService = ref.read(chatServiceProvider);
+      if (ref.read(webSocketStateProvider) !=
+          WebSocketConnectionState.connected) {
+        print("[ChatDetailScreen] Connecting WebSocket...");
+        chatService.connect();
+      }
+      _setupScrollListener();
+    });
+  }
+
+  void _setupScrollListener() {
+    _scrollController.addListener(() {
+      // Check if scrolled to the top (or near the top)
+      if (_scrollController.position.pixels >=
+          _scrollController.position.maxScrollExtent - 200) {
+        // Trigger slightly before top
+        // Fetch more messages if available
+        final conversationState =
+            ref.read(conversationProvider(widget.matchUserId));
+        if (conversationState.hasMore && !conversationState.isFetchingMore) {
+          ref
+              .read(conversationProvider(widget.matchUserId).notifier)
+              .fetchMoreMessages();
+        }
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _messageController.dispose();
+    _scrollController.dispose();
+    // Optional: Disconnect WebSocket here if it should only be active
+    // while a chat screen is open. If it should persist globally,
+    // manage connection/disconnection elsewhere (e.g., based on app lifecycle).
+    // ref.read(chatServiceProvider).disconnect();
+    super.dispose();
+  }
+
+  void _sendMessage() {
+    final text = _messageController.text.trim();
+    if (text.isEmpty) return;
+
+    final chatService = ref.read(chatServiceProvider);
+    final wsState = ref.read(webSocketStateProvider);
+
+    if (wsState == WebSocketConnectionState.connected) {
+      chatService.sendMessage(widget.matchUserId, text);
+      _messageController.clear();
+      // Scroll to bottom after sending (with slight delay for UI update)
+      Timer(const Duration(milliseconds: 100), _scrollToBottom);
+    } else {
+      print(
+          "[ChatDetailScreen] Cannot send, WebSocket not connected. State: $wsState");
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text("Cannot send message. Not connected.",
+              style: GoogleFonts.poppins()),
+          backgroundColor: Colors.orange,
+        ),
+      );
+      // Optionally try to reconnect?
+      chatService.connect();
+    }
+  }
+
+  void _scrollToBottom() {
+    if (_scrollController.hasClients) {
+      _scrollController.animateTo(
+        0.0, // Scroll to the top in a reversed list
+        duration: const Duration(milliseconds: 300),
+        curve: Curves.easeOut,
+      );
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final state = ref.watch(conversationProvider(widget.matchUserId));
+    final currentUserId =
+        ref.watch(currentUserIdProvider); // Get current user ID
+    final wsState = ref.watch(webSocketStateProvider);
+
+    // Scroll to bottom when new messages are added (after build)
+    ref.listen<ConversationState>(conversationProvider(widget.matchUserId),
+        (prev, next) {
+      if (prev != null && next.messages.length > prev.messages.length) {
+        // Only scroll if a new message was added (not just loading state change)
+        // Use WidgetsBinding to schedule scroll after build
+        WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToBottom());
+      }
+    });
+
+    return Scaffold(
+      backgroundColor: Colors.grey[100],
+      appBar: AppBar(
+        elevation: 1,
+        backgroundColor: Colors.white,
+        foregroundColor: Colors.black87,
+        title: Row(
+          children: [
+            CircleAvatar(
+              radius: 18,
+              backgroundImage: widget.matchAvatarUrl != null
+                  ? NetworkImage(widget.matchAvatarUrl!)
+                  : null,
+              backgroundColor: Colors.grey[300],
+              child: widget.matchAvatarUrl == null
+                  ? const Icon(Icons.person, size: 20, color: Colors.white)
+                  : null,
+            ),
+            const SizedBox(width: 12),
+            Text(
+              widget.matchName,
+              style: GoogleFonts.poppins(
+                fontSize: 17,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          // Optional: Connection Status Indicator
+          Padding(
+            padding: const EdgeInsets.only(right: 12.0),
+            child: Icon(
+              Icons.circle,
+              size: 10,
+              color: wsState == WebSocketConnectionState.connected
+                  ? Colors.green
+                  : (wsState == WebSocketConnectionState.connecting
+                      ? Colors.orange
+                      : Colors.red),
+            ),
+          ),
+        ],
+      ),
+      body: Column(
+        children: [
+          // --- Message List ---
+          Expanded(
+            child: _buildMessagesList(state, currentUserId),
+          ),
+          // --- Loading Indicator for Pagination ---
+          if (state.isFetchingMore)
+            const Padding(
+              padding: EdgeInsets.symmetric(vertical: 8.0),
+              child: Center(
+                  child: SizedBox(
+                      height: 20,
+                      width: 20,
+                      child: CircularProgressIndicator(
+                          strokeWidth: 2, color: Color(0xFF8B5CF6)))),
+            ),
+          // --- Message Input Area ---
+          _buildMessageInputArea(),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildMessagesList(ConversationState state, int? currentUserId) {
+    if (state.isLoading && state.messages.isEmpty) {
+      return const Center(
+          child: CircularProgressIndicator(color: Color(0xFF8B5CF6)));
+    }
+
+    if (state.error != null && state.messages.isEmpty) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(20.0),
+          child: Text(
+            "Error loading messages: ${state.error!.message}",
+            style: GoogleFonts.poppins(color: Colors.red),
+            textAlign: TextAlign.center,
+          ),
+        ),
+      );
+    }
+
+    if (!state.isLoading && state.messages.isEmpty) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(20.0),
+          child: Text(
+            "Start the conversation!",
+            style: GoogleFonts.poppins(color: Colors.grey[600], fontSize: 16),
+            textAlign: TextAlign.center,
+          ),
+        ),
+      );
+    }
+
+    return ListView.builder(
+      controller: _scrollController,
+      reverse: true, // Show newest messages at the bottom
+      padding: const EdgeInsets.symmetric(vertical: 10.0),
+      itemCount: state.messages.length,
+      itemBuilder: (context, index) {
+        final message = state.messages[index];
+        final bool isMe = currentUserId != null && message.isMe(currentUserId);
+        // Determine if the previous message was from the same sender
+        // to adjust bubble appearance (e.g., tail)
+        bool showTail = true;
+        if (index > 0) {
+          final prevMessage = state.messages[index - 1];
+          if (prevMessage.senderUserID == message.senderUserID) {
+            showTail = false;
+          }
+        }
+        return MessageBubble(
+          message: message,
+          isMe: isMe,
+          showTail: showTail, // Pass showTail to the bubble
+        );
+      },
+    );
+  }
+
+  Widget _buildMessageInputArea() {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12.0, vertical: 8.0),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        boxShadow: [
+          BoxShadow(
+            color: Colors.grey.withOpacity(0.15),
+            spreadRadius: 1,
+            blurRadius: 5,
+            offset: const Offset(0, -2),
+          ),
+        ],
+      ),
+      child: SafeArea(
+        // Ensure input isn't under system UI (like home bar)
+        child: Row(
+          children: [
+            Expanded(
+              child: TextField(
+                controller: _messageController,
+                textCapitalization: TextCapitalization.sentences,
+                decoration: InputDecoration(
+                  hintText: "Type a message...",
+                  hintStyle: GoogleFonts.poppins(color: Colors.grey[500]),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(25.0),
+                    borderSide: BorderSide.none,
+                  ),
+                  filled: true,
+                  fillColor: Colors.grey[100],
+                  contentPadding: const EdgeInsets.symmetric(
+                      horizontal: 16.0, vertical: 10.0),
+                ),
+                onSubmitted: (_) => _sendMessage(), // Send on keyboard submit
+                minLines: 1,
+                maxLines: 5, // Allow multiline input
+                keyboardType: TextInputType.multiline, // Set keyboard type
+              ),
+            ),
+            const SizedBox(width: 8.0),
+            IconButton(
+              icon: const Icon(Icons.send_rounded),
+              color: const Color(0xFF8B5CF6),
+              onPressed: _sendMessage,
+              tooltip: "Send Message",
             ),
           ],
         ),
@@ -10093,13 +11267,16 @@ File: views/main_navigation_screen.dart
 // File: lib/views/main_navigation_screen.dart
 import 'package:dtx/providers/recieved_likes_provider.dart';
 import 'package:dtx/providers/user_provider.dart';
-import 'package:dtx/views/chat_screen.dart';
+// *** ADDED Import ***
+import 'package:dtx/views/matches_screen.dart';
+// *** END ADDED ***
 import 'package:dtx/views/home.dart';
 import 'package:dtx/views/profile_screens.dart';
 import 'package:dtx/views/who_liked_you_screen.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_fonts/google_fonts.dart';
+// Removed chat_screen import as we now have MatchesScreen
 
 class MainNavigationScreen extends ConsumerStatefulWidget {
   const MainNavigationScreen({super.key});
@@ -10112,12 +11289,14 @@ class MainNavigationScreen extends ConsumerStatefulWidget {
 class _MainNavigationScreenState extends ConsumerState<MainNavigationScreen> {
   int _selectedIndex = 0;
 
+  // *** UPDATED Widget List ***
   static const List<Widget> _widgetOptions = <Widget>[
     HomeScreen(),
     WhoLikedYouScreen(),
-    ChatPlaceholderScreen(),
+    MatchesScreen(), // Changed from ChatPlaceholderScreen
     ProfileScreen(),
   ];
+  // *** END UPDATE ***
 
   void _onItemTapped(int index) {
     setState(() {
@@ -10132,34 +11311,30 @@ class _MainNavigationScreenState extends ConsumerState<MainNavigationScreen> {
       print(
           "[MainNavigationScreen] Post-frame callback: Initiating Likes and Profile fetches if needed.");
 
-      // --- Simplified Fetch Logic ---
       // Fetch Likes only if data is empty (initial load)
       final likesState = ref.read(receivedLikesProvider);
-      if (likesState.fullProfiles.isEmpty && likesState.otherLikers.isEmpty) {
+      if (likesState.fullProfiles.isEmpty &&
+          likesState.otherLikers.isEmpty &&
+          !likesState.isLoading) {
         print(
             "[MainNavigationScreen] Likes data is empty, calling fetchLikes.");
-        // We don't check isLoading here, let the notifier handle it if needed.
-        // Adding a direct read+call might be slightly risky if the user switches tabs
-        // VERY fast, but generally okay for initial load. A safer pattern might
-        // involve listening or using FutureProvider if concurrent calls are a major concern.
         ref.read(receivedLikesProvider.notifier).fetchLikes();
       } else {
         print(
-            "[MainNavigationScreen] Likes data already present, skipping fetchLikes call.");
+            "[MainNavigationScreen] Likes data already present or loading, skipping fetchLikes call.");
       }
 
       // Fetch Profile only if data is missing (initial load)
       final userState = ref.read(userProvider);
-      if (userState.name == null) {
+      if (userState.name == null && !ref.read(userLoadingProvider)) {
+        // Also check userLoadingProvider
         print(
             "[MainNavigationScreen] User profile data is empty, calling fetchProfile.");
-        // Same note as above regarding potential concurrency.
         ref.read(userProvider.notifier).fetchProfile();
       } else {
         print(
-            "[MainNavigationScreen] User profile data already present, skipping fetchProfile call.");
+            "[MainNavigationScreen] User profile data already present or loading, skipping fetchProfile call.");
       }
-      // --- End Simplified Fetch Logic ---
     });
   }
 
@@ -10168,11 +11343,13 @@ class _MainNavigationScreenState extends ConsumerState<MainNavigationScreen> {
     return Scaffold(
       body: Center(
         child: IndexedStack(
+          // Use IndexedStack to preserve state of tabs
           index: _selectedIndex,
           children: _widgetOptions,
         ),
       ),
       bottomNavigationBar: BottomNavigationBar(
+        // *** UPDATED Items ***
         items: const <BottomNavigationBarItem>[
           BottomNavigationBarItem(
             icon: Icon(Icons.home_outlined),
@@ -10185,9 +11362,10 @@ class _MainNavigationScreenState extends ConsumerState<MainNavigationScreen> {
             label: 'Likes',
           ),
           BottomNavigationBarItem(
+            // Changed icon and label for Matches/Chat
             icon: Icon(Icons.chat_bubble_outline_rounded),
             activeIcon: Icon(Icons.chat_bubble_rounded),
-            label: 'Chat',
+            label: 'Matches', // Changed label
           ),
           BottomNavigationBarItem(
             icon: Icon(Icons.person_outline_rounded),
@@ -10195,17 +11373,217 @@ class _MainNavigationScreenState extends ConsumerState<MainNavigationScreen> {
             label: 'Profile',
           ),
         ],
+        // *** END UPDATE ***
         currentIndex: _selectedIndex,
         selectedItemColor: const Color(0xFF8B5CF6),
         unselectedItemColor: Colors.grey[600],
         onTap: _onItemTapped,
-        type: BottomNavigationBarType.fixed,
+        type: BottomNavigationBarType.fixed, // Keep labels visible
         showUnselectedLabels: true,
         backgroundColor: Colors.white,
         elevation: 5.0,
         selectedLabelStyle:
             GoogleFonts.poppins(fontSize: 12, fontWeight: FontWeight.w500),
         unselectedLabelStyle: GoogleFonts.poppins(fontSize: 12),
+      ),
+    );
+  }
+}
+
+
+
+================================================
+File: views/matches_screen.dart
+================================================
+// lib/views/matches_screen.dart
+import 'package:dtx/models/error_model.dart';
+import 'package:dtx/models/user_model.dart'; // Using UserModel as MatchUser
+import 'package:dtx/providers/matches_provider.dart';
+import 'package:dtx/views/chat_detail_screen.dart'; // Import ChatDetailScreen
+import 'package:dtx/widgets/match_list_tile.dart'; // Import MatchListTile
+import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:google_fonts/google_fonts.dart';
+
+class MatchesScreen extends ConsumerStatefulWidget {
+  const MatchesScreen({super.key});
+
+  @override
+  ConsumerState<MatchesScreen> createState() => _MatchesScreenState();
+}
+
+class _MatchesScreenState extends ConsumerState<MatchesScreen> {
+  @override
+  void initState() {
+    super.initState();
+    // Fetch matches when the screen loads if not already loaded
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final state = ref.read(matchesProvider);
+      if (state.matches.isEmpty && !state.isLoading) {
+        ref.read(matchesProvider.notifier).fetchMatches();
+      }
+    });
+  }
+
+  Future<void> _refreshMatches() async {
+    await ref.read(matchesProvider.notifier).fetchMatches(forceRefresh: true);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final state = ref.watch(matchesProvider);
+
+    return Scaffold(
+      backgroundColor: Colors.grey[50],
+      appBar: AppBar(
+        title: Text('Matches & Chats',
+            style: GoogleFonts.poppins(fontWeight: FontWeight.w600)),
+        backgroundColor: Colors.white,
+        foregroundColor: Colors.black,
+        elevation: 1,
+        automaticallyImplyLeading: false, // No back button in a tab screen
+      ),
+      body: RefreshIndicator(
+        onRefresh: _refreshMatches,
+        color: const Color(0xFF8B5CF6),
+        child: _buildBody(state),
+      ),
+    );
+  }
+
+  Widget _buildBody(MatchesState state) {
+    if (state.isLoading && state.matches.isEmpty) {
+      return const Center(
+          child: CircularProgressIndicator(color: Color(0xFF8B5CF6)));
+    }
+
+    if (state.error != null && state.matches.isEmpty) {
+      return _buildErrorState(state.error!);
+    }
+
+    if (state.matches.isEmpty) {
+      return _buildEmptyState();
+    }
+
+    return ListView.separated(
+      padding: const EdgeInsets.symmetric(vertical: 8.0),
+      itemCount: state.matches.length,
+      itemBuilder: (context, index) {
+        final match = state.matches[index];
+        return MatchListTile(
+          matchUser: match,
+          onTap: () {
+            if (match.id == null) {
+              ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+                  content: Text("Cannot open chat: Invalid user ID.")));
+              return;
+            }
+            Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (context) => ChatDetailScreen(
+                  matchUserId: match.id!,
+                  matchName: match.name ?? 'Match',
+                  matchAvatarUrl:
+                      match.firstMediaUrl, // Use first media as avatar
+                ),
+              ),
+            );
+          },
+        );
+      },
+      separatorBuilder: (context, index) => Divider(
+        height: 1,
+        thickness: 1,
+        indent: 80, // Indent divider to align past avatar
+        color: Colors.grey[200],
+      ),
+    );
+  }
+
+  Widget _buildEmptyState() {
+    return LayoutBuilder(
+      builder: (context, constraints) => SingleChildScrollView(
+        physics: const AlwaysScrollableScrollPhysics(),
+        child: ConstrainedBox(
+          constraints: BoxConstraints(minHeight: constraints.maxHeight),
+          child: Center(
+            child: Padding(
+              padding: const EdgeInsets.all(30.0),
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(Icons.chat_bubble_outline_rounded,
+                      size: 70, color: Colors.grey[300]),
+                  const SizedBox(height: 20),
+                  Text("No Matches Yet",
+                      style: GoogleFonts.poppins(
+                          fontSize: 20,
+                          fontWeight: FontWeight.w600,
+                          color: Colors.grey[700])),
+                  const SizedBox(height: 10),
+                  Text("Start liking profiles to find your matches!",
+                      textAlign: TextAlign.center,
+                      style: GoogleFonts.poppins(
+                          fontSize: 15, color: Colors.grey[500])),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildErrorState(AppError error) {
+    return LayoutBuilder(
+      builder: (context, constraints) => SingleChildScrollView(
+        physics: const AlwaysScrollableScrollPhysics(),
+        child: ConstrainedBox(
+          constraints: BoxConstraints(minHeight: constraints.maxHeight),
+          child: Center(
+            child: Padding(
+              padding: const EdgeInsets.all(30.0),
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(Icons.error_outline_rounded,
+                      size: 60, color: Colors.redAccent[100]),
+                  const SizedBox(height: 20),
+                  Text(
+                    "Oops! Couldn't load matches",
+                    style: GoogleFonts.poppins(
+                        fontSize: 18,
+                        fontWeight: FontWeight.w600,
+                        color: Colors.grey[700]),
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: 10),
+                  Text(
+                    error.message,
+                    style: GoogleFonts.poppins(
+                        fontSize: 14, color: Colors.grey[600]),
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: 20),
+                  ElevatedButton.icon(
+                    icon: const Icon(Icons.refresh_rounded, size: 18),
+                    label: const Text("Retry"),
+                    style: ElevatedButton.styleFrom(
+                      foregroundColor: Colors.white,
+                      backgroundColor: const Color(0xFF8B5CF6),
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(20)),
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 30, vertical: 12),
+                    ),
+                    onPressed: _refreshMatches,
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
       ),
     );
   }
@@ -17155,5 +18533,152 @@ class HomeProfileCard extends ConsumerWidget {
     );
   }
 } // End of HomeProfileCard
+
+
+
+================================================
+File: widgets/match_list_tile.dart
+================================================
+// lib/widgets/match_list_tile.dart
+import 'package:dtx/models/user_model.dart'; // Using UserModel as MatchUser
+import 'package:flutter/material.dart';
+import 'package:google_fonts/google_fonts.dart';
+
+class MatchListTile extends StatelessWidget {
+  final UserModel matchUser; // Use UserModel
+  final VoidCallback onTap;
+
+  const MatchListTile({
+    super.key,
+    required this.matchUser,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return ListTile(
+      contentPadding:
+          const EdgeInsets.symmetric(horizontal: 16.0, vertical: 4.0),
+      leading: CircleAvatar(
+        radius: 28,
+        backgroundColor: Colors.grey[200],
+        backgroundImage: matchUser.firstMediaUrl != null
+            ? NetworkImage(matchUser.firstMediaUrl!)
+            : null,
+        child: matchUser.firstMediaUrl == null
+            ? Icon(Icons.person, size: 30, color: Colors.grey[400])
+            : null,
+      ),
+      title: Text(
+        matchUser.name ?? 'Unknown Match',
+        style: GoogleFonts.poppins(
+          fontWeight: FontWeight.w600,
+          fontSize: 16,
+        ),
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+      ),
+      subtitle: Text(
+        "Matched with you", // Replace with last message later if needed
+        style: GoogleFonts.poppins(
+          color: Colors.grey[600],
+          fontSize: 13,
+        ),
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+      ),
+      trailing: Icon(Icons.chevron_right_rounded, color: Colors.grey[400]),
+      onTap: onTap,
+    );
+  }
+}
+
+
+
+================================================
+File: widgets/message_bubble.dart
+================================================
+// lib/widgets/message_bubble.dart
+import 'package:dtx/models/chat_message.dart';
+import 'package:flutter/material.dart';
+import 'package:google_fonts/google_fonts.dart';
+
+class MessageBubble extends StatelessWidget {
+  final ChatMessage message;
+  final bool isMe;
+  final bool showTail; // Add this parameter
+
+  const MessageBubble({
+    super.key,
+    required this.message,
+    required this.isMe,
+    required this.showTail, // Require showTail
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final radius = Radius.circular(18.0);
+    final borderRadius = BorderRadius.only(
+      topLeft: radius,
+      topRight: radius,
+      // Apply tail based on isMe and showTail
+      bottomLeft: isMe || !showTail ? radius : Radius.zero,
+      bottomRight: !isMe || !showTail ? radius : Radius.zero,
+    );
+
+    return Align(
+      alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
+      child: Container(
+        constraints: BoxConstraints(
+          maxWidth: MediaQuery.of(context).size.width * 0.75, // Max width
+        ),
+        margin: EdgeInsets.only(
+          top: 4.0,
+          bottom: 4.0,
+          left: isMe ? 0 : 10.0, // Margin for alignment
+          right: isMe ? 10.0 : 0,
+        ),
+        padding: const EdgeInsets.symmetric(horizontal: 14.0, vertical: 10.0),
+        decoration: BoxDecoration(
+            color: isMe ? const Color(0xFF8B5CF6) : Colors.white,
+            borderRadius: borderRadius,
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withOpacity(0.05),
+                blurRadius: 3,
+                offset: Offset(0, 1),
+              )
+            ]),
+        child: Column(
+          crossAxisAlignment:
+              isMe ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min, // Important for column height
+          children: [
+            Text(
+              message.messageText,
+              style: GoogleFonts.poppins(
+                color: isMe ? Colors.white : Colors.black87,
+                fontSize: 15,
+              ),
+            ),
+            // Optional: Add timestamp inside the bubble
+            /*
+             Padding(
+                padding: const EdgeInsets.only(top: 4.0),
+                child: Text(
+                   message.formattedTimestamp,
+                   style: GoogleFonts.poppins(
+                      color: isMe ? Colors.white70 : Colors.grey[500],
+                      fontSize: 10,
+                   ),
+                ),
+             ),
+             */
+          ],
+        ),
+      ),
+    );
+  }
+}
 
 

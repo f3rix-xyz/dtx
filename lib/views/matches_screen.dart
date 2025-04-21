@@ -23,12 +23,14 @@ class _MatchesScreenState extends ConsumerState<MatchesScreen> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       final state = ref.read(matchesProvider);
       if (state.matches.isEmpty && !state.isLoading) {
+        print("[MatchesScreen] Initial fetch trigger."); // Log fetch trigger
         ref.read(matchesProvider.notifier).fetchMatches();
       }
     });
   }
 
   Future<void> _refreshMatches() async {
+    print("[MatchesScreen] Refreshing matches."); // Log refresh action
     await ref.read(matchesProvider.notifier).fetchMatches(forceRefresh: true);
   }
 
@@ -76,7 +78,15 @@ class _MatchesScreenState extends ConsumerState<MatchesScreen> {
         return MatchListTile(
           matchUser: match,
           onTap: () {
-            if (match.id == null) {
+            // *** ADD LOGGING HERE ***
+            print(
+                "[MatchesScreen onTap] Attempting to navigate to chat for match. User ID: ${match.id}, Name: ${match.name}, Avatar: ${match.firstMediaUrl}");
+            // *** END LOGGING ***
+
+            if (match.id == null || match.id == 0) {
+              // Added check for 0 ID as well
+              print(
+                  "[MatchesScreen onTap] ERROR: Invalid User ID detected (${match.id}). Cannot navigate.");
               ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
                   content: Text("Cannot open chat: Invalid user ID.")));
               return;
@@ -86,9 +96,9 @@ class _MatchesScreenState extends ConsumerState<MatchesScreen> {
               MaterialPageRoute(
                 builder: (context) => ChatDetailScreen(
                   matchUserId: match.id!,
-                  matchName: match.name ?? 'Match',
-                  matchAvatarUrl:
-                      match.firstMediaUrl, // Use first media as avatar
+                  matchName: match.name ??
+                      'Match', // Default to 'Match' if name is still null after parsing
+                  matchAvatarUrl: match.firstMediaUrl,
                 ),
               ),
             );
@@ -105,6 +115,7 @@ class _MatchesScreenState extends ConsumerState<MatchesScreen> {
   }
 
   Widget _buildEmptyState() {
+    // (Keep previous implementation)
     return LayoutBuilder(
       builder: (context, constraints) => SingleChildScrollView(
         physics: const AlwaysScrollableScrollPhysics(),
@@ -139,6 +150,7 @@ class _MatchesScreenState extends ConsumerState<MatchesScreen> {
   }
 
   Widget _buildErrorState(AppError error) {
+    // (Keep previous implementation)
     return LayoutBuilder(
       builder: (context, constraints) => SingleChildScrollView(
         physics: const AlwaysScrollableScrollPhysics(),
