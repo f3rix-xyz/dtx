@@ -59,6 +59,7 @@ dependencies:
   http_parser:
   camera:
   google_sign_in:
+  web_socket_channel: 
 
 
 
