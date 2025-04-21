@@ -1,15 +1,14 @@
-// lib/providers/filter_provider.dart
+// File: lib/providers/filter_provider.dart
 import 'package:dtx/models/error_model.dart';
 import 'package:dtx/models/filter_model.dart';
 import 'package:dtx/providers/error_provider.dart';
+import 'package:dtx/providers/feed_provider.dart'; // Import feed provider
 import 'package:dtx/providers/service_provider.dart';
 import 'package:dtx/repositories/filter_repository.dart';
 import 'package:dtx/services/api_service.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-// --- REMOVED: filterLoadingProvider - manage loading within the notifier ---
-
-// --- StateNotifier Provider ---
+// --- StateNotifier Provider (No change) ---
 final filterProvider =
     StateNotifierProvider<FilterNotifier, FilterSettings>((ref) {
   final filterRepository = ref.watch(filterRepositoryProvider);
@@ -29,7 +28,7 @@ class FilterNotifier extends StateNotifier<FilterSettings> {
     // loadFilters();
   }
 
-  // Load filters from the repository
+  // Load filters from the repository (No change)
   Future<void> loadFilters({bool forceRemote = false}) async {
     // Prevent multiple fetches if already loading or if data exists and not forced
     if (_isLoading || (state != const FilterSettings() && !forceRemote)) {
@@ -55,7 +54,7 @@ class FilterNotifier extends StateNotifier<FilterSettings> {
     }
   }
 
-  // Save filters to the repository
+  // Save filters (used by full dialog)
   Future<bool> saveFilters(FilterSettings newFilters) async {
     if (_isLoading) return false;
     _setLoading(true);
@@ -75,6 +74,9 @@ class FilterNotifier extends StateNotifier<FilterSettings> {
         }
         return false;
       }
+      // Refresh feed after saving from the *full* dialog as well
+      print("[FilterNotifier] Filters saved via full dialog. Refreshing feed.");
+      ref.read(feedProvider.notifier).fetchFeed(forceRefresh: true);
       return true; // Success
     } on ApiException catch (e) {
       if (mounted) {
@@ -95,23 +97,22 @@ class FilterNotifier extends StateNotifier<FilterSettings> {
     }
   }
 
-  // Helper to manage internal loading state
+  // Helper to manage internal loading state (No change)
   void _setLoading(bool loading) {
-    // Could add notifyListeners() if using ChangeNotifier, but not needed for StateNotifier
     if (_isLoading != loading) {
       _isLoading = loading;
-      // No need to call setState or notifyListeners for StateNotifier's internal state
     }
   }
 
-  // Method to update a single filter value directly (e.g., from slider/switch)
+  // Method to update a single filter value in the *state* (No change)
   // Ensures immutability by using copyWith
   void updateSingleFilter<T>(T value, FilterField field) {
     if (_isLoading) return; // Prevent updates while saving/loading
+    print("[FilterNotifier] Updating single filter state $field to $value");
     state = state.copyWith(
       whoYouWantToSee: field == FilterField.whoYouWantToSee
-          ? () => value as FilterGenderPref? // Cast to correct type
-          : null, // Return null for other fields
+          ? () => value as FilterGenderPref?
+          : null,
       radiusKm: field == FilterField.radiusKm ? () => value as int? : null,
       activeToday:
           field == FilterField.activeToday ? () => value as bool? : null,
@@ -119,7 +120,49 @@ class FilterNotifier extends StateNotifier<FilterSettings> {
       ageMax: field == FilterField.ageMax ? () => value as int? : null,
     );
   }
+
+  // --- *** NEW METHOD: Save Current State *** ---
+  // Saves the current state held by the notifier to the backend
+  Future<bool> saveCurrentFilterState() async {
+    if (_isLoading) return false;
+    _setLoading(true);
+    ref.read(errorProvider.notifier).clearError();
+    print("[FilterNotifier] Saving current filter state via API: ${state.toJsonForApi()}");
+
+    try {
+      final success = await _filterRepository.updateFilters(state); // Pass current state
+      if (!success) {
+        if (mounted) {
+          // Error is likely set by repo, but add fallback
+          if (ref.read(errorProvider) == null) {
+            ref.read(errorProvider.notifier).setError(AppError.server("Failed to save filter change."));
+          }
+        }
+        print("[FilterNotifier] Failed to save current filter state via API.");
+        return false;
+      }
+      // Filters saved, now refresh feed
+      print("[FilterNotifier] Current filter state saved successfully via API. Refreshing feed.");
+      ref.read(feedProvider.notifier).fetchFeed(forceRefresh: true);
+      return true; // Success
+    } on ApiException catch (e) {
+      if (mounted) {
+        ref.read(errorProvider.notifier).setError(AppError.server(e.message));
+      }
+       print("[FilterNotifier] API Exception saving current filter state: ${e.message}");
+      return false;
+    } catch (e) {
+       if (mounted) {
+         ref.read(errorProvider.notifier).setError(AppError.generic("An unexpected error occurred saving filter."));
+      }
+      print("[FilterNotifier] Unexpected error saving current filter state: $e");
+      return false;
+    } finally {
+      if (mounted) _setLoading(false);
+    }
+  }
+  // --- *** END NEW METHOD *** ---
 }
 
-// Enum to identify which filter field is being updated
+// Enum to identify which filter field is being updated (No change)
 enum FilterField { whoYouWantToSee, radiusKm, activeToday, ageMin, ageMax }

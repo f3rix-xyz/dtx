@@ -8,7 +8,7 @@ import 'package:dtx/providers/filter_provider.dart';
 import 'package:dtx/providers/service_provider.dart';
 import 'package:dtx/providers/user_provider.dart';
 import 'package:dtx/services/api_service.dart';
-import 'package:dtx/views/filter_settings_dialog.dart';
+import 'package:dtx/views/filter_settings_dialog.dart'; // Keep for full dialog
 import 'package:dtx/views/name.dart';
 import 'package:dtx/models/user_model.dart';
 import 'package:dtx/widgets/home_profile_card.dart';
@@ -31,6 +31,10 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
   List<UserModel> _feedProfiles = [];
   bool _isInteracting = false; // To show overlay during API call
 
+  // --- initState, dispose, _fetchFeed, _showCompleteProfileDialog, _removeTopCard ---
+  // --- _callLikeRepository, _callDislikeRepository, _showErrorSnackbar ---
+  // --- _openFilterDialog ---
+  // --- Remain the same as in the previous version ---
   @override
   void initState() {
     super.initState();
@@ -41,7 +45,6 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
         _fetchFeed();
       } else {
         if (mounted) {
-          // Initialize local state from provider if already fetched
           setState(() {
             _feedProfiles = feedState.profiles;
           });
@@ -66,10 +69,8 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     print("[HomeScreen _fetchFeed] Fetching home feed. Force: $force");
     ref.read(errorProvider.notifier).clearError();
     await ref.read(feedProvider.notifier).fetchFeed(forceRefresh: force);
-    // State update is handled by the ref.listen below
   }
 
-  // Dialog shown if user tries to interact before completing onboarding step 2
   void _showCompleteProfileDialog() {
     showDialog(
       context: context,
@@ -89,10 +90,9 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
             ),
             TextButton(
               child: Text("Complete Profile",
-                  style: GoogleFonts.poppins(color: Color(0xFF8B5CF6))),
+                  style: GoogleFonts.poppins(color: const Color(0xFF8B5CF6))),
               onPressed: () {
                 Navigator.of(dialogContext).pop();
-                // Navigate to the first screen of the remaining onboarding flow
                 Navigator.push(context,
                     MaterialPageRoute(builder: (_) => const NameInputScreen()));
               },
@@ -103,24 +103,20 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     );
   }
 
-  // Called by HomeProfileCard after a successful interaction (like OR dislike)
   void _removeTopCard() {
     print("[HomeScreen _removeTopCard] Removing top card from local state.");
     if (!mounted) return;
     if (_feedProfiles.isNotEmpty) {
       final removedUserId = _feedProfiles[0].id!;
-      // Update local state FIRST for immediate UI reflection
       setState(() {
         _feedProfiles.removeAt(0);
       });
-      // Then notify the provider
       print(
           "[HomeScreen _removeTopCard] Notifying FeedProvider to remove profile ID: $removedUserId");
       ref.read(feedProvider.notifier).removeProfile(removedUserId);
     }
   }
 
-  // API call handler for LIKES (passed to card)
   Future<bool> _callLikeRepository({
     required int targetUserId,
     required ContentLikeType contentType,
@@ -128,110 +124,38 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     required LikeInteractionType interactionType,
     String? comment,
   }) async {
-    // Check if profile is complete before allowing interaction
     final authStatus = ref.read(authProvider).authStatus;
     if (authStatus == AuthStatus.onboarding2) {
-      print(
-          "[HomeScreen _callLikeRepository] Interaction blocked: Profile incomplete (onboarding2).");
       _showCompleteProfileDialog();
-      return false; // Indicate failure
+      return false;
     }
-
-    if (_isInteracting) return false; // Prevent double taps during API call
-    if (mounted) setState(() => _isInteracting = true); // Show overlay
-
+    if (_isInteracting) return false;
+    if (mounted) setState(() => _isInteracting = true);
     final errorNotifier = ref.read(errorProvider.notifier)..clearError();
     bool success = false;
     try {
       final likeRepo = ref.read(likeRepositoryProvider);
-      print(
-          "[HomeScreen _callLikeRepository] Calling API: Target $targetUserId, Type: $contentType, ID: $contentIdentifier, Interaction: $interactionType, Comment: ${comment != null}");
       success = await likeRepo.likeContent(
           likedUserId: targetUserId,
           contentType: contentType,
           contentIdentifier: contentIdentifier,
           interactionType: interactionType,
           comment: comment);
-
-      if (!success) {
-        // If API returns false, check if an error was already set by repo/service
-        if (mounted && ref.read(errorProvider) == null) {
-          print(
-              "[HomeScreen _callLikeRepository] API returned false, setting generic error.");
-          errorNotifier.setError(
-              AppError.server("Could not send ${interactionType.value}."));
-          _showErrorSnackbar(
-              "Could not send ${interactionType.value}."); // Show feedback
-        }
-      } else {
-        print("[HomeScreen _callLikeRepository] API call successful.");
+      if (!success && mounted && ref.read(errorProvider) == null) {
+        errorNotifier.setError(
+            AppError.server("Could not send ${interactionType.value}."));
+        _showErrorSnackbar("Could not send ${interactionType.value}.");
       }
     } on LikeLimitExceededException catch (e) {
-      print("[HomeScreen _callLikeRepository] Like Limit Error: ${e.message}");
       if (mounted) errorNotifier.setError(AppError.validation(e.message));
-      _showErrorSnackbar(e.message); // Show specific feedback
+      _showErrorSnackbar(e.message);
     } on InsufficientRosesException catch (e) {
-      print(
-          "[HomeScreen _callLikeRepository] Insufficient Roses: ${e.message}");
       if (mounted) errorNotifier.setError(AppError.validation(e.message));
-      _showErrorSnackbar(e.message); // Show specific feedback
+      _showErrorSnackbar(e.message);
     } on ApiException catch (e) {
-      print("[HomeScreen _callLikeRepository] API Exception: ${e.message}");
-      if (mounted) errorNotifier.setError(AppError.server(e.message));
-      _showErrorSnackbar(e.message); // Show API error message
-    } catch (e) {
-      print(
-          "[HomeScreen _callLikeRepository] Unexpected Error: ${e.toString()}");
-      if (mounted)
-        errorNotifier
-            .setError(AppError.generic("An unexpected error occurred."));
-      _showErrorSnackbar("An unexpected error occurred.");
-    } finally {
-      if (mounted) setState(() => _isInteracting = false); // Hide overlay
-    }
-    print("[HomeScreen _callLikeRepository] Returning success: $success");
-    return success; // Return the outcome
-  }
-
-  // --- ADDED: API call handler for DISLIKES (passed to card) ---
-  Future<bool> _callDislikeRepository(int targetUserId) async {
-    // Check if profile is complete before allowing interaction
-    final authStatus = ref.read(authProvider).authStatus;
-    if (authStatus == AuthStatus.onboarding2) {
-      print(
-          "[HomeScreen _callDislikeRepository] Interaction blocked: Profile incomplete (onboarding2).");
-      _showCompleteProfileDialog();
-      return false;
-    }
-
-    if (_isInteracting) return false;
-    if (mounted) setState(() => _isInteracting = true);
-
-    final errorNotifier = ref.read(errorProvider.notifier)..clearError();
-    bool success = false;
-    try {
-      final likeRepo = ref.read(likeRepositoryProvider);
-      print(
-          "[HomeScreen _callDislikeRepository] Calling dislike API for Target $targetUserId");
-      success = await likeRepo.dislikeUser(dislikedUserId: targetUserId);
-
-      if (!success) {
-        if (mounted && ref.read(errorProvider) == null) {
-          print(
-              "[HomeScreen _callDislikeRepository] API returned false, setting generic error.");
-          errorNotifier.setError(AppError.server("Could not dislike user."));
-          _showErrorSnackbar("Could not dislike user.");
-        }
-      } else {
-        print("[HomeScreen _callDislikeRepository] API call successful.");
-      }
-    } on ApiException catch (e) {
-      print("[HomeScreen _callDislikeRepository] API Exception: ${e.message}");
       if (mounted) errorNotifier.setError(AppError.server(e.message));
       _showErrorSnackbar(e.message);
     } catch (e) {
-      print(
-          "[HomeScreen _callDislikeRepository] Unexpected Error: ${e.toString()}");
       if (mounted)
         errorNotifier
             .setError(AppError.generic("An unexpected error occurred."));
@@ -239,37 +163,314 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     } finally {
       if (mounted) setState(() => _isInteracting = false);
     }
-    print("[HomeScreen _callDislikeRepository] Returning success: $success");
     return success;
   }
-  // --- END ADDED ---
+
+  Future<bool> _callDislikeRepository(int targetUserId) async {
+    final authStatus = ref.read(authProvider).authStatus;
+    if (authStatus == AuthStatus.onboarding2) {
+      _showCompleteProfileDialog();
+      return false;
+    }
+    if (_isInteracting) return false;
+    if (mounted) setState(() => _isInteracting = true);
+    final errorNotifier = ref.read(errorProvider.notifier)..clearError();
+    bool success = false;
+    try {
+      final likeRepo = ref.read(likeRepositoryProvider);
+      success = await likeRepo.dislikeUser(dislikedUserId: targetUserId);
+      if (!success && mounted && ref.read(errorProvider) == null) {
+        errorNotifier.setError(AppError.server("Could not dislike user."));
+        _showErrorSnackbar("Could not dislike user.");
+      }
+    } on ApiException catch (e) {
+      if (mounted) errorNotifier.setError(AppError.server(e.message));
+      _showErrorSnackbar(e.message);
+    } catch (e) {
+      if (mounted)
+        errorNotifier
+            .setError(AppError.generic("An unexpected error occurred."));
+      _showErrorSnackbar("An unexpected error occurred.");
+    } finally {
+      if (mounted) setState(() => _isInteracting = false);
+    }
+    return success;
+  }
 
   void _showErrorSnackbar(String message) {
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
           content: Text(message, style: GoogleFonts.poppins()),
-          backgroundColor: Colors.redAccent), // Use red for errors
+          backgroundColor: Colors.redAccent),
     );
   }
 
   Future<void> _openFilterDialog() async {
-    print("[HomeScreen] Opening Filter Dialog.");
+    print("[HomeScreen] Opening Full Filter Dialog.");
     await showDialog<bool>(
       context: context,
       builder: (context) => const FilterSettingsDialog(),
     );
   }
 
+  // --- *** CORRECTED: _showMiniFilterEditor *** ---
+  Future<void> _showMiniFilterEditor(FilterField filterType) async {
+    final filterNotifier = ref.read(filterProvider.notifier);
+    final currentFilters = ref.read(filterProvider);
+    bool changesMade = false; // Track if the user confirms a change
+
+    print("[HomeScreen] Opening mini-editor for: $filterType");
+
+    // --- Store initial values for comparison ---
+    final initialGender = currentFilters.whoYouWantToSee;
+    final initialAgeRange = RangeValues(
+      currentFilters.ageMin?.toDouble() ??
+          FilterSettings.defaultAgeMin.toDouble(),
+      currentFilters.ageMax?.toDouble() ??
+          FilterSettings.defaultAgeMax.toDouble(),
+    );
+    final initialRadius = currentFilters.radiusKm?.toDouble() ??
+        FilterSettings.defaultRadius.toDouble();
+    final initialActive =
+        currentFilters.activeToday ?? FilterSettings.defaultActiveToday;
+    // --- End Store initial values ---
+
+    await showDialog(
+        context: context,
+        barrierDismissible: true,
+        builder: (dialogContext) {
+          // Use StatefulBuilder to manage local state within the dialog
+          // Declare the temporary state variables *outside* the builder but *inside* showDialog
+          FilterGenderPref? tempGender = initialGender;
+          RangeValues tempAgeRange = initialAgeRange;
+          double tempRadius = initialRadius;
+          bool tempActive = initialActive;
+
+          return StatefulBuilder(
+              // The builder receives the correct context and the StateSetter for THIS builder
+              builder: (stfContext, stfSetState) {
+            Widget editorContent;
+            String title = "Edit Filter"; // Default title
+
+            // Build the specific editor UI based on filterType
+            switch (filterType) {
+              case FilterField.whoYouWantToSee:
+                title = "Show Me";
+                editorContent = Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: FilterGenderPref.values.map((gender) {
+                    return RadioListTile<FilterGenderPref>(
+                      title: Text(
+                          gender.value[0].toUpperCase() +
+                              gender.value.substring(1),
+                          style: GoogleFonts.poppins()),
+                      value: gender,
+                      groupValue:
+                          tempGender, // Bind to temporary state variable
+                      onChanged: (FilterGenderPref? value) {
+                        if (value != null) {
+                          // Use the stfSetState from the builder argument
+                          stfSetState(() {
+                            print(
+                                "[MiniDialog stfSetState] Updating tempGender from $tempGender to $value");
+                            tempGender = value;
+                          });
+                        }
+                      },
+                      activeColor: const Color(0xFF8B5CF6),
+                      contentPadding: EdgeInsets.zero,
+                    );
+                  }).toList(),
+                );
+                break;
+              case FilterField.ageMin:
+              case FilterField.ageMax:
+                title = "Age Range";
+                editorContent = Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    RangeSlider(
+                      values: tempAgeRange, // Bind to temporary state variable
+                      min: 18,
+                      max: 70,
+                      divisions: 52,
+                      labels: RangeLabels(
+                        tempAgeRange.start.round().toString(),
+                        tempAgeRange.end.round().toString(),
+                      ),
+                      activeColor: const Color(0xFF8B5CF6),
+                      inactiveColor: const Color(0xFF8B5CF6).withOpacity(0.3),
+                      onChanged: (RangeValues values) {
+                        // Use the stfSetState from the builder argument
+                        stfSetState(() {
+                          if (values.start <= values.end) {
+                            print(
+                                "[MiniDialog stfSetState] Updating tempAgeRange from $tempAgeRange to $values");
+                            tempAgeRange = values;
+                          }
+                        });
+                      },
+                    ),
+                    Padding(
+                      padding: const EdgeInsets.only(top: 8.0),
+                      child: Text(
+                        "${tempAgeRange.start.round()} - ${tempAgeRange.end.round()} years",
+                        style: GoogleFonts.poppins(
+                            color: Colors.grey[600], fontSize: 14),
+                      ),
+                    ),
+                  ],
+                );
+                break;
+              case FilterField.radiusKm:
+                title = "Distance Radius";
+                editorContent = Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Slider(
+                      value: tempRadius, // Bind to temporary state variable
+                      min: 1,
+                      max: 500,
+                      divisions: 499,
+                      label: "${tempRadius.round()} km",
+                      activeColor: const Color(0xFF8B5CF6),
+                      inactiveColor: const Color(0xFF8B5CF6).withOpacity(0.3),
+                      onChanged: (double value) {
+                        // Use the stfSetState from the builder argument
+                        stfSetState(() {
+                          print(
+                              "[MiniDialog stfSetState] Updating tempRadius from $tempRadius to $value");
+                          tempRadius = value;
+                        });
+                      },
+                    ),
+                    Padding(
+                      padding: const EdgeInsets.only(top: 8.0),
+                      child: Text(
+                        "${tempRadius.round()} km",
+                        style: GoogleFonts.poppins(
+                            color: Colors.grey[600], fontSize: 14),
+                      ),
+                    ),
+                  ],
+                );
+                break;
+              case FilterField.activeToday:
+                title = "Activity";
+                editorContent = SwitchListTile(
+                  title:
+                      Text("Active Today Only", style: GoogleFonts.poppins()),
+                  value: tempActive, // Bind to temporary state variable
+                  activeColor: const Color(0xFF8B5CF6),
+                  contentPadding: EdgeInsets.zero,
+                  onChanged: (bool value) {
+                    // Use the stfSetState from the builder argument
+                    stfSetState(() {
+                      print(
+                          "[MiniDialog stfSetState] Updating tempActive from $tempActive to $value");
+                      tempActive = value;
+                    });
+                  },
+                );
+                break;
+            }
+
+            // Build the AlertDialog using the temporary state variables
+            return AlertDialog(
+              title: Text(title,
+                  style: GoogleFonts.poppins(fontWeight: FontWeight.w600)),
+              contentPadding: const EdgeInsets.fromLTRB(20, 20, 20, 0),
+              content: editorContent,
+              actions: <Widget>[
+                TextButton(
+                  child: Text('Cancel',
+                      style: GoogleFonts.poppins(color: Colors.grey)),
+                  onPressed: () => Navigator.of(dialogContext).pop(),
+                ),
+                TextButton(
+                  child: Text('Apply',
+                      style: GoogleFonts.poppins(
+                          color: const Color(0xFF8B5CF6),
+                          fontWeight: FontWeight.w600)),
+                  onPressed: () async {
+                    // Compare final temp values with initial values
+                    bool valueChanged = false;
+                    switch (filterType) {
+                      case FilterField.whoYouWantToSee:
+                        valueChanged = (initialGender != tempGender);
+                        if (valueChanged)
+                          filterNotifier.updateSingleFilter(
+                              tempGender, filterType);
+                        break;
+                      case FilterField.ageMin:
+                      case FilterField.ageMax:
+                        valueChanged = (initialAgeRange.start.round() !=
+                                tempAgeRange.start.round() ||
+                            initialAgeRange.end.round() !=
+                                tempAgeRange.end.round());
+                        if (valueChanged) {
+                          filterNotifier.updateSingleFilter(
+                              tempAgeRange.start.round(), FilterField.ageMin);
+                          filterNotifier.updateSingleFilter(
+                              tempAgeRange.end.round(), FilterField.ageMax);
+                        }
+                        break;
+                      case FilterField.radiusKm:
+                        valueChanged =
+                            (initialRadius.round() != tempRadius.round());
+                        if (valueChanged)
+                          filterNotifier.updateSingleFilter(
+                              tempRadius.round(), filterType);
+                        break;
+                      case FilterField.activeToday:
+                        valueChanged = (initialActive != tempActive);
+                        if (valueChanged)
+                          filterNotifier.updateSingleFilter(
+                              tempActive, filterType);
+                        break;
+                    }
+
+                    if (valueChanged) {
+                      changesMade = true;
+                      print(
+                          "[HomeScreen] Mini-editor change confirmed for $filterType.");
+                    } else {
+                      print(
+                          "[HomeScreen] Mini-editor no change detected for $filterType.");
+                    }
+                    Navigator.of(dialogContext).pop(); // Close the dialog
+                  },
+                ),
+              ],
+              actionsPadding:
+                  const EdgeInsets.symmetric(horizontal: 15, vertical: 10),
+            );
+          }); // End StatefulBuilder
+        }); // End showDialog
+
+    // Save and refresh feed *after* the dialog closes if changes were made
+    if (changesMade && mounted) {
+      print("[HomeScreen] Mini-filter changed. Saving current state via API.");
+      await Future.delayed(
+          const Duration(milliseconds: 50)); // Small delay optional
+      final bool saveSuccess = await filterNotifier.saveCurrentFilterState();
+      if (!saveSuccess && mounted) {
+        _showErrorSnackbar("Failed to save filter change.");
+      }
+    } else if (!changesMade) {
+      print("[HomeScreen] No changes made in mini-filter editor, not saving.");
+    }
+  }
+  // --- *** END CORRECTED Function *** ---
+
   @override
   Widget build(BuildContext context) {
     final feedState = ref.watch(feedProvider);
-    final filters = ref.watch(filterProvider);
+    final filters = ref.watch(filterProvider); // Watch filters for chip display
 
-    // Update local profile list when provider changes
     ref.listen<HomeFeedState>(feedProvider, (_, next) {
       if (mounted && _feedProfiles != next.profiles) {
-        // Only update if different
         setState(() {
           _feedProfiles = next.profiles;
           print(
@@ -280,8 +481,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
 
     final error = feedState.error ?? ref.watch(errorProvider);
     final isLoadingFeed = feedState.isLoading && !feedState.hasFetchedOnce;
-    final bool hasProfilesToShow =
-        _feedProfiles.isNotEmpty; // Use local state list
+    final bool hasProfilesToShow = _feedProfiles.isNotEmpty;
 
     return Scaffold(
       backgroundColor: Colors.grey[50],
@@ -296,49 +496,43 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
           IconButton(
             icon: const Icon(Icons.tune_rounded, color: Color(0xFF8B5CF6)),
             tooltip: "Filters",
-            onPressed: _openFilterDialog,
+            onPressed: _openFilterDialog, // Opens the full dialog
           ),
         ],
       ),
       body: Column(
         children: [
-          // Filter Chips Row (remains the same)
+          // Filter Chips Row
           Padding(
             padding:
                 const EdgeInsets.symmetric(horizontal: 12.0, vertical: 10.0),
-            child: GestureDetector(
-                onTap: _openFilterDialog,
-                child: Container(
-                  color: Colors.transparent,
-                  height: 34,
-                  child: SingleChildScrollView(
-                    scrollDirection: Axis.horizontal,
-                    physics: const BouncingScrollPhysics(),
-                    child: Row(
-                      children: _buildFilterChips(filters),
-                    ),
-                  ),
-                )),
+            child: Container(
+              // Keep container for height constraint
+              color: Colors.transparent,
+              height: 34,
+              child: SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                physics: const BouncingScrollPhysics(),
+                child: Row(
+                  children: _buildFilterChips(filters), // Call modified builder
+                ),
+              ),
+            ),
           ),
 
           // Feed Area (Expanded)
           Expanded(
             child: Stack(
-              alignment: Alignment.center, // Center children like indicators
+              alignment: Alignment.center,
               children: [
                 if (isLoadingFeed)
                   const CircularProgressIndicator(color: Color(0xFF8B5CF6))
-                // Show loading only if initial fetch AND no profiles loaded yet
                 else if (error != null && !hasProfilesToShow)
-                  _buildErrorState(error) // Show error only if no profiles
+                  _buildErrorState(error)
                 else if (!hasProfilesToShow)
-                  _buildEmptyState() // Show empty state if no profiles and no error
-                else // Only build the card if there are profiles
-                  // --- Pass Dislike Callback ---
-                  _buildProfileCardAtIndex(
-                      0), // Build using local _feedProfiles
-
-                // General interaction loading overlay (covers everything)
+                  _buildEmptyState()
+                else
+                  _buildProfileCardAtIndex(0),
                 if (_isInteracting)
                   Positioned.fill(
                     child: Container(
@@ -356,21 +550,32 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     );
   }
 
-  // _buildFilterChips, _buildFilterChip, _buildEmptyState, _buildErrorState remain the same
+  // --- _buildFilterChips (Remains the same as previous fix) ---
   List<Widget> _buildFilterChips(FilterSettings filters) {
     List<Widget> chips = [];
     chips.add(_buildFilterChip(
-        Icons.wc_rounded,
-        filters.whoYouWantToSee?.value.replaceFirst(
-                filters.whoYouWantToSee!.value[0],
-                filters.whoYouWantToSee!.value[0].toUpperCase()) ??
-            FilterSettings.defaultGenderPref.value.replaceFirst(
-                FilterSettings.defaultGenderPref.value[0],
-                FilterSettings.defaultGenderPref.value[0].toUpperCase())));
-    chips.add(_buildFilterChip(Icons.cake_outlined,
-        '${filters.ageMin ?? FilterSettings.defaultAgeMin}-${filters.ageMax ?? FilterSettings.defaultAgeMax}'));
-    chips.add(_buildFilterChip(Icons.social_distance_outlined,
-        '${filters.radiusKm ?? FilterSettings.defaultRadius} km'));
+      Icons.wc_rounded,
+      filters.whoYouWantToSee?.value.replaceFirst(
+              filters.whoYouWantToSee!.value[0],
+              filters.whoYouWantToSee!.value[0].toUpperCase()) ??
+          FilterSettings.defaultGenderPref.value.replaceFirst(
+              FilterSettings.defaultGenderPref.value[0],
+              FilterSettings.defaultGenderPref.value[0].toUpperCase()),
+      FilterField.whoYouWantToSee,
+      () => _showMiniFilterEditor(FilterField.whoYouWantToSee),
+    ));
+    chips.add(_buildFilterChip(
+      Icons.cake_outlined,
+      '${filters.ageMin ?? FilterSettings.defaultAgeMin}-${filters.ageMax ?? FilterSettings.defaultAgeMax}',
+      FilterField.ageMin,
+      () => _showMiniFilterEditor(FilterField.ageMin),
+    ));
+    chips.add(_buildFilterChip(
+      Icons.social_distance_outlined,
+      '${filters.radiusKm ?? FilterSettings.defaultRadius} km',
+      FilterField.radiusKm,
+      () => _showMiniFilterEditor(FilterField.radiusKm),
+    ));
     bool activeTodayValue =
         filters.activeToday ?? FilterSettings.defaultActiveToday;
     chips.add(_buildFilterChip(
@@ -378,42 +583,49 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
           ? Icons.access_time_filled_rounded
           : Icons.access_time_rounded,
       activeTodayValue ? 'Active Today' : 'Active: Any',
+      FilterField.activeToday,
+      () => _showMiniFilterEditor(FilterField.activeToday),
     ));
     return chips;
   }
 
-  Widget _buildFilterChip(IconData icon, String label) {
+  // --- _buildFilterChip (Remains the same as previous fix) ---
+  Widget _buildFilterChip(
+      IconData icon, String label, FilterField type, VoidCallback onTap) {
     const Color themeColor = Color(0xFF8B5CF6);
     const Color themeBgColor = Color(0xFFEDE9FE);
     const Color themeTextColor = themeColor;
 
     return Padding(
       padding: const EdgeInsets.only(right: 8.0),
-      child: Chip(
-        avatar: Icon(icon, size: 16, color: themeColor),
-        label: Text(label),
-        labelStyle: GoogleFonts.poppins(
-            fontSize: 12, color: themeTextColor, fontWeight: FontWeight.w500),
-        backgroundColor: themeBgColor,
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-        materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-        visualDensity: const VisualDensity(horizontal: 0.0, vertical: -2),
-        side: BorderSide.none,
-        elevation: 0.5,
-        shadowColor: themeColor.withOpacity(0.2),
+      child: GestureDetector(
+        // Ensure chip is tappable
+        onTap: onTap,
+        child: Chip(
+          avatar: Icon(icon, size: 16, color: themeColor),
+          label: Text(label),
+          labelStyle: GoogleFonts.poppins(
+              fontSize: 12, color: themeTextColor, fontWeight: FontWeight.w500),
+          backgroundColor: themeBgColor,
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+          materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+          visualDensity: const VisualDensity(horizontal: 0.0, vertical: -2),
+          side: BorderSide.none,
+          elevation: 0.5,
+          shadowColor: themeColor.withOpacity(0.2),
+        ),
       ),
     );
   }
 
-  // --- MODIFIED: Build card using local state ---
+  // --- _buildProfileCardAtIndex, _buildEmptyState, _buildErrorState ---
+  // --- Remain the same as in the previous version ---
   Widget _buildProfileCardAtIndex(int index) {
     if (index >= 0 && index < _feedProfiles.length) {
       final currentProfile = _feedProfiles[index];
       return HomeProfileCard(
-        // Use unique key based on profile ID to help Flutter optimize
         key: ValueKey(currentProfile.id),
         profile: currentProfile,
-        // Pass the callback function to handle the LIKE API call
         performLikeApiCall: (
             {required contentType,
             required contentIdentifier,
@@ -427,24 +639,19 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
               interactionType: interactionType,
               comment: comment);
         },
-        // --- Pass DISLIKE callback ---
         performDislikeApiCall: () async {
           if (currentProfile.id == null) return false;
           return await _callDislikeRepository(currentProfile.id!);
         },
-        // Callback to remove the card after success (like OR dislike)
         onInteractionComplete: _removeTopCard,
       );
     }
-    // Should ideally not happen if hasProfilesToShow is checked correctly
     return Container(
         alignment: Alignment.center,
         child: Text("No more profiles.", style: GoogleFonts.poppins()));
   }
-  // --- END MODIFICATION ---
 
   Widget _buildEmptyState() {
-    // Wrap in LayoutBuilder to ensure scroll physics work for refresh
     return LayoutBuilder(builder: (context, constraints) {
       return SingleChildScrollView(
         physics: const AlwaysScrollableScrollPhysics(),
@@ -492,7 +699,6 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
   }
 
   Widget _buildErrorState(AppError error) {
-    // Wrap in LayoutBuilder to ensure scroll physics work for refresh
     return LayoutBuilder(builder: (context, constraints) {
       return SingleChildScrollView(
         physics: const AlwaysScrollableScrollPhysics(),
@@ -544,4 +750,4 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
       );
     });
   }
-}
+} // End of _HomeScreenState

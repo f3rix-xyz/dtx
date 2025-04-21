@@ -1074,10 +1074,11 @@ class MediaUploadModel {
 File: models/user_model.dart
 ================================================
 // File: lib/models/user_model.dart
-import 'package:dtx/utils/app_enums.dart';
-// No need for 'dart:convert' import here unless used elsewhere in this specific file
+import 'dart:convert';
 
-// --- Prompt Class --- (No changes needed)
+import 'package:dtx/utils/app_enums.dart';
+
+// --- Prompt Class --- (No changes needed from previous correct version)
 class Prompt {
   final PromptCategory category;
   final PromptType question;
@@ -1106,9 +1107,12 @@ class Prompt {
         .firstWhere((e) => e.value == json['question'], orElse: () {
       print(
           "Warning: Unknown prompt question '${json['question']}' for category '${category.value}', defaulting.");
-      return category.getPrompts().isNotEmpty
-          ? category.getPrompts().first
-          : PromptType.twoTruthsAndALie; // A fallback default
+      // Ensure the default question belongs to the determined category or provide a universal fallback
+      List<PromptType> categoryPrompts = category.getPrompts();
+      return categoryPrompts.isNotEmpty
+          ? categoryPrompts.first // Default to the first prompt of the category
+          : PromptType
+              .twoTruthsAndALie; // Universal fallback if category has no prompts (shouldn't happen)
     });
 
     return Prompt(
@@ -1132,7 +1136,7 @@ class Prompt {
   }
 }
 
-// --- AudioPromptModel Class --- (No changes needed)
+// --- AudioPromptModel Class --- (No changes needed from previous correct version)
 class AudioPromptModel {
   final AudioPrompt prompt;
   final String audioUrl; // Renamed from answer for clarity
@@ -1142,12 +1146,11 @@ class AudioPromptModel {
     required this.audioUrl, // Renamed
   });
 
-  // --- UPDATED toJson for PATCH ---
+  // toJson for PATCH
   Map<String, dynamic> toJson() => {
         'question': prompt.value, // Key expected by PATCH
         'answer_url': audioUrl, // Key expected by PATCH
       };
-  // --- END UPDATED toJson ---
 
   factory AudioPromptModel.fromJson(Map<String, dynamic> json) {
     // Parse Question (assuming it's always a map)
@@ -1204,7 +1207,7 @@ class UserModel {
   final double? longitude;
   final Gender? gender;
   final DatingIntention? datingIntention;
-  final String? height;
+  final String? height; // Store as string e.g., "5' 11\""
   final String? hometown;
   final String? jobTitle;
   final String? education;
@@ -1217,8 +1220,7 @@ class UserModel {
   final String? verificationStatus;
   final String? verificationPic;
   final String? role;
-  // --- NEW: Internal flag for media changes ---
-  final bool mediaChangedDuringEdit; // Track if media screen was edited
+  final bool mediaChangedDuringEdit;
 
   UserModel({
     this.id,
@@ -1244,7 +1246,7 @@ class UserModel {
     this.verificationStatus,
     this.verificationPic,
     this.role,
-    this.mediaChangedDuringEdit = false, // Default to false
+    this.mediaChangedDuringEdit = false,
   });
 
   int? get age {
@@ -1267,7 +1269,7 @@ class UserModel {
     return null;
   }
 
-  // toJson remains the same (might be useful for other things)
+  // toJson (General Purpose)
   Map<String, dynamic> toJson() => {
         'id': id,
         'name': name,
@@ -1279,7 +1281,7 @@ class UserModel {
         'longitude': longitude,
         'gender': gender?.value,
         'dating_intention': datingIntention?.value,
-        'height': height,
+        'height': height, // Send height string as is
         'hometown': hometown,
         'job_title': jobTitle,
         'education': education,
@@ -1288,33 +1290,26 @@ class UserModel {
         'smoking_habit': smokingHabit?.value,
         'media_urls': mediaUrls,
         'prompts': prompts.map((prompt) => prompt.toJson()).toList(),
-        // Use AudioPromptModel's toJson which is now formatted for PATCH
-        'audio_prompt': audioPrompt?.toJson(),
+        'audio_prompt': audioPrompt?.toJson(), // Uses AudioPromptModel's toJson
         'verification_status': verificationStatus,
         'verification_pic': verificationPic,
         'role': role,
       };
 
-  // toJsonForProfileUpdate remains the same (for onboarding step 2 POST)
+  // toJsonForProfileUpdate (For Onboarding Step 2 POST)
   Map<String, dynamic> toJsonForProfileUpdate() {
     String? formattedDate(DateTime? dt) {
       if (dt == null) return null;
       return "${dt.year}-${dt.month.toString().padLeft(2, '0')}-${dt.day.toString().padLeft(2, '0')}";
     }
 
-    String? formattedHeight(String? h) {
-      // Height format conversion is likely handled by the backend on POST
-      // but we can keep the frontend format consistent if needed.
-      return h?.replaceAll("' ", "'"); // Example: ensure single space
-    }
-
     final Map<String, dynamic> data = {};
     if (name != null) data['name'] = name;
-    data['last_name'] = lastName ?? ""; // Send empty string if null for POST
+    data['last_name'] = lastName ?? "";
     if (dateOfBirth != null) data['date_of_birth'] = formattedDate(dateOfBirth);
     if (datingIntention != null)
       data['dating_intention'] = datingIntention!.value;
-    if (height != null) data['height'] = formattedHeight(height);
+    if (height != null) data['height'] = height; // Send height string as is
     if (hometown != null) data['hometown'] = hometown;
     if (jobTitle != null) data['job_title'] = jobTitle;
     if (education != null) data['education'] = education;
@@ -1324,24 +1319,17 @@ class UserModel {
     if (smokingHabit != null) data['smoking_habit'] = smokingHabit!.value;
     if (prompts.isNotEmpty)
       data['prompts'] = prompts.map((p) => p.toJson()).toList();
-    // Note: Audio prompt and media are handled by separate endpoints during initial onboarding POSTs
+    // Audio/Media handled separately during onboarding POSTs
     return data;
   }
 
-  // --- NEW: toJsonForEdit for PATCH request ---
+  // toJsonForEdit (For Profile Edit PATCH)
   Map<String, dynamic> toJsonForEdit() {
-    String? formattedHeight(String? h) {
-      // Apply formatting consistent with API expectation if needed
-      return h?.replaceAll("' ", "'"); // Example
-    }
-
     final Map<String, dynamic> data = {};
-    // --- ONLY include fields that are editable and have values ---
-    // Non-editable: name, last_name, dob, gender, location
+    // Only include editable fields with values
     if (datingIntention != null)
       data['dating_intention'] = datingIntention!.value;
-    if (height != null && height!.isNotEmpty)
-      data['height'] = formattedHeight(height);
+    if (height != null && height!.isNotEmpty) data['height'] = height;
     if (hometown != null && hometown!.isNotEmpty) data['hometown'] = hometown;
     if (jobTitle != null && jobTitle!.isNotEmpty) data['job_title'] = jobTitle;
     if (education != null && education!.isNotEmpty)
@@ -1352,19 +1340,17 @@ class UserModel {
     if (smokingHabit != null) data['smoking_habit'] = smokingHabit!.value;
 
     // Handle optional fields where null means "remove"
-    if (hometown == null)
-      data['hometown'] = null; // Explicitly set to null if cleared
+    if (hometown == null) data['hometown'] = null;
     if (jobTitle == null) data['job_title'] = null;
     if (education == null) data['education'] = null;
 
-    // Always include prompts, even if empty, to allow removal
+    // Always include prompts (even if empty)
     data['prompts'] = prompts.map((p) => p.toJson()).toList();
 
-    // Include audio_prompt only if it exists
+    // Handle audio prompt (null to remove)
     if (audioPrompt != null) {
-      data['audio_prompt'] = audioPrompt!.toJson(); // Uses the corrected toJson
+      data['audio_prompt'] = audioPrompt!.toJson();
     } else {
-      // To remove audio prompt, explicitly send null
       data['audio_prompt'] = null;
     }
 
@@ -1373,224 +1359,271 @@ class UserModel {
 
     return data;
   }
-  // --- END NEW ---
 
-  // fromJson remains the same
+  // fromJson Factory
   factory UserModel.fromJson(Map<String, dynamic> json) {
     // --- Helper Functions ---
     String? getString(dynamic field) {
-      if (field is Map && field['Valid'] == true && field['String'] != null) {
-        return field['String'] as String?;
-      } else if (field is String) {
-        return field;
-      } else if (field is int || field is double) {
+      // Handle direct strings first
+      if (field is String) {
+        return field.isNotEmpty ? field : null;
+      }
+      // Handle pgtype.Text map structure
+      if (field is Map && field['Valid'] == true && field['String'] is String) {
+        return field['String'];
+      }
+      // Handle other types (e.g., if backend sends numbers unexpectedly)
+      if (field is num) {
         return field.toString();
       }
-      return null;
+      return null; // Default to null if not a valid string or valid pgtype.Text
     }
 
     String? getHeight(dynamic field) {
-      if (field is Map && field['Valid'] == true && field['String'] != null) {
-        return field['String'] as String?;
-      } else if (field is String) {
-        // Backend might send "5' 11\"" or "5'11\""
-        return field.replaceAll("' ",
-            "'"); // Standardize to single space or no space? Check API doc.
-      } else if (field is int || field is double) {
-        // Convert cm/inches if backend sends numeric height sometimes
-        double totalInches = (field as num) * 0.393701;
+      // Prioritize direct string (e.g., "5' 11\"")
+      if (field is String && field.isNotEmpty) {
+        return field;
+      }
+      // Handle pgtype.Text for height (might be used if nullable)
+      if (field is Map && field['Valid'] == true && field['String'] is String) {
+        return field['String'];
+      }
+      // Handle pgtype.Float8 (inches) - convert TO string format
+      if (field is Map && field['Valid'] == true && field['Float64'] is num) {
+        double totalInches = (field['Float64'] as num).toDouble();
+        if (totalInches <= 0) return null;
         int feet = (totalInches / 12).floor();
         int inches = (totalInches % 12).round();
         if (inches == 12) {
           feet++;
           inches = 0;
         }
-        return "$feet' $inches\""; // Ensure this format matches API exactly
+        return "$feet' $inches\"";
       }
-      return null;
+      // Handle direct number (assume inches) - convert TO string format
+      if (field is num) {
+        double totalInches = field.toDouble();
+        if (totalInches <= 0) return null;
+        int feet = (totalInches / 12).floor();
+        int inches = (totalInches % 12).round();
+        if (inches == 12) {
+          feet++;
+          inches = 0;
+        }
+        return "$feet' $inches\"";
+      }
+      return null; // Default to null
     }
 
     String? getEnumString(dynamic field, String key) {
+      // Prefer direct string
+      if (field is String) {
+        return field;
+      }
+      // Handle pgtype map structure
       if (field is Map && field['Valid'] == true && field[key] != null) {
         return field[key] as String?;
-      } else if (field is String) {
-        // Handle direct string enums
-        return field;
       }
       return null;
     }
 
     DateTime? getDate(dynamic field) {
       String? dateStr;
-      if (field is Map && field['Valid'] == true && field['Time'] != null) {
-        dateStr = field['Time'] as String?;
-      } else if (field is String) {
+      // Prefer direct string
+      if (field is String) {
         dateStr = field;
       }
+      // Handle pgtype map structure
+      else if (field is Map &&
+          field['Valid'] == true &&
+          field['Time'] != null) {
+        dateStr = field['Time'] as String?;
+      }
+
       if (dateStr != null) {
         try {
+          // Handle YYYY-MM-DD or YYYY-MM-DDTHH:MM:SSZ format
           if (dateStr.contains('T')) {
-            return DateTime.parse(dateStr.split('T').first);
+            return DateTime.parse(dateStr.split('T').first).toLocal();
           } else if (RegExp(r'^\d{4}-\d{2}-\d{2}$').hasMatch(dateStr)) {
-            return DateTime.parse(dateStr);
+            return DateTime.parse(dateStr).toLocal();
           }
         } catch (e) {
-          print("Error parsing date: $e, value: $field");
+          print("[UserModel fromJson] Error parsing date: $e, value: $field");
         }
       }
       return null;
     }
 
     double? getDouble(dynamic field) {
+      // Prefer direct number
+      if (field is num) {
+        return field.toDouble();
+      }
+      // Handle pgtype map structure
       if (field is Map && field['Valid'] == true && field['Float64'] != null) {
         return (field['Float64'] as num?)?.toDouble();
-      } else if (field is num) {
-        return field.toDouble();
       }
       return null;
     }
 
     T? parseEnum<T>(List<T> enumValues, dynamic field, String key) {
-      // Use getEnumString which handles both map and direct string
       final valueStr = getEnumString(field, key);
       if (valueStr != null) {
         for (final enumValue in enumValues) {
           try {
-            // Assuming enums have a '.value' getter holding the string representation
             if ((enumValue as dynamic).value.toString() == valueStr) {
               return enumValue;
             }
           } catch (e) {
-            // This catch block is tricky if enums don't uniformly have '.value'
-            // Consider a more robust mapping if enums are inconsistent.
-            // print("Error accessing '.value' for enum ${T.toString()} (value: $valueStr): $e");
-            // Fallback: Check toString() representation (less reliable)
+            // Fallback for enums without .value (less reliable)
             if (enumValue.toString().split('.').last == valueStr) {
-              // print("Fallback enum match using toString() for $valueStr");
               return enumValue;
             }
           }
         }
-        print("Warning: Enum value '$valueStr' not found in ${T.toString()}.");
-        return null;
+        print(
+            "[UserModel fromJson] Warning: Enum value '$valueStr' not found in ${T.toString()}.");
       }
       return null;
     }
 
     List<String>? getMediaUrls(dynamic field) {
-      if (field is List<dynamic>) {
+      // Expecting a List<String> after repository transformation
+      if (field is List) {
         final urls = field
             .where((item) => item is String && item.isNotEmpty)
             .map((item) => item as String)
             .toList();
         return urls.isNotEmpty ? urls : null;
-      } else if (field is List<String>) {
-        // Handle case where it's already List<String>
-        return field.where((s) => s.isNotEmpty).toList().isNotEmpty
-            ? field
-            : null;
       }
-      return null;
+      return null; // Default to null if not a list
     }
 
     int? getId(dynamic idField) {
+      // Prioritize direct int
       if (idField is int) {
         return idField;
       }
+      // Handle string representation
       if (idField is String) {
         return int.tryParse(idField);
       }
-      if (idField is Map &&
-          idField['Valid'] == true &&
-          idField['Int64'] != null) {
+      // Handle potential pgtype structures if backend might send them
+      if (idField is Map && idField['Valid'] == true) {
         if (idField['Int64'] is num) {
           return (idField['Int64'] as num).toInt();
         }
+        if (idField['Int32'] is num) {
+          return (idField['Int32'] as num).toInt();
+        }
       }
-      return null;
+      return null; // Default to null
     }
 
     List<Prompt> getPrompts(Map<String, dynamic> json) {
       List<Prompt> parsedPrompts = [];
-      if (json['prompts'] is List) {
-        final List<dynamic> promptList = json['prompts'];
-        for (var promptData in promptList) {
+      // Expect 'prompts' key based on GetHomeFeedRow and ProfileResponseUser
+      final promptsField = json['prompts'];
+
+      if (promptsField is List) {
+        // If it's a list (likely from ProfileResponseUser)
+        for (var promptData in promptsField) {
           if (promptData is Map<String, dynamic>) {
             try {
               final parsedPrompt = Prompt.fromJson(promptData);
-              // Ensure answer is not just whitespace before adding
               if (parsedPrompt.answer.trim().isNotEmpty) {
                 parsedPrompts.add(parsedPrompt);
-              } else {
-                print(
-                    "[UserModel fromJson] Skipping prompt with empty answer: ${promptData['question']}");
               }
             } catch (e) {
               print(
-                  "[UserModel fromJson] Error parsing prompt: $e, data: $promptData");
+                  "[UserModel fromJson] Error parsing prompt from list: $e, data: $promptData");
             }
           }
         }
+      } else if (promptsField is String) {
+        // If it's a string (likely JSONB from GetHomeFeedRow)
+        try {
+          final List<dynamic> decodedList = jsonDecode(promptsField);
+          for (var promptData in decodedList) {
+            if (promptData is Map<String, dynamic>) {
+              try {
+                final parsedPrompt = Prompt.fromJson(promptData);
+                if (parsedPrompt.answer.trim().isNotEmpty) {
+                  parsedPrompts.add(parsedPrompt);
+                }
+              } catch (e) {
+                print(
+                    "[UserModel fromJson] Error parsing prompt from JSON string: $e, data: $promptData");
+              }
+            }
+          }
+        } catch (e) {
+          print(
+              "[UserModel fromJson] Error decoding prompts JSON string: $e, value: $promptsField");
+        }
       }
-      // API allows max 3, but frontend should handle this limit upstream.
-      // Here we just parse what's given.
       return parsedPrompts;
     }
 
-    // --- REVISED getAudioPrompt Helper ---
     AudioPromptModel? getAudioPrompt(Map<String, dynamic> json, int? userId) {
+      // Check for potential keys (direct or from pgtype)
       final questionData =
-          json['AudioPromptQuestion'] ?? json['audio_prompt_question'];
+          json['audio_prompt_question'] ?? json['AudioPromptQuestion'];
       final answerData =
-          json['AudioPromptAnswer'] ?? json['audio_prompt_answer'];
+          json['audio_prompt_answer'] ?? json['AudioPromptAnswer'];
 
-      // 1. Check Question Validity
-      bool isQuestionValid = questionData is Map &&
+      // Check Question Validity
+      bool isQuestionValid = false;
+      String? questionValue;
+      if (questionData is Map &&
           questionData['Valid'] == true &&
-          questionData['AudioPrompt'] is String &&
-          (questionData['AudioPrompt'] as String).isNotEmpty;
+          questionData['AudioPrompt'] is String) {
+        questionValue = questionData['AudioPrompt'] as String;
+        isQuestionValid = questionValue.isNotEmpty;
+      }
 
-      if (!isQuestionValid) return null; // No valid question, no audio prompt
+      if (!isQuestionValid) return null;
 
-      // 2. Check Answer Validity (String or Valid Map with non-empty String)
+      // Check Answer Validity
       String? audioUrlValue;
       if (answerData is String && answerData.isNotEmpty) {
         audioUrlValue = answerData;
       } else if (answerData is Map &&
           answerData['Valid'] == true &&
-          answerData['String'] is String &&
-          (answerData['String'] as String).isNotEmpty) {
-        audioUrlValue = answerData['String'] as String;
+          answerData['String'] is String) {
+        audioUrlValue = answerData['String'] as String?;
+        if (audioUrlValue != null && audioUrlValue.isEmpty)
+          audioUrlValue = null; // Treat empty string as invalid
       }
 
-      if (audioUrlValue == null)
-        return null; // No valid answer, no audio prompt
+      if (audioUrlValue == null) return null;
 
-      // 3. If BOTH are valid, attempt to create the model using the Factory
+      // If both are valid, create the model
       try {
-        // The factory now handles the map structure directly
-        return AudioPromptModel.fromJson({
-          'audio_prompt_question': questionData,
-          'audio_prompt_answer': answerData,
-        });
+        AudioPrompt promptEnum = AudioPrompt.values.firstWhere(
+            (e) => e.value == questionValue,
+            orElse: () => AudioPrompt.aBoundaryOfMineIs // Fallback
+            );
+        return AudioPromptModel(prompt: promptEnum, audioUrl: audioUrlValue);
       } catch (e) {
         print(
             "[UserModel fromJson getAudioPrompt ID: $userId] Error creating AudioPromptModel: $e");
-        print(" -> Question Data: $questionData");
-        print(" -> Answer Data: $answerData");
         return null;
       }
     }
-    // --- END REVISED getAudioPrompt Helper ---
 
     // --- Parse using helpers ---
+    // Primarily use lowercase keys ('id', 'name', 'media_urls') expected after repository transformation
+    // Include fallback checks for original backend keys (e.g., 'Name', 'MediaUrls') if needed for other sources
     final int? currentUserId =
-        getId(json['id'] ?? json['ID']); // Get ID for logging
+        getId(json['id'] ?? json['ID']); // Check 'id' first
     final parsedUser = UserModel(
-      id: currentUserId, // Use the extracted ID
+      id: currentUserId,
       name: getString(json['name'] ?? json['Name']),
       lastName: getString(json['last_name'] ?? json['LastName']),
-      email: json['email'] as String? ?? json['Email'] as String?,
+      email: json['email'] as String? ??
+          json['Email'] as String?, // Assuming direct string
       phoneNumber: getString(json['phone_number'] ?? json['PhoneNumber']),
       dateOfBirth: getDate(json['date_of_birth'] ?? json['DateOfBirth']),
       latitude: getDouble(json['latitude'] ?? json['Latitude']),
@@ -1615,31 +1648,21 @@ class UserModel {
           DrinkingSmokingHabits.values,
           json['smoking_habit'] ?? json['SmokingHabit'],
           'DrinkingSmokingHabits'),
-      mediaUrls: getMediaUrls(json['media_urls'] ?? json['MediaUrls']),
+      mediaUrls: getMediaUrls(
+          json['media_urls'] ?? json['MediaUrls']), // Check 'media_urls' first
       verificationStatus: json['verification_status'] as String? ??
           json['VerificationStatus'] as String?,
       verificationPic:
           getString(json['verification_pic'] ?? json['VerificationPic']),
       role: json['role'] as String? ?? json['Role'] as String?,
-      audioPrompt: getAudioPrompt(json, currentUserId), // Pass ID to helper
-      prompts: getPrompts(json),
+      audioPrompt: getAudioPrompt(json, currentUserId),
+      prompts: getPrompts(json), // Use the combined prompt parsing
     );
-
-    // Remove debug print unless needed
-    // print("--- Parsed UserModel (Audio Prompt Check) ---");
-    // print("ID: ${parsedUser.id}");
-    // print("Name: ${parsedUser.name}");
-    // print("Audio Prompt Parsed: ${parsedUser.audioPrompt != null}");
-    // if (parsedUser.audioPrompt != null) {
-    //   print("  -> Question: ${parsedUser.audioPrompt!.prompt.label}");
-    //   print("  -> URL: ${parsedUser.audioPrompt!.audioUrl}");
-    // }
-    // print("------------------------------------------");
 
     return parsedUser;
   }
 
-  // copyWith needs update for mediaChangedDuringEdit
+  // copyWith method
   UserModel copyWith({
     int? Function()? id,
     String? Function()? name,
@@ -1664,7 +1687,7 @@ class UserModel {
     String? Function()? verificationStatus,
     String? Function()? verificationPic,
     String? Function()? role,
-    bool? mediaChangedDuringEdit, // <<< ADDED parameter
+    bool? mediaChangedDuringEdit,
   }) {
     return UserModel(
       id: id != null ? id() : this.id,
@@ -1688,7 +1711,7 @@ class UserModel {
           drinkingHabit != null ? drinkingHabit() : this.drinkingHabit,
       smokingHabit: smokingHabit != null ? smokingHabit() : this.smokingHabit,
       mediaUrls: mediaUrls != null ? mediaUrls() : this.mediaUrls,
-      prompts: prompts ?? List.from(this.prompts),
+      prompts: prompts ?? List.from(this.prompts), // Ensure deep copy if needed
       audioPrompt: audioPrompt != null ? audioPrompt() : this.audioPrompt,
       verificationStatus: verificationStatus != null
           ? verificationStatus()
@@ -1696,7 +1719,6 @@ class UserModel {
       verificationPic:
           verificationPic != null ? verificationPic() : this.verificationPic,
       role: role != null ? role() : this.role,
-      // Pass the value or use existing
       mediaChangedDuringEdit:
           mediaChangedDuringEdit ?? this.mediaChangedDuringEdit,
     );
@@ -1706,16 +1728,14 @@ class UserModel {
   bool isProfileValid() {
     final dobValid = dateOfBirth != null &&
         DateTime.now().difference(dateOfBirth!).inDays >= (18 * 365.25);
-    // Location/Gender validation is handled in onboarding step 1
     return name != null &&
         name!.trim().isNotEmpty &&
         name!.trim().length >= 3 &&
         dobValid &&
-        datingIntention != null; // Added dating intention check for step 2
-    // Removed location/gender check here as it's handled earlier
+        datingIntention != null;
   }
 
-  // isLocationValid remains the same (used in onboarding step 1)
+  // isLocationValid (used in onboarding step 1)
   bool isLocationValid() {
     return latitude != null &&
         longitude != null &&
@@ -2299,35 +2319,26 @@ import 'package:dtx/repositories/chat_repository.dart';
 import 'package:dtx/services/api_service.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-const int _messagesPageLimit = 30; // Number of messages to fetch per page
-
+// ConversationState definition remains the same...
 class ConversationState {
   final bool isLoading;
-  final bool isFetchingMore;
   final List<ChatMessage> messages;
-  final bool hasMore;
   final AppError? error;
 
   const ConversationState({
     this.isLoading = false,
-    this.isFetchingMore = false,
     this.messages = const [],
-    this.hasMore = true, // Assume more initially
     this.error,
   });
 
   ConversationState copyWith({
     bool? isLoading,
-    bool? isFetchingMore,
     List<ChatMessage>? messages,
-    bool? hasMore,
     AppError? Function()? error,
   }) {
     return ConversationState(
       isLoading: isLoading ?? this.isLoading,
-      isFetchingMore: isFetchingMore ?? this.isFetchingMore,
       messages: messages ?? this.messages,
-      hasMore: hasMore ?? this.hasMore,
       error: error != null ? error() : this.error,
     );
   }
@@ -2336,38 +2347,34 @@ class ConversationState {
 class ConversationNotifier extends StateNotifier<ConversationState> {
   final ChatRepository _chatRepository;
   final int _otherUserId;
-  int _currentOffset = 0;
 
   ConversationNotifier(this._chatRepository, this._otherUserId)
       : super(const ConversationState()) {
-    fetchInitialMessages();
+    fetchMessages();
   }
 
-  Future<void> fetchInitialMessages() async {
+  Future<void> fetchMessages() async {
     if (state.isLoading) return;
-    print("[ConversationNotifier-$_otherUserId] Fetching initial messages...");
+    print("[ConversationNotifier-$_otherUserId] Fetching ALL messages...");
     state = state.copyWith(isLoading: true, error: () => null);
-    _currentOffset = 0; // Reset offset
 
     try {
-      final result = await _chatRepository.fetchConversation(
+      // Fetch messages (currently oldest first from repo)
+      final messagesFromRepo = await _chatRepository.fetchConversation(
         otherUserId: _otherUserId,
-        limit: _messagesPageLimit,
-        offset: _currentOffset,
       );
-      final messages = result['messages'] as List<ChatMessage>;
-      final hasMore = result['hasMore'] as bool;
-
-      _currentOffset += messages.length;
 
       if (mounted) {
+        // *** REVERSE the list HERE before setting state ***
+        final reversedMessages = messagesFromRepo.reversed.toList();
+        // *** END REVERSAL ***
+
         state = state.copyWith(
           isLoading: false,
-          messages: messages,
-          hasMore: hasMore,
+          messages: reversedMessages, // Store newest message at index 0
         );
         print(
-            "[ConversationNotifier-$_otherUserId] Fetched ${messages.length} initial messages. HasMore: $hasMore");
+            "[ConversationNotifier-$_otherUserId] Fetched and reversed ${reversedMessages.length} total messages.");
       }
     } on ApiException catch (e) {
       print("[ConversationNotifier-$_otherUserId] API Exception: ${e.message}");
@@ -2386,73 +2393,26 @@ class ConversationNotifier extends StateNotifier<ConversationState> {
     }
   }
 
-  Future<void> fetchMoreMessages() async {
-    if (state.isLoading || state.isFetchingMore || !state.hasMore) return;
-    print(
-        "[ConversationNotifier-$_otherUserId] Fetching more messages (offset: $_currentOffset)...");
-    state = state.copyWith(isFetchingMore: true);
-
-    try {
-      final result = await _chatRepository.fetchConversation(
-        otherUserId: _otherUserId,
-        limit: _messagesPageLimit,
-        offset: _currentOffset,
-      );
-      final newMessages = result['messages'] as List<ChatMessage>;
-      final hasMore = result['hasMore'] as bool;
-
-      _currentOffset += newMessages.length;
-
-      if (mounted) {
-        state = state.copyWith(
-          isFetchingMore: false,
-          messages: [...state.messages, ...newMessages], // Prepend new messages
-          hasMore: hasMore,
-        );
-        print(
-            "[ConversationNotifier-$_otherUserId] Fetched ${newMessages.length} more messages. HasMore: $hasMore");
-      }
-    } on ApiException catch (e) {
-      print(
-          "[ConversationNotifier-$_otherUserId] More API Exception: ${e.message}");
-      if (mounted) {
-        state = state.copyWith(
-            isFetchingMore: false,
-            error: () =>
-                AppError.server(e.message)); // Show error fetching more
-      }
-    } catch (e) {
-      print(
-          "[ConversationNotifier-$_otherUserId] More Unexpected Error: ${e.toString()}");
-      if (mounted) {
-        state = state.copyWith(
-            isFetchingMore: false,
-            error: () => AppError.generic("Failed to load more messages."));
-      }
-    }
-  }
-
-  // Add a message sent by the current user (optimistic update maybe?)
+  // addSentMessage and addReceivedMessage correctly prepend (add to index 0)
+  // so they DO NOT need to be changed.
   void addSentMessage(ChatMessage message) {
     if (!mounted) return;
     print(
         "[ConversationNotifier-$_otherUserId] Adding sent message: ${message.messageText}");
-    // Add to the beginning of the list for reversed view
+    // Prepending means the newest is always at index 0
     state = state.copyWith(messages: [message, ...state.messages]);
   }
 
-  // Add a message received from the other user
   void addReceivedMessage(ChatMessage message) {
     if (!mounted) return;
     print(
         "[ConversationNotifier-$_otherUserId] Adding received message: ${message.messageText}");
-    // Add to the beginning of the list for reversed view
+    // Prepending means the newest is always at index 0
     state = state.copyWith(messages: [message, ...state.messages]);
-    // Potentially mark as read here or trigger read status update? Backend handles read on fetch.
   }
 }
 
-// Family provider to get conversation for a specific user
+// Provider definition remains the same
 final conversationProvider =
     StateNotifierProvider.family<ConversationNotifier, ConversationState, int>(
         (ref, otherUserId) {
@@ -3972,41 +3932,46 @@ class ChatRepository {
 
   ChatRepository(this._apiService);
 
-  Future<Map<String, dynamic>> fetchConversation({
+  // --- MODIFIED: fetchConversation ---
+  Future<List<ChatMessage>> fetchConversation({
     required int otherUserId,
-    required int limit,
-    required int offset,
+    // Removed limit and offset parameters
   }) async {
     final String methodName = 'fetchConversation';
     print(
-        '[ChatRepository $methodName] Fetching conversation with $otherUserId (limit: $limit, offset: $offset)');
+        '[ChatRepository $methodName] Fetching conversation with $otherUserId');
     try {
       final token = await TokenStorage.getToken();
       if (token == null) throw ApiException('Authentication token missing');
       final headers = {'Authorization': 'Bearer $token'};
 
-      final endpoint =
-          '/api/conversation/$otherUserId?limit=$limit&offset=$offset';
-      final response = await _apiService.get(endpoint, headers: headers);
+      // Endpoint does NOT include the user ID anymore
+      final endpoint = '/api/conversation';
+      final body = {'other_user_id': otherUserId}; // Send ID in the body
+
+      // Change to POST request
+      final response = await _apiService.post(
+        endpoint,
+        body: body,
+        headers: headers,
+      );
       // print('[ChatRepository $methodName] API Response: $response'); // Debug careful with PII
 
+      // API now returns success and messages directly
       if (response['success'] == true && response['messages'] != null) {
         final List<dynamic> messagesData = response['messages'] as List? ?? [];
         final messages = messagesData
             .map((data) => ChatMessage.fromJson(data as Map<String, dynamic>))
             .toList();
-        final hasMore = response['has_more'] as bool? ?? false;
 
         print(
-            '[ChatRepository $methodName] Success. Count: ${messages.length}, HasMore: $hasMore');
-        return {'messages': messages, 'hasMore': hasMore};
+            '[ChatRepository $methodName] Success. Count: ${messages.length}');
+        // Return only the list of messages
+        return messages;
       } else if (response['success'] == true && response['messages'] == null) {
         print(
             '[ChatRepository $methodName] No messages found (API returned null).');
-        return {
-          'messages': <ChatMessage>[],
-          'hasMore': false
-        }; // Empty conversation
+        return <ChatMessage>[]; // Empty conversation
       } else {
         final message =
             response['message']?.toString() ?? 'Failed to fetch conversation.';
@@ -4023,6 +3988,7 @@ class ChatRepository {
           'An unexpected error occurred while fetching conversation: ${e.toString()}');
     }
   }
+  // --- END MODIFIED ---
 }
 
 
@@ -4382,7 +4348,7 @@ class LikeRepository {
 File: repositories/match_repository.dart
 ================================================
 // lib/repositories/match_repository.dart
-import 'package:dtx/models/user_model.dart'; // Using UserModel as MatchUser
+import 'package:dtx/models/user_model.dart'; // Explicitly import UserModel
 import 'package:dtx/services/api_service.dart';
 import 'package:dtx/utils/token_storage.dart';
 
@@ -4404,16 +4370,92 @@ class MatchRepository {
 
       if (response['success'] == true && response['matches'] != null) {
         final List<dynamic> matchesData = response['matches'] as List? ?? [];
-        // Assuming response['matches'] is a list of User JSON objects
-        final matches = matchesData
-            .map((data) => UserModel.fromJson(data as Map<String, dynamic>))
-            .toList();
+
+        // *** NEW SIMPLIFIED MAPPING LOGIC ***
+        final matches = matchesData.map((data) {
+          // Create a mutable map from the received data
+          final Map<String, dynamic> modelInputData =
+              Map<String, dynamic>.from(data as Map<String, dynamic>);
+
+          // 1. Ensure 'id' key exists using 'matched_user_id'
+          if (modelInputData.containsKey('matched_user_id')) {
+            modelInputData['id'] = modelInputData['matched_user_id'];
+          } else {
+            modelInputData['id'] = null; // Ensure 'id' exists even if null
+            print(
+                "[MatchRepository $methodName] Warning: Missing 'matched_user_id' in match data: $data");
+          }
+
+          // 2. Ensure 'name' key exists (it's already correct in the curl response)
+          if (!modelInputData.containsKey('name')) {
+            modelInputData['name'] = null; // Ensure 'name' exists if missing
+          }
+
+          // 3. Ensure 'last_name' exists (not in curl, assume null/empty)
+          if (!modelInputData.containsKey('last_name')) {
+            modelInputData['last_name'] =
+                null; // Or "" depending on UserModel needs
+          }
+
+          // 4. Create 'media_urls' from 'first_profile_pic_url'
+          if (modelInputData.containsKey('first_profile_pic_url')) {
+            final avatarUrl =
+                modelInputData['first_profile_pic_url'] as String?;
+            if (avatarUrl != null && avatarUrl.isNotEmpty) {
+              modelInputData['media_urls'] = [avatarUrl];
+            } else {
+              modelInputData['media_urls'] = <String>[];
+            }
+          } else {
+            modelInputData['media_urls'] = <String>[];
+          }
+
+          // 5. Add default/null values for other fields expected by UserModel.fromJson
+          //    if they are not present in the /api/matches response. This prevents
+          //    parsing errors in UserModel.fromJson.
+          modelInputData.putIfAbsent('email', () => null);
+          modelInputData.putIfAbsent('date_of_birth', () => null);
+          modelInputData.putIfAbsent('latitude', () => null);
+          modelInputData.putIfAbsent('longitude', () => null);
+          modelInputData.putIfAbsent('gender', () => null);
+          modelInputData.putIfAbsent('dating_intention', () => null);
+          modelInputData.putIfAbsent('height', () => null);
+          modelInputData.putIfAbsent('hometown', () => null);
+          modelInputData.putIfAbsent('job_title', () => null);
+          modelInputData.putIfAbsent('education', () => null);
+          modelInputData.putIfAbsent('religious_beliefs', () => null);
+          modelInputData.putIfAbsent('drinking_habit', () => null);
+          modelInputData.putIfAbsent('smoking_habit', () => null);
+          modelInputData.putIfAbsent(
+              'verification_status', () => 'false'); // Default status?
+          modelInputData.putIfAbsent('verification_pic', () => null);
+          modelInputData.putIfAbsent('role', () => 'user'); // Default role?
+          modelInputData.putIfAbsent('audio_prompt_question', () => null);
+          modelInputData.putIfAbsent('audio_prompt_answer', () => null);
+          modelInputData.putIfAbsent(
+              'prompts', () => <dynamic>[]); // Default empty list
+
+          // Now parse the prepared map
+          try {
+            print(
+                "[MatchRepository $methodName] Parsing prepared data: $modelInputData");
+            return UserModel.fromJson(modelInputData);
+          } catch (e) {
+            print(
+                "[MatchRepository $methodName] ERROR parsing match data: $e. Data was: $modelInputData");
+            // Return a default/empty UserModel or rethrow/handle as needed
+            return UserModel(
+                id: modelInputData['id']); // Return with ID at least
+          }
+        }).toList();
+        // *** END SIMPLIFIED MAPPING LOGIC ***
+
         print(
-            '[MatchRepository $methodName] Successfully parsed ${matches.length} matches.');
+            '[MatchRepository $methodName] Successfully processed ${matches.length} matches.');
         return matches;
       } else if (response['success'] == true && response['matches'] == null) {
         print('[MatchRepository $methodName] No matches found.');
-        return []; // Return empty list if matches array is null or missing
+        return [];
       } else {
         final message =
             response['message']?.toString() ?? 'Failed to fetch matches.';
@@ -6806,11 +6848,13 @@ class ChatDetailScreen extends ConsumerStatefulWidget {
 class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
   final TextEditingController _messageController = TextEditingController();
   final ScrollController _scrollController = ScrollController();
+  final FocusNode _inputFocusNode = FocusNode(); // Explicit FocusNode
 
   @override
   void initState() {
     super.initState();
-    // Ensure WebSocket connection is active when entering chat
+    // Add listener for focus debugging
+    _inputFocusNode.addListener(_handleFocusChange);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       final chatService = ref.read(chatServiceProvider);
       if (ref.read(webSocketStateProvider) !=
@@ -6818,36 +6862,24 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
         print("[ChatDetailScreen] Connecting WebSocket...");
         chatService.connect();
       }
-      _setupScrollListener();
+      // Fetch initial messages (or ensure provider does this)
+      // The provider now fetches automatically on initialization
+      // ref.read(conversationProvider(widget.matchUserId).notifier).fetchMessages();
     });
   }
 
-  void _setupScrollListener() {
-    _scrollController.addListener(() {
-      // Check if scrolled to the top (or near the top)
-      if (_scrollController.position.pixels >=
-          _scrollController.position.maxScrollExtent - 200) {
-        // Trigger slightly before top
-        // Fetch more messages if available
-        final conversationState =
-            ref.read(conversationProvider(widget.matchUserId));
-        if (conversationState.hasMore && !conversationState.isFetchingMore) {
-          ref
-              .read(conversationProvider(widget.matchUserId).notifier)
-              .fetchMoreMessages();
-        }
-      }
-    });
+  void _handleFocusChange() {
+    print(
+        "[ChatDetailScreen] Input Field Focus Changed: ${_inputFocusNode.hasFocus}");
+    // No need to call setState unless UI depends on focus state
   }
 
   @override
   void dispose() {
     _messageController.dispose();
     _scrollController.dispose();
-    // Optional: Disconnect WebSocket here if it should only be active
-    // while a chat screen is open. If it should persist globally,
-    // manage connection/disconnection elsewhere (e.g., based on app lifecycle).
-    // ref.read(chatServiceProvider).disconnect();
+    _inputFocusNode.removeListener(_handleFocusChange); // Remove listener
+    _inputFocusNode.dispose(); // Dispose FocusNode
     super.dispose();
   }
 
@@ -6861,6 +6893,10 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
     if (wsState == WebSocketConnectionState.connected) {
       chatService.sendMessage(widget.matchUserId, text);
       _messageController.clear();
+      // Manually update the send button state after clearing
+      ref.read(messageInputProvider.notifier).state = false;
+      // Request focus back after sending? Sometimes helpful.
+      FocusScope.of(context).requestFocus(_inputFocusNode);
       // Scroll to bottom after sending (with slight delay for UI update)
       Timer(const Duration(milliseconds: 100), _scrollToBottom);
     } else {
@@ -6873,7 +6909,6 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
           backgroundColor: Colors.orange,
         ),
       );
-      // Optionally try to reconnect?
       chatService.connect();
     }
   }
@@ -6881,7 +6916,7 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
   void _scrollToBottom() {
     if (_scrollController.hasClients) {
       _scrollController.animateTo(
-        0.0, // Scroll to the top in a reversed list
+        0.0,
         duration: const Duration(milliseconds: 300),
         curve: Curves.easeOut,
       );
@@ -6891,16 +6926,14 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
   @override
   Widget build(BuildContext context) {
     final state = ref.watch(conversationProvider(widget.matchUserId));
-    final currentUserId =
-        ref.watch(currentUserIdProvider); // Get current user ID
+    final currentUserId = ref.watch(currentUserIdProvider);
     final wsState = ref.watch(webSocketStateProvider);
 
-    // Scroll to bottom when new messages are added (after build)
     ref.listen<ConversationState>(conversationProvider(widget.matchUserId),
         (prev, next) {
-      if (prev != null && next.messages.length > prev.messages.length) {
-        // Only scroll if a new message was added (not just loading state change)
-        // Use WidgetsBinding to schedule scroll after build
+      bool messageAdded =
+          (prev == null || next.messages.length != prev.messages.length);
+      if (messageAdded) {
         WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToBottom());
       }
     });
@@ -6911,7 +6944,15 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
         elevation: 1,
         backgroundColor: Colors.white,
         foregroundColor: Colors.black87,
+        leading: IconButton(
+          // Add back button
+          icon:
+              Icon(Icons.arrow_back_ios_new, size: 20, color: Colors.grey[700]),
+          onPressed: () => Navigator.of(context).pop(),
+        ),
         title: Row(
+          mainAxisSize:
+              MainAxisSize.min, // Prevent Row taking full width unnecessarily
           children: [
             CircleAvatar(
               radius: 18,
@@ -6923,20 +6964,24 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
                   ? const Icon(Icons.person, size: 20, color: Colors.white)
                   : null,
             ),
-            const SizedBox(width: 12),
-            Text(
-              widget.matchName,
-              style: GoogleFonts.poppins(
-                fontSize: 17,
-                fontWeight: FontWeight.w600,
+            const SizedBox(width: 10), // Reduced spacing slightly
+            // Flexible helps prevent overflow if name is long
+            Flexible(
+              child: Text(
+                widget.matchName,
+                style: GoogleFonts.poppins(
+                  fontSize: 17,
+                  fontWeight: FontWeight.w600,
+                ),
+                overflow: TextOverflow.ellipsis, // Handle long names
               ),
             ),
           ],
         ),
+        titleSpacing: 0, // Reduce default title spacing
         actions: [
-          // Optional: Connection Status Indicator
           Padding(
-            padding: const EdgeInsets.only(right: 12.0),
+            padding: const EdgeInsets.only(right: 16.0), // Increased padding
             child: Icon(
               Icons.circle,
               size: 10,
@@ -6951,23 +6996,15 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
       ),
       body: Column(
         children: [
-          // --- Message List ---
           Expanded(
-            child: _buildMessagesList(state, currentUserId),
-          ),
-          // --- Loading Indicator for Pagination ---
-          if (state.isFetchingMore)
-            const Padding(
-              padding: EdgeInsets.symmetric(vertical: 8.0),
-              child: Center(
-                  child: SizedBox(
-                      height: 20,
-                      width: 20,
-                      child: CircularProgressIndicator(
-                          strokeWidth: 2, color: Color(0xFF8B5CF6)))),
+            child: GestureDetector(
+              // Add GestureDetector to dismiss keyboard
+              onTap: () =>
+                  FocusScope.of(context).unfocus(), // Dismiss keyboard on tap
+              child: _buildMessagesList(state, currentUserId),
             ),
-          // --- Message Input Area ---
-          _buildMessageInputArea(),
+          ),
+          _buildMessageInputArea(), // Use the refined input area
         ],
       ),
     );
@@ -6978,7 +7015,6 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
       return const Center(
           child: CircularProgressIndicator(color: Color(0xFF8B5CF6)));
     }
-
     if (state.error != null && state.messages.isEmpty) {
       return Center(
         child: Padding(
@@ -6991,7 +7027,6 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
         ),
       );
     }
-
     if (!state.isLoading && state.messages.isEmpty) {
       return Center(
         child: Padding(
@@ -7005,33 +7040,62 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
       );
     }
 
+    // *** ADD LOGGING HERE ***
+    print(
+        "[ChatDetailScreen _buildMessagesList] Building list. Message count: ${state.messages.length}");
+    // Log the first few messages (rendered at the bottom) and the last (rendered at the top)
+    for (int i = 0; i < state.messages.length; i++) {
+      final msg = state.messages[i];
+      print(
+          "  - State[${i}]: '${msg.messageText}' (Sender: ${msg.senderUserID})");
+      if (i >= 2 && state.messages.length > 5) {
+        // Log first 3 and last one if list is long
+        print("  - ...");
+        final lastMsg = state.messages.last;
+        print(
+            "  - State[${state.messages.length - 1}]: '${lastMsg.messageText}' (Sender: ${lastMsg.senderUserID})");
+        break;
+      }
+    }
+    // *** END LOGGING ***
+
     return ListView.builder(
       controller: _scrollController,
-      reverse: true, // Show newest messages at the bottom
-      padding: const EdgeInsets.symmetric(vertical: 10.0),
+      reverse: true,
+      padding: const EdgeInsets.symmetric(
+          vertical: 10.0, horizontal: 8.0), // Added horizontal padding
       itemCount: state.messages.length,
       itemBuilder: (context, index) {
         final message = state.messages[index];
         final bool isMe = currentUserId != null && message.isMe(currentUserId);
-        // Determine if the previous message was from the same sender
-        // to adjust bubble appearance (e.g., tail)
         bool showTail = true;
         if (index > 0) {
           final prevMessage = state.messages[index - 1];
           if (prevMessage.senderUserID == message.senderUserID) {
-            showTail = false;
+            final timeDiff = message.sentAt.difference(prevMessage.sentAt);
+            // Show tail only if previous message is older than ~1 minute
+            if (timeDiff.inSeconds < 60) {
+              showTail = false;
+            }
           }
         }
-        return MessageBubble(
-          message: message,
-          isMe: isMe,
-          showTail: showTail, // Pass showTail to the bubble
+        // Add some padding between bubbles
+        return Padding(
+          padding: const EdgeInsets.symmetric(vertical: 2.0),
+          child: MessageBubble(
+            message: message,
+            isMe: isMe,
+            showTail: showTail,
+          ),
         );
       },
     );
   }
 
   Widget _buildMessageInputArea() {
+    // Listen to the controller to enable/disable send button
+    final canSend = ref.watch(messageInputProvider);
+
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12.0, vertical: 8.0),
       decoration: BoxDecoration(
@@ -7046,37 +7110,58 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
         ],
       ),
       child: SafeArea(
-        // Ensure input isn't under system UI (like home bar)
         child: Row(
+          crossAxisAlignment: CrossAxisAlignment.center,
           children: [
             Expanded(
-              child: TextField(
-                controller: _messageController,
-                textCapitalization: TextCapitalization.sentences,
-                decoration: InputDecoration(
-                  hintText: "Type a message...",
-                  hintStyle: GoogleFonts.poppins(color: Colors.grey[500]),
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(25.0),
-                    borderSide: BorderSide.none,
-                  ),
-                  filled: true,
-                  fillColor: Colors.grey[100],
-                  contentPadding: const EdgeInsets.symmetric(
-                      horizontal: 16.0, vertical: 10.0),
+              child: Container(
+                // Container to provide background and padding
+                decoration: BoxDecoration(
+                  color: Colors.grey[100],
+                  borderRadius: BorderRadius.circular(25.0),
                 ),
-                onSubmitted: (_) => _sendMessage(), // Send on keyboard submit
-                minLines: 1,
-                maxLines: 5, // Allow multiline input
-                keyboardType: TextInputType.multiline, // Set keyboard type
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 16.0),
+                  child: TextField(
+                    focusNode: _inputFocusNode, // Use the explicit focus node
+                    controller: _messageController,
+                    textCapitalization: TextCapitalization.sentences,
+                    decoration: InputDecoration(
+                      hintText: "Type a message...",
+                      hintStyle: GoogleFonts.poppins(color: Colors.grey[500]),
+                      border:
+                          InputBorder.none, // No border inside the container
+                      contentPadding: const EdgeInsets.symmetric(
+                          vertical: 12.0), // Adjust padding
+                    ),
+                    onChanged: (text) {
+                      // Update the state provider controlling the send button
+                      ref.read(messageInputProvider.notifier).state =
+                          text.trim().isNotEmpty;
+                    },
+                    onTap: () {
+                      // Debugging tap
+                      print("[ChatDetailScreen] TextField tapped!");
+                    },
+                    onSubmitted: (_) =>
+                        canSend ? _sendMessage() : null, // Send only if valid
+                    minLines: 1,
+                    maxLines: 5,
+                    keyboardType: TextInputType.multiline,
+                    style: GoogleFonts.poppins(
+                        color: Colors.black87, fontSize: 15),
+                  ),
+                ),
               ),
             ),
             const SizedBox(width: 8.0),
             IconButton(
               icon: const Icon(Icons.send_rounded),
               color: const Color(0xFF8B5CF6),
-              onPressed: _sendMessage,
+              // Disable button if text is empty
+              onPressed: canSend ? _sendMessage : null,
               tooltip: "Send Message",
+              disabledColor: Colors.grey[400], // Visual cue when disabled
             ),
           ],
         ),
@@ -7084,6 +7169,9 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
     );
   }
 }
+
+// Simple provider to track if the input field has text
+final messageInputProvider = StateProvider<bool>((ref) => false);
 
 
 
@@ -11420,12 +11508,14 @@ class _MatchesScreenState extends ConsumerState<MatchesScreen> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       final state = ref.read(matchesProvider);
       if (state.matches.isEmpty && !state.isLoading) {
+        print("[MatchesScreen] Initial fetch trigger."); // Log fetch trigger
         ref.read(matchesProvider.notifier).fetchMatches();
       }
     });
   }
 
   Future<void> _refreshMatches() async {
+    print("[MatchesScreen] Refreshing matches."); // Log refresh action
     await ref.read(matchesProvider.notifier).fetchMatches(forceRefresh: true);
   }
 
@@ -11473,7 +11563,15 @@ class _MatchesScreenState extends ConsumerState<MatchesScreen> {
         return MatchListTile(
           matchUser: match,
           onTap: () {
-            if (match.id == null) {
+            // *** ADD LOGGING HERE ***
+            print(
+                "[MatchesScreen onTap] Attempting to navigate to chat for match. User ID: ${match.id}, Name: ${match.name}, Avatar: ${match.firstMediaUrl}");
+            // *** END LOGGING ***
+
+            if (match.id == null || match.id == 0) {
+              // Added check for 0 ID as well
+              print(
+                  "[MatchesScreen onTap] ERROR: Invalid User ID detected (${match.id}). Cannot navigate.");
               ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
                   content: Text("Cannot open chat: Invalid user ID.")));
               return;
@@ -11483,9 +11581,9 @@ class _MatchesScreenState extends ConsumerState<MatchesScreen> {
               MaterialPageRoute(
                 builder: (context) => ChatDetailScreen(
                   matchUserId: match.id!,
-                  matchName: match.name ?? 'Match',
-                  matchAvatarUrl:
-                      match.firstMediaUrl, // Use first media as avatar
+                  matchName: match.name ??
+                      'Match', // Default to 'Match' if name is still null after parsing
+                  matchAvatarUrl: match.firstMediaUrl,
                 ),
               ),
             );
@@ -11502,6 +11600,7 @@ class _MatchesScreenState extends ConsumerState<MatchesScreen> {
   }
 
   Widget _buildEmptyState() {
+    // (Keep previous implementation)
     return LayoutBuilder(
       builder: (context, constraints) => SingleChildScrollView(
         physics: const AlwaysScrollableScrollPhysics(),
@@ -11536,6 +11635,7 @@ class _MatchesScreenState extends ConsumerState<MatchesScreen> {
   }
 
   Widget _buildErrorState(AppError error) {
+    // (Keep previous implementation)
     return LayoutBuilder(
       builder: (context, constraints) => SingleChildScrollView(
         physics: const AlwaysScrollableScrollPhysics(),
