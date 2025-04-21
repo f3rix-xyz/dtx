@@ -3,6 +3,7 @@ import '../models/like_models.dart';
 import '../models/error_model.dart'; // Import AppError if needed by provider
 import '../services/api_service.dart';
 import '../utils/token_storage.dart';
+import '../utils/app_enums.dart'; // <<<--- ADDED IMPORT FOR ContentLikeType
 
 class LikeRepository {
   final ApiService _apiService;
@@ -47,6 +48,14 @@ class LikeRepository {
             e.message.toLowerCase().contains('rose'))
           throw InsufficientRosesException(e.message);
       }
+      // --- ADDED CONFLICT HANDLING for Already Liked ---
+      else if (e.statusCode == 409) {
+        // Re-throw specifically or handle as needed
+        // For now, rethrow so the UI can potentially inform the user
+        print("[LikeRepository $methodName] Conflict: Already liked/matched?");
+        rethrow;
+      }
+      // --- END ADDED ---
       rethrow;
     } catch (e) {
       print('[LikeRepository $methodName] Unexpected Error: $e');
@@ -80,7 +89,37 @@ class LikeRepository {
     }
   }
 
-  // --- Fetch Received Likes ---
+  // --- ADDED: likeBackUserProfile Method ---
+  Future<bool> likeBackUserProfile({required int likedUserId}) async {
+    final String methodName = 'likeBackUserProfile';
+    print('[LikeRepository $methodName] Liking back UserID: $likedUserId');
+    try {
+      // Use the existing likeContent method with specific parameters
+      return await likeContent(
+        likedUserId: likedUserId,
+        contentType: ContentLikeType.profile, // Use the specific type
+        contentIdentifier: ContentLikeType.profile.value, // Match type value
+        interactionType: LikeInteractionType.standard, // Standard like back
+        comment: null, // No comment needed for profile like back
+      );
+    } on ApiException catch (e) {
+      // Specific handling or rethrow
+      print(
+          '[LikeRepository $methodName] API Exception: ${e.message}, Status: ${e.statusCode}');
+      if (e.statusCode == 409) {
+        print("[LikeRepository $methodName] Conflict: Already liked/matched?");
+      }
+      rethrow;
+    } catch (e) {
+      // Catch other potential errors from likeContent
+      print('[LikeRepository $methodName] Unexpected Error: $e');
+      throw ApiException(
+          'An unexpected error occurred while liking back user: ${e.toString()}');
+    }
+  }
+  // --- END ADDED Method ---
+
+  // fetchReceivedLikes(...) method remains the same
   Future<Map<String, List<dynamic>>> fetchReceivedLikes() async {
     final String methodName = 'fetchReceivedLikes';
     print(

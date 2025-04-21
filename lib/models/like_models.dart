@@ -5,25 +5,33 @@ import 'package:flutter_riverpod/flutter_riverpod.dart'; // Only needed if UserP
 
 // --- Enums (from Phase 8) ---
 enum ContentLikeType {
-  /* ... */
   media('media'),
   promptStory('prompt_story'),
   promptMytype('prompt_mytype'),
   promptGettingpersonal('prompt_gettingpersonal'),
   promptDatevibes('prompt_datevibes'),
-  audioPrompt('audio_prompt');
+  audioPrompt('audio_prompt'),
+  profile('profile'); // <<<--- ADDED THIS LINE
 
   final String value;
   const ContentLikeType(this.value);
+
+  // --- UPDATED fromValue for robustness ---
   static ContentLikeType? fromValue(String? value) {
     if (value == null) return null;
-    return ContentLikeType.values.firstWhere((e) => e.value == value,
-        orElse: () => ContentLikeType.media);
+    try {
+      // Find the enum value matching the string
+      return ContentLikeType.values.firstWhere((e) => e.value == value);
+    } catch (e) {
+      // Handle cases where the string doesn't match any enum value
+      print("Warning: Unknown ContentLikeType value '$value'");
+      return null; // Return null if not found
+    }
   }
+  // --- END UPDATED fromValue ---
 }
 
 enum LikeInteractionType {
-  /* ... */
   standard('standard'),
   rose('rose');
 
@@ -31,21 +39,27 @@ enum LikeInteractionType {
   const LikeInteractionType(this.value);
   static LikeInteractionType? fromValue(String? value) {
     if (value == null) return null;
-    return LikeInteractionType.values.firstWhere((e) => e.value == value,
-        orElse: () => LikeInteractionType.standard);
+    try {
+      // Added try-catch for robustness
+      return LikeInteractionType.values.firstWhere((e) => e.value == value);
+    } catch (e) {
+      print("Warning: Unknown LikeInteractionType value '$value'");
+      return null; // Return null if not found
+    }
+    // Original: return LikeInteractionType.values.firstWhere((e) => e.value == value, orElse: () => LikeInteractionType.standard);
   }
 }
 
 // --- Custom Exceptions (from Phase 8) ---
 class LikeLimitExceededException implements Exception {
-  /* ... */ final String message;
+  final String message;
   LikeLimitExceededException([this.message = 'Daily like limit reached.']);
   @override
   String toString() => message;
 }
 
 class InsufficientRosesException implements Exception {
-  /* ... */ final String message;
+  final String message;
   InsufficientRosesException([this.message = 'You don\'t have enough Roses.']);
   @override
   String toString() => message;
@@ -90,12 +104,21 @@ class FullProfileLiker {
       return null;
     }
 
+    // --- UPDATED isRose parsing ---
+    bool parseIsRose(dynamic isRoseField, dynamic interactionTypeField) {
+      if (isRoseField is bool) {
+        return isRoseField; // Prefer direct boolean if present
+      }
+      // Fallback to checking interaction_type string
+      return interactionTypeField == LikeInteractionType.rose.value;
+    }
+    // --- END UPDATED ---
+
     return FullProfileLiker(
       likerUserId: json['liker_user_id'] as int? ?? 0,
       likeComment: getComment(json['like_comment']),
-      isRose: json['is_rose'] as bool? ??
-          (json['interaction_type'] ==
-              'rose'), // Check interaction_type if is_rose missing
+      // Use helper to parse isRose
+      isRose: parseIsRose(json['is_rose'], json['interaction_type']),
       likedAt: parseTimestamp(json['liked_at']),
       // Assuming 'profile' contains the full UserProfileData structure
       profile: UserProfileData.fromJson(
@@ -158,12 +181,23 @@ class BasicProfileLiker {
       return '$firstName $lastName'.trim(); // Combine and trim whitespace
     }
 
+    // --- UPDATED isRose parsing (same as FullProfileLiker) ---
+    bool parseIsRose(dynamic isRoseField, dynamic interactionTypeField) {
+      if (isRoseField is bool) {
+        return isRoseField; // Prefer direct boolean if present
+      }
+      // Fallback to checking interaction_type string
+      return interactionTypeField == LikeInteractionType.rose.value;
+    }
+    // --- END UPDATED ---
+
     return BasicProfileLiker(
       likerUserId: json['liker_user_id'] as int? ?? 0,
       name: buildName(json['name'], json['last_name']), // Build name safely
       firstProfilePicUrl: getPicUrl(json['media_urls']), // Get first URL safely
       likeComment: getComment(json['like_comment']),
-      isRose: json['is_rose'] as bool? ?? (json['interaction_type'] == 'rose'),
+      // Use helper to parse isRose
+      isRose: parseIsRose(json['is_rose'], json['interaction_type']),
       likedAt: parseTimestamp(json['liked_at']),
     );
   }
@@ -188,27 +222,31 @@ class LikeInteractionDetails {
       return null;
     }
 
+    // --- UPDATED isRose parsing (same logic) ---
+    bool parseIsRose(dynamic isRoseField, dynamic interactionTypeField) {
+      if (isRoseField is bool) {
+        return isRoseField; // Prefer direct boolean if present
+      }
+      // Fallback to checking interaction_type string
+      return interactionTypeField == LikeInteractionType.rose.value;
+    }
+    // --- END UPDATED ---
+
     return LikeInteractionDetails(
       likeComment: getComment(
           json['comment']), // Assuming key is 'comment' from GetLikeDetailsRow
-      isRose: json['interaction_type'] ==
-          LikeInteractionType.rose.value, // Check interaction_type
+      // Use helper to parse isRose
+      isRose: parseIsRose(json['is_rose'], json['interaction_type']),
     );
   }
 }
 
-// --- Placeholder for UserProfileData (if not defined elsewhere) ---
-// IMPORTANT: Ensure this structure *exactly* matches the one expected
-// by FullProfileLiker.fromJson and used in views/profile_screens.dart
-// It should contain all fields returned by GET /get-profile.
-// For simplicity, re-using UserModel might work if its fromJson handles the /get-profile structure.
-
+// --- Placeholder for UserProfileData (ensure consistency) ---
+// Re-using UserModel seems appropriate based on current needs
 class UserProfileData extends UserModel {
-  // If UserProfileData needs fields BEYOND UserModel, add them here.
-  // Example: final int matchScore;
-
   UserProfileData({
     // Inherit all fields from UserModel
+    super.id, // <<< ADDED super.id
     super.name,
     super.lastName,
     super.email,
@@ -231,36 +269,38 @@ class UserProfileData extends UserModel {
     super.verificationStatus,
     super.verificationPic,
     super.role,
-    // Add any extra fields here:
-    // required this.matchScore,
+    super.mediaChangedDuringEdit, // <<< ADDED super.mediaChangedDuringEdit
   });
 
   factory UserProfileData.fromJson(Map<String, dynamic> json) {
     // Parse UserModel fields using its factory
     final userModel = UserModel.fromJson(json);
 
-    // Parse any additional fields specific to UserProfileData
-    // final int score = json['match_score'] as int? ?? 0;
-
     return UserProfileData(
-      name: userModel.name, lastName: userModel.lastName,
+      id: userModel.id, // Pass id
+      name: userModel.name,
+      lastName: userModel.lastName,
       email: userModel.email,
-      phoneNumber: userModel.phoneNumber, dateOfBirth: userModel.dateOfBirth,
-      latitude: userModel.latitude, longitude: userModel.longitude,
+      phoneNumber: userModel.phoneNumber,
+      dateOfBirth: userModel.dateOfBirth,
+      latitude: userModel.latitude,
+      longitude: userModel.longitude,
       gender: userModel.gender,
-      datingIntention: userModel.datingIntention, height: userModel.height,
+      datingIntention: userModel.datingIntention,
+      height: userModel.height,
       hometown: userModel.hometown,
-      jobTitle: userModel.jobTitle, education: userModel.education,
+      jobTitle: userModel.jobTitle,
+      education: userModel.education,
       religiousBeliefs: userModel.religiousBeliefs,
       drinkingHabit: userModel.drinkingHabit,
       smokingHabit: userModel.smokingHabit,
-      mediaUrls: userModel.mediaUrls, prompts: userModel.prompts,
+      mediaUrls: userModel.mediaUrls,
+      prompts: userModel.prompts,
       audioPrompt: userModel.audioPrompt,
       verificationStatus: userModel.verificationStatus,
       verificationPic: userModel.verificationPic,
       role: userModel.role,
-      // Assign additional fields:
-      // matchScore: score,
+      mediaChangedDuringEdit: userModel.mediaChangedDuringEdit, // Pass flag
     );
   }
 }

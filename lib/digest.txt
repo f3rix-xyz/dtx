@@ -530,25 +530,33 @@ import 'package:flutter_riverpod/flutter_riverpod.dart'; // Only needed if UserP
 
 // --- Enums (from Phase 8) ---
 enum ContentLikeType {
-  /* ... */
   media('media'),
   promptStory('prompt_story'),
   promptMytype('prompt_mytype'),
   promptGettingpersonal('prompt_gettingpersonal'),
   promptDatevibes('prompt_datevibes'),
-  audioPrompt('audio_prompt');
+  audioPrompt('audio_prompt'),
+  profile('profile'); // <<<--- ADDED THIS LINE
 
   final String value;
   const ContentLikeType(this.value);
+
+  // --- UPDATED fromValue for robustness ---
   static ContentLikeType? fromValue(String? value) {
     if (value == null) return null;
-    return ContentLikeType.values.firstWhere((e) => e.value == value,
-        orElse: () => ContentLikeType.media);
+    try {
+      // Find the enum value matching the string
+      return ContentLikeType.values.firstWhere((e) => e.value == value);
+    } catch (e) {
+      // Handle cases where the string doesn't match any enum value
+      print("Warning: Unknown ContentLikeType value '$value'");
+      return null; // Return null if not found
+    }
   }
+  // --- END UPDATED fromValue ---
 }
 
 enum LikeInteractionType {
-  /* ... */
   standard('standard'),
   rose('rose');
 
@@ -556,21 +564,27 @@ enum LikeInteractionType {
   const LikeInteractionType(this.value);
   static LikeInteractionType? fromValue(String? value) {
     if (value == null) return null;
-    return LikeInteractionType.values.firstWhere((e) => e.value == value,
-        orElse: () => LikeInteractionType.standard);
+    try {
+      // Added try-catch for robustness
+      return LikeInteractionType.values.firstWhere((e) => e.value == value);
+    } catch (e) {
+      print("Warning: Unknown LikeInteractionType value '$value'");
+      return null; // Return null if not found
+    }
+    // Original: return LikeInteractionType.values.firstWhere((e) => e.value == value, orElse: () => LikeInteractionType.standard);
   }
 }
 
 // --- Custom Exceptions (from Phase 8) ---
 class LikeLimitExceededException implements Exception {
-  /* ... */ final String message;
+  final String message;
   LikeLimitExceededException([this.message = 'Daily like limit reached.']);
   @override
   String toString() => message;
 }
 
 class InsufficientRosesException implements Exception {
-  /* ... */ final String message;
+  final String message;
   InsufficientRosesException([this.message = 'You don\'t have enough Roses.']);
   @override
   String toString() => message;
@@ -615,12 +629,21 @@ class FullProfileLiker {
       return null;
     }
 
+    // --- UPDATED isRose parsing ---
+    bool parseIsRose(dynamic isRoseField, dynamic interactionTypeField) {
+      if (isRoseField is bool) {
+        return isRoseField; // Prefer direct boolean if present
+      }
+      // Fallback to checking interaction_type string
+      return interactionTypeField == LikeInteractionType.rose.value;
+    }
+    // --- END UPDATED ---
+
     return FullProfileLiker(
       likerUserId: json['liker_user_id'] as int? ?? 0,
       likeComment: getComment(json['like_comment']),
-      isRose: json['is_rose'] as bool? ??
-          (json['interaction_type'] ==
-              'rose'), // Check interaction_type if is_rose missing
+      // Use helper to parse isRose
+      isRose: parseIsRose(json['is_rose'], json['interaction_type']),
       likedAt: parseTimestamp(json['liked_at']),
       // Assuming 'profile' contains the full UserProfileData structure
       profile: UserProfileData.fromJson(
@@ -683,12 +706,23 @@ class BasicProfileLiker {
       return '$firstName $lastName'.trim(); // Combine and trim whitespace
     }
 
+    // --- UPDATED isRose parsing (same as FullProfileLiker) ---
+    bool parseIsRose(dynamic isRoseField, dynamic interactionTypeField) {
+      if (isRoseField is bool) {
+        return isRoseField; // Prefer direct boolean if present
+      }
+      // Fallback to checking interaction_type string
+      return interactionTypeField == LikeInteractionType.rose.value;
+    }
+    // --- END UPDATED ---
+
     return BasicProfileLiker(
       likerUserId: json['liker_user_id'] as int? ?? 0,
       name: buildName(json['name'], json['last_name']), // Build name safely
       firstProfilePicUrl: getPicUrl(json['media_urls']), // Get first URL safely
       likeComment: getComment(json['like_comment']),
-      isRose: json['is_rose'] as bool? ?? (json['interaction_type'] == 'rose'),
+      // Use helper to parse isRose
+      isRose: parseIsRose(json['is_rose'], json['interaction_type']),
       likedAt: parseTimestamp(json['liked_at']),
     );
   }
@@ -713,27 +747,31 @@ class LikeInteractionDetails {
       return null;
     }
 
+    // --- UPDATED isRose parsing (same logic) ---
+    bool parseIsRose(dynamic isRoseField, dynamic interactionTypeField) {
+      if (isRoseField is bool) {
+        return isRoseField; // Prefer direct boolean if present
+      }
+      // Fallback to checking interaction_type string
+      return interactionTypeField == LikeInteractionType.rose.value;
+    }
+    // --- END UPDATED ---
+
     return LikeInteractionDetails(
       likeComment: getComment(
           json['comment']), // Assuming key is 'comment' from GetLikeDetailsRow
-      isRose: json['interaction_type'] ==
-          LikeInteractionType.rose.value, // Check interaction_type
+      // Use helper to parse isRose
+      isRose: parseIsRose(json['is_rose'], json['interaction_type']),
     );
   }
 }
 
-// --- Placeholder for UserProfileData (if not defined elsewhere) ---
-// IMPORTANT: Ensure this structure *exactly* matches the one expected
-// by FullProfileLiker.fromJson and used in views/profile_screens.dart
-// It should contain all fields returned by GET /get-profile.
-// For simplicity, re-using UserModel might work if its fromJson handles the /get-profile structure.
-
+// --- Placeholder for UserProfileData (ensure consistency) ---
+// Re-using UserModel seems appropriate based on current needs
 class UserProfileData extends UserModel {
-  // If UserProfileData needs fields BEYOND UserModel, add them here.
-  // Example: final int matchScore;
-
   UserProfileData({
     // Inherit all fields from UserModel
+    super.id, // <<< ADDED super.id
     super.name,
     super.lastName,
     super.email,
@@ -756,36 +794,38 @@ class UserProfileData extends UserModel {
     super.verificationStatus,
     super.verificationPic,
     super.role,
-    // Add any extra fields here:
-    // required this.matchScore,
+    super.mediaChangedDuringEdit, // <<< ADDED super.mediaChangedDuringEdit
   });
 
   factory UserProfileData.fromJson(Map<String, dynamic> json) {
     // Parse UserModel fields using its factory
     final userModel = UserModel.fromJson(json);
 
-    // Parse any additional fields specific to UserProfileData
-    // final int score = json['match_score'] as int? ?? 0;
-
     return UserProfileData(
-      name: userModel.name, lastName: userModel.lastName,
+      id: userModel.id, // Pass id
+      name: userModel.name,
+      lastName: userModel.lastName,
       email: userModel.email,
-      phoneNumber: userModel.phoneNumber, dateOfBirth: userModel.dateOfBirth,
-      latitude: userModel.latitude, longitude: userModel.longitude,
+      phoneNumber: userModel.phoneNumber,
+      dateOfBirth: userModel.dateOfBirth,
+      latitude: userModel.latitude,
+      longitude: userModel.longitude,
       gender: userModel.gender,
-      datingIntention: userModel.datingIntention, height: userModel.height,
+      datingIntention: userModel.datingIntention,
+      height: userModel.height,
       hometown: userModel.hometown,
-      jobTitle: userModel.jobTitle, education: userModel.education,
+      jobTitle: userModel.jobTitle,
+      education: userModel.education,
       religiousBeliefs: userModel.religiousBeliefs,
       drinkingHabit: userModel.drinkingHabit,
       smokingHabit: userModel.smokingHabit,
-      mediaUrls: userModel.mediaUrls, prompts: userModel.prompts,
+      mediaUrls: userModel.mediaUrls,
+      prompts: userModel.prompts,
       audioPrompt: userModel.audioPrompt,
       verificationStatus: userModel.verificationStatus,
       verificationPic: userModel.verificationPic,
       role: userModel.role,
-      // Assign additional fields:
-      // matchScore: score,
+      mediaChangedDuringEdit: userModel.mediaChangedDuringEdit, // Pass flag
     );
   }
 }
@@ -3580,6 +3620,7 @@ import '../models/like_models.dart';
 import '../models/error_model.dart'; // Import AppError if needed by provider
 import '../services/api_service.dart';
 import '../utils/token_storage.dart';
+import '../utils/app_enums.dart'; // <<<--- ADDED IMPORT FOR ContentLikeType
 
 class LikeRepository {
   final ApiService _apiService;
@@ -3624,6 +3665,14 @@ class LikeRepository {
             e.message.toLowerCase().contains('rose'))
           throw InsufficientRosesException(e.message);
       }
+      // --- ADDED CONFLICT HANDLING for Already Liked ---
+      else if (e.statusCode == 409) {
+        // Re-throw specifically or handle as needed
+        // For now, rethrow so the UI can potentially inform the user
+        print("[LikeRepository $methodName] Conflict: Already liked/matched?");
+        rethrow;
+      }
+      // --- END ADDED ---
       rethrow;
     } catch (e) {
       print('[LikeRepository $methodName] Unexpected Error: $e');
@@ -3657,7 +3706,37 @@ class LikeRepository {
     }
   }
 
-  // --- Fetch Received Likes ---
+  // --- ADDED: likeBackUserProfile Method ---
+  Future<bool> likeBackUserProfile({required int likedUserId}) async {
+    final String methodName = 'likeBackUserProfile';
+    print('[LikeRepository $methodName] Liking back UserID: $likedUserId');
+    try {
+      // Use the existing likeContent method with specific parameters
+      return await likeContent(
+        likedUserId: likedUserId,
+        contentType: ContentLikeType.profile, // Use the specific type
+        contentIdentifier: ContentLikeType.profile.value, // Match type value
+        interactionType: LikeInteractionType.standard, // Standard like back
+        comment: null, // No comment needed for profile like back
+      );
+    } on ApiException catch (e) {
+      // Specific handling or rethrow
+      print(
+          '[LikeRepository $methodName] API Exception: ${e.message}, Status: ${e.statusCode}');
+      if (e.statusCode == 409) {
+        print("[LikeRepository $methodName] Conflict: Already liked/matched?");
+      }
+      rethrow;
+    } catch (e) {
+      // Catch other potential errors from likeContent
+      print('[LikeRepository $methodName] Unexpected Error: $e');
+      throw ApiException(
+          'An unexpected error occurred while liking back user: ${e.toString()}');
+    }
+  }
+  // --- END ADDED Method ---
+
+  // fetchReceivedLikes(...) method remains the same
   Future<Map<String, List<dynamic>>> fetchReceivedLikes() async {
     final String methodName = 'fetchReceivedLikes';
     print(
@@ -4938,7 +5017,6 @@ class TokenStorage {
 ================================================
 File: views/audioprompt.dart
 ================================================
-// File: lib/views/audioprompt.dart
 import 'dart:async';
 import 'dart:io'; // Keep for File checks
 
@@ -4952,7 +5030,7 @@ import 'package:dtx/providers/auth_provider.dart'; // Keep for status check
 import 'package:dtx/providers/error_provider.dart';
 import 'package:dtx/providers/media_upload_provider.dart'; // <<< ADDED for general media
 import 'package:dtx/providers/service_provider.dart'; // Keep for repository access
-import 'package:dtx/providers/user_provider.dart';
+import 'package:dtx/providers/user_provider.dart'; // <<< ENSURE IMPORT
 import 'package:dtx/services/api_service.dart';
 import 'package:dtx/utils/app_enums.dart';
 import 'package:dtx/views/audiopromptsselect.dart';
@@ -5214,6 +5292,7 @@ class _VoicePromptScreenState extends ConsumerState<VoicePromptScreen> {
 
   // --- *** MODIFIED SAVE METHOD *** ---
   Future<void> _saveProfileAndNavigate() async {
+    // <-- Added async
     print(
         '[VoicePromptScreen] Starting _saveProfileAndNavigate (isEditing: ${widget.isEditing})');
     final errorNotifier = ref.read(errorProvider.notifier);
@@ -5378,8 +5457,13 @@ class _VoicePromptScreenState extends ConsumerState<VoicePromptScreen> {
           }
         } else {
           // Onboarding success
-          final finalStatus =
-              await authNotifier.checkAuthStatus(updateState: true);
+          // *** --- START FIX: FETCH PROFILE BEFORE NAVIGATION --- ***
+          print('[VoicePromptScreen Onboarding] Fetching updated profile...');
+          await userNotifier.fetchProfile(); // <<< ADDED: Fetch fresh data
+          print('[VoicePromptScreen Onboarding] Profile fetch complete.');
+          // *** --- END FIX ---
+          final finalStatus = await authNotifier.checkAuthStatus(
+              updateState: true); // Check status again after save
           if (mounted) {
             print(
                 '[VoicePromptScreen Onboarding] Navigating to MainNavigationScreen. Status: $finalStatus');
@@ -5428,7 +5512,7 @@ class _VoicePromptScreenState extends ConsumerState<VoicePromptScreen> {
                 _audioPath == null)) &&
         !_isRecording; // Allow saving null in edit mode
 
-    // --- UI Code (Mostly unchanged, uses local state _selectedPrompt, _audioPath, _existingAudioUrl) ---
+    // --- UI Code (Unchanged) ---
     return Scaffold(
       /* ... Scaffold setup ... */
       backgroundColor: Colors.white,
@@ -7841,7 +7925,7 @@ import 'package:dtx/providers/error_provider.dart';
 import 'package:dtx/providers/feed_provider.dart';
 import 'package:dtx/providers/filter_provider.dart';
 import 'package:dtx/providers/service_provider.dart';
-import 'package:dtx/providers/user_provider.dart'; // Keep user provider for gender check if needed here (though moved to card)
+import 'package:dtx/providers/user_provider.dart';
 import 'package:dtx/services/api_service.dart';
 import 'package:dtx/views/filter_settings_dialog.dart';
 import 'package:dtx/views/name.dart';
@@ -7876,6 +7960,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
         _fetchFeed();
       } else {
         if (mounted) {
+          // Initialize local state from provider if already fetched
           setState(() {
             _feedProfiles = feedState.profiles;
           });
@@ -7900,6 +7985,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     print("[HomeScreen _fetchFeed] Fetching home feed. Force: $force");
     ref.read(errorProvider.notifier).clearError();
     await ref.read(feedProvider.notifier).fetchFeed(forceRefresh: force);
+    // State update is handled by the ref.listen below
   }
 
   // Dialog shown if user tries to interact before completing onboarding step 2
@@ -7936,18 +8022,24 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     );
   }
 
-  // Called by HomeProfileCard after a successful interaction
+  // Called by HomeProfileCard after a successful interaction (like OR dislike)
   void _removeTopCard() {
-    print("[HomeScreen _removeTopCard] Removing top card.");
+    print("[HomeScreen _removeTopCard] Removing top card from local state.");
     if (!mounted) return;
     if (_feedProfiles.isNotEmpty) {
-      ref.read(feedProvider.notifier).removeProfile(_feedProfiles[0].id!);
+      final removedUserId = _feedProfiles[0].id!;
+      // Update local state FIRST for immediate UI reflection
+      setState(() {
+        _feedProfiles.removeAt(0);
+      });
+      // Then notify the provider
+      print(
+          "[HomeScreen _removeTopCard] Notifying FeedProvider to remove profile ID: $removedUserId");
+      ref.read(feedProvider.notifier).removeProfile(removedUserId);
     }
-    // The loading overlay (_isInteracting) is handled in _callLikeRepository
   }
 
-  // This method is passed to the card to handle the actual API call
-  // It allows HomeScreen to manage the loading overlay (_isInteracting)
+  // API call handler for LIKES (passed to card)
   Future<bool> _callLikeRepository({
     required int targetUserId,
     required ContentLikeType contentType,
@@ -7987,27 +8079,31 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
               "[HomeScreen _callLikeRepository] API returned false, setting generic error.");
           errorNotifier.setError(
               AppError.server("Could not send ${interactionType.value}."));
+          _showErrorSnackbar(
+              "Could not send ${interactionType.value}."); // Show feedback
         }
       } else {
         print("[HomeScreen _callLikeRepository] API call successful.");
       }
     } on LikeLimitExceededException catch (e) {
       print("[HomeScreen _callLikeRepository] Like Limit Error: ${e.message}");
-      errorNotifier.setError(AppError.validation(e.message));
+      if (mounted) errorNotifier.setError(AppError.validation(e.message));
       _showErrorSnackbar(e.message); // Show specific feedback
     } on InsufficientRosesException catch (e) {
       print(
           "[HomeScreen _callLikeRepository] Insufficient Roses: ${e.message}");
-      errorNotifier.setError(AppError.validation(e.message));
+      if (mounted) errorNotifier.setError(AppError.validation(e.message));
       _showErrorSnackbar(e.message); // Show specific feedback
     } on ApiException catch (e) {
       print("[HomeScreen _callLikeRepository] API Exception: ${e.message}");
-      errorNotifier.setError(AppError.server(e.message));
+      if (mounted) errorNotifier.setError(AppError.server(e.message));
       _showErrorSnackbar(e.message); // Show API error message
     } catch (e) {
       print(
           "[HomeScreen _callLikeRepository] Unexpected Error: ${e.toString()}");
-      errorNotifier.setError(AppError.generic("An unexpected error occurred."));
+      if (mounted)
+        errorNotifier
+            .setError(AppError.generic("An unexpected error occurred."));
       _showErrorSnackbar("An unexpected error occurred.");
     } finally {
       if (mounted) setState(() => _isInteracting = false); // Hide overlay
@@ -8015,6 +8111,57 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     print("[HomeScreen _callLikeRepository] Returning success: $success");
     return success; // Return the outcome
   }
+
+  // --- ADDED: API call handler for DISLIKES (passed to card) ---
+  Future<bool> _callDislikeRepository(int targetUserId) async {
+    // Check if profile is complete before allowing interaction
+    final authStatus = ref.read(authProvider).authStatus;
+    if (authStatus == AuthStatus.onboarding2) {
+      print(
+          "[HomeScreen _callDislikeRepository] Interaction blocked: Profile incomplete (onboarding2).");
+      _showCompleteProfileDialog();
+      return false;
+    }
+
+    if (_isInteracting) return false;
+    if (mounted) setState(() => _isInteracting = true);
+
+    final errorNotifier = ref.read(errorProvider.notifier)..clearError();
+    bool success = false;
+    try {
+      final likeRepo = ref.read(likeRepositoryProvider);
+      print(
+          "[HomeScreen _callDislikeRepository] Calling dislike API for Target $targetUserId");
+      success = await likeRepo.dislikeUser(dislikedUserId: targetUserId);
+
+      if (!success) {
+        if (mounted && ref.read(errorProvider) == null) {
+          print(
+              "[HomeScreen _callDislikeRepository] API returned false, setting generic error.");
+          errorNotifier.setError(AppError.server("Could not dislike user."));
+          _showErrorSnackbar("Could not dislike user.");
+        }
+      } else {
+        print("[HomeScreen _callDislikeRepository] API call successful.");
+      }
+    } on ApiException catch (e) {
+      print("[HomeScreen _callDislikeRepository] API Exception: ${e.message}");
+      if (mounted) errorNotifier.setError(AppError.server(e.message));
+      _showErrorSnackbar(e.message);
+    } catch (e) {
+      print(
+          "[HomeScreen _callDislikeRepository] Unexpected Error: ${e.toString()}");
+      if (mounted)
+        errorNotifier
+            .setError(AppError.generic("An unexpected error occurred."));
+      _showErrorSnackbar("An unexpected error occurred.");
+    } finally {
+      if (mounted) setState(() => _isInteracting = false);
+    }
+    print("[HomeScreen _callDislikeRepository] Returning success: $success");
+    return success;
+  }
+  // --- END ADDED ---
 
   void _showErrorSnackbar(String message) {
     if (!mounted) return;
@@ -8040,16 +8187,20 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
 
     // Update local profile list when provider changes
     ref.listen<HomeFeedState>(feedProvider, (_, next) {
-      if (mounted) {
+      if (mounted && _feedProfiles != next.profiles) {
+        // Only update if different
         setState(() {
           _feedProfiles = next.profiles;
+          print(
+              "[HomeScreen Listener] Updated local _feedProfiles. Count: ${_feedProfiles.length}");
         });
       }
     });
 
     final error = feedState.error ?? ref.watch(errorProvider);
     final isLoadingFeed = feedState.isLoading && !feedState.hasFetchedOnce;
-    final bool hasProfilesToShow = _feedProfiles.isNotEmpty;
+    final bool hasProfilesToShow =
+        _feedProfiles.isNotEmpty; // Use local state list
 
     return Scaffold(
       backgroundColor: Colors.grey[50],
@@ -8102,7 +8253,9 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                 else if (!hasProfilesToShow)
                   _buildEmptyState() // Show empty state if no profiles and no error
                 else // Only build the card if there are profiles
-                  _buildProfileCardAtIndex(0),
+                  // --- Pass Dislike Callback ---
+                  _buildProfileCardAtIndex(
+                      0), // Build using local _feedProfiles
 
                 // General interaction loading overlay (covers everything)
                 if (_isInteracting)
@@ -8117,15 +8270,12 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
               ],
             ),
           ),
-
-          // --- REMOVED BOTTOM ACTION BUTTONS ---
-          // Padding(...) // Removed the entire Padding widget with action buttons
         ],
       ),
     );
   }
 
-  // --- Helper methods (_buildFilterChips, _buildFilterChip, _buildEmptyState, _buildErrorState) remain the same ---
+  // _buildFilterChips, _buildFilterChip, _buildEmptyState, _buildErrorState remain the same
   List<Widget> _buildFilterChips(FilterSettings filters) {
     List<Widget> chips = [];
     chips.add(_buildFilterChip(
@@ -8174,12 +8324,15 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     );
   }
 
+  // --- MODIFIED: Build card using local state ---
   Widget _buildProfileCardAtIndex(int index) {
     if (index >= 0 && index < _feedProfiles.length) {
       final currentProfile = _feedProfiles[index];
       return HomeProfileCard(
+        // Use unique key based on profile ID to help Flutter optimize
+        key: ValueKey(currentProfile.id),
         profile: currentProfile,
-        // Pass the callback function to handle the API call
+        // Pass the callback function to handle the LIKE API call
         performLikeApiCall: (
             {required contentType,
             required contentIdentifier,
@@ -8193,92 +8346,122 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
               interactionType: interactionType,
               comment: comment);
         },
-        // Callback to remove the card after success
+        // --- Pass DISLIKE callback ---
+        performDislikeApiCall: () async {
+          if (currentProfile.id == null) return false;
+          return await _callDislikeRepository(currentProfile.id!);
+        },
+        // Callback to remove the card after success (like OR dislike)
         onInteractionComplete: _removeTopCard,
       );
     }
+    // Should ideally not happen if hasProfilesToShow is checked correctly
     return Container(
         alignment: Alignment.center,
-        child: const Text("Error loading profile."));
+        child: Text("No more profiles.", style: GoogleFonts.poppins()));
   }
+  // --- END MODIFICATION ---
 
   Widget _buildEmptyState() {
-    return Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Icon(Icons.people_outline_rounded, size: 80, color: Colors.grey[400]),
-          const SizedBox(height: 20),
-          Text(
-            "That's everyone for now!",
-            style: GoogleFonts.poppins(fontSize: 18, color: Colors.grey[600]),
-          ),
-          const SizedBox(height: 10),
-          Text(
-            "Adjust your filters or check back later.",
-            textAlign: TextAlign.center,
-            style: GoogleFonts.poppins(fontSize: 14, color: Colors.grey[500]),
-          ),
-          const SizedBox(height: 20),
-          ElevatedButton.icon(
-            icon: const Icon(Icons.refresh_rounded, size: 18),
-            label: const Text("Refresh Feed"),
-            style: ElevatedButton.styleFrom(
-              foregroundColor: Colors.white,
-              backgroundColor: const Color(0xFF8B5CF6),
-              shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(20)),
-              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+    // Wrap in LayoutBuilder to ensure scroll physics work for refresh
+    return LayoutBuilder(builder: (context, constraints) {
+      return SingleChildScrollView(
+        physics: const AlwaysScrollableScrollPhysics(),
+        child: ConstrainedBox(
+          constraints: BoxConstraints(minHeight: constraints.maxHeight),
+          child: Center(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(Icons.people_outline_rounded,
+                    size: 80, color: Colors.grey[400]),
+                const SizedBox(height: 20),
+                Text(
+                  "That's everyone for now!",
+                  style: GoogleFonts.poppins(
+                      fontSize: 18, color: Colors.grey[600]),
+                ),
+                const SizedBox(height: 10),
+                Text(
+                  "Adjust your filters or check back later.",
+                  textAlign: TextAlign.center,
+                  style: GoogleFonts.poppins(
+                      fontSize: 14, color: Colors.grey[500]),
+                ),
+                const SizedBox(height: 20),
+                ElevatedButton.icon(
+                  icon: const Icon(Icons.refresh_rounded, size: 18),
+                  label: const Text("Refresh Feed"),
+                  style: ElevatedButton.styleFrom(
+                    foregroundColor: Colors.white,
+                    backgroundColor: const Color(0xFF8B5CF6),
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(20)),
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 20, vertical: 10),
+                  ),
+                  onPressed: () => _fetchFeed(force: true),
+                ),
+              ],
             ),
-            onPressed: () => _fetchFeed(force: true),
           ),
-        ],
-      ),
-    );
+        ),
+      );
+    });
   }
 
   Widget _buildErrorState(AppError error) {
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(20.0),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(Icons.error_outline_rounded,
-                size: 60, color: Colors.redAccent[100]),
-            const SizedBox(height: 20),
-            Text(
-              "Oops! Something went wrong",
-              style: GoogleFonts.poppins(
-                  fontSize: 18,
-                  fontWeight: FontWeight.w600,
-                  color: Colors.grey[700]),
-              textAlign: TextAlign.center,
-            ),
-            const SizedBox(height: 10),
-            Text(
-              error.message,
-              style: GoogleFonts.poppins(fontSize: 14, color: Colors.grey[600]),
-              textAlign: TextAlign.center,
-            ),
-            const SizedBox(height: 20),
-            ElevatedButton.icon(
-              icon: const Icon(Icons.refresh_rounded, size: 18),
-              label: const Text("Retry"),
-              style: ElevatedButton.styleFrom(
-                foregroundColor: Colors.white,
-                backgroundColor: const Color(0xFF8B5CF6),
-                shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(20)),
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 30, vertical: 12),
+    // Wrap in LayoutBuilder to ensure scroll physics work for refresh
+    return LayoutBuilder(builder: (context, constraints) {
+      return SingleChildScrollView(
+        physics: const AlwaysScrollableScrollPhysics(),
+        child: ConstrainedBox(
+          constraints: BoxConstraints(minHeight: constraints.maxHeight),
+          child: Center(
+            child: Padding(
+              padding: const EdgeInsets.all(20.0),
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(Icons.error_outline_rounded,
+                      size: 60, color: Colors.redAccent[100]),
+                  const SizedBox(height: 20),
+                  Text(
+                    "Oops! Something went wrong",
+                    style: GoogleFonts.poppins(
+                        fontSize: 18,
+                        fontWeight: FontWeight.w600,
+                        color: Colors.grey[700]),
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: 10),
+                  Text(
+                    error.message,
+                    style: GoogleFonts.poppins(
+                        fontSize: 14, color: Colors.grey[600]),
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: 20),
+                  ElevatedButton.icon(
+                    icon: const Icon(Icons.refresh_rounded, size: 18),
+                    label: const Text("Retry"),
+                    style: ElevatedButton.styleFrom(
+                      foregroundColor: Colors.white,
+                      backgroundColor: const Color(0xFF8B5CF6),
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(20)),
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 30, vertical: 12),
+                    ),
+                    onPressed: () => _fetchFeed(force: true),
+                  ),
+                ],
               ),
-              onPressed: () => _fetchFeed(force: true),
             ),
-          ],
+          ),
         ),
-      ),
-    );
+      );
+    });
   }
 }
 
@@ -8809,30 +8992,194 @@ File: views/liker_profile_screen.dart
 import 'package:dtx/models/error_model.dart';
 import 'package:dtx/models/like_models.dart';
 import 'package:dtx/providers/liker_profile_provider.dart';
-import 'package:dtx/views/profile_screens.dart'; // Re-use ProfileScreen's building blocks (Keep for reference, but structure is replicated)
+import 'package:dtx/providers/recieved_likes_provider.dart'; // <<< ADDED for invalidation
+import 'package:dtx/repositories/like_repository.dart'; // <<< ADDED for API calls
+import 'package:dtx/providers/service_provider.dart'; // <<< ADDED for repository access
+import 'package:dtx/providers/error_provider.dart'; // <<< ADDED for error handling
+import 'package:dtx/services/api_service.dart'; // <<< ADDED for ApiException
+import 'package:dtx/views/profile_screens.dart'; // Keep for reference
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_fonts/google_fonts.dart';
-
-// --- ADDED IMPORTS ---
 import 'package:dtx/models/user_model.dart';
-import 'package:dtx/utils/app_enums.dart'; // For Gender enum etc. if needed in helpers
-// --- END ADDED ---
+import 'package:dtx/utils/app_enums.dart';
 
-class LikerProfileScreen extends ConsumerWidget {
+class LikerProfileScreen extends ConsumerStatefulWidget {
+  // <<< CHANGED to StatefulWidget
   final int likerUserId;
 
   const LikerProfileScreen({super.key, required this.likerUserId});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    // Watch the specific provider instance for this liker's ID
-    final state = ref.watch(likerProfileProvider(likerUserId));
+  ConsumerState<LikerProfileScreen> createState() =>
+      _LikerProfileScreenState(); // <<< CHANGED
+}
+
+class _LikerProfileScreenState extends ConsumerState<LikerProfileScreen> {
+  // <<< CHANGED
+
+  bool _isInteracting = false; // Local state for loading indicator
+
+  // --- ADDED: Dislike Handler ---
+  Future<void> _handleDislike() async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text("Dislike Profile?", style: GoogleFonts.poppins()),
+        content: Text(
+            "Are you sure you want to dislike this profile? They won't appear again.",
+            style: GoogleFonts.poppins()),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: Text("Cancel",
+                  style: GoogleFonts.poppins(color: Colors.grey))),
+          TextButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: Text("Dislike",
+                  style: GoogleFonts.poppins(color: Colors.red))),
+        ],
+      ),
+    );
+
+    if (confirm != true) return;
+
+    if (!mounted) return;
+    setState(() => _isInteracting = true);
+    final errorNotifier = ref.read(errorProvider.notifier)..clearError();
+
+    try {
+      final success = await ref
+          .read(likeRepositoryProvider)
+          .dislikeUser(dislikedUserId: widget.likerUserId);
+
+      if (success && mounted) {
+        // Invalidate received likes so the list updates on the previous screen
+        ref.invalidate(receivedLikesProvider);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+              content: Text("Profile disliked.", style: GoogleFonts.poppins()),
+              backgroundColor: Colors.grey[700]),
+        );
+        Navigator.of(context).pop(); // Pop back
+      } else if (!success && mounted) {
+        if (ref.read(errorProvider) == null) {
+          // Set error if repo didn't
+          errorNotifier.setError(AppError.server("Failed to dislike profile."));
+          _showErrorSnackbar("Failed to dislike profile.");
+        }
+      }
+    } on ApiException catch (e) {
+      if (mounted) errorNotifier.setError(AppError.server(e.message));
+      _showErrorSnackbar(e.message);
+    } catch (e) {
+      if (mounted)
+        errorNotifier
+            .setError(AppError.generic("An unexpected error occurred."));
+      _showErrorSnackbar("An unexpected error occurred.");
+    } finally {
+      if (mounted) setState(() => _isInteracting = false);
+    }
+  }
+  // --- END Dislike Handler ---
+
+  // --- ADDED: Like Back Handler ---
+  Future<void> _handleLikeBack() async {
+    if (_isInteracting) return; // Prevent double taps
+    if (!mounted) return;
+    setState(() => _isInteracting = true);
+    final errorNotifier = ref.read(errorProvider.notifier)..clearError();
+
+    try {
+      final success = await ref
+          .read(likeRepositoryProvider)
+          .likeBackUserProfile(likedUserId: widget.likerUserId);
+
+      if (success && mounted) {
+        // Invalidate received likes so the list updates on the previous screen
+        ref.invalidate(receivedLikesProvider);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+              content: Text("It's a Match! 🎉", style: GoogleFonts.poppins()),
+              backgroundColor: Colors.green),
+        );
+        Navigator.of(context).pop(); // Pop back
+        // TODO: Optionally navigate to chat screen here?
+        // Navigator.push(...)
+      } else if (!success && mounted) {
+        if (ref.read(errorProvider) == null) {
+          errorNotifier.setError(AppError.server("Failed to like back."));
+          _showErrorSnackbar("Failed to like back.");
+        }
+      }
+    } on ApiException catch (e) {
+      if (mounted) errorNotifier.setError(AppError.server(e.message));
+      // Check for specific 409 conflict error
+      if (e.statusCode == 409) {
+        _showErrorSnackbar("You have already matched or liked this user.");
+      } else {
+        _showErrorSnackbar(e.message);
+      }
+    } catch (e) {
+      if (mounted)
+        errorNotifier
+            .setError(AppError.generic("An unexpected error occurred."));
+      _showErrorSnackbar("An unexpected error occurred.");
+    } finally {
+      if (mounted) setState(() => _isInteracting = false);
+    }
+  }
+  // --- END Like Back Handler ---
+
+  // --- ADDED: Error Snackbar Helper ---
+  void _showErrorSnackbar(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context)
+        .removeCurrentSnackBar(); // Remove previous snackbar if any
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message, style: GoogleFonts.poppins()),
+        backgroundColor: Colors.redAccent,
+        duration: const Duration(seconds: 3),
+      ),
+    );
+  }
+  // --- END Helper ---
+
+  @override
+  Widget build(BuildContext context) {
+    // Now uses widget.likerUserId
+    final state = ref.watch(likerProfileProvider(widget.likerUserId));
     final profile = state.profile;
     final likeDetails = state.likeDetails;
 
     return Scaffold(
       backgroundColor: Colors.white,
+      // --- ADDED: FloatingActionButton for Like Back ---
+      floatingActionButtonLocation: FloatingActionButtonLocation.centerFloat,
+      floatingActionButton: _isInteracting
+          ? FloatingActionButton.extended(
+              // Show loading label when interacting
+              onPressed: null,
+              backgroundColor: Colors.grey.shade400,
+              label: Text("Processing...",
+                  style: GoogleFonts.poppins(color: Colors.white)),
+              icon: const SizedBox(
+                  width: 20,
+                  height: 20,
+                  child: CircularProgressIndicator(
+                      strokeWidth: 2, color: Colors.white)),
+            )
+          : FloatingActionButton.extended(
+              heroTag: 'like_back_fab', // Add unique tag
+              onPressed: _handleLikeBack, // Use the handler
+              backgroundColor: const Color(0xFF8B5CF6),
+              icon: const Icon(Icons.favorite_rounded, color: Colors.white),
+              label: Text("Like Back",
+                  style: GoogleFonts.poppins(
+                      fontWeight: FontWeight.bold, color: Colors.white)),
+            ),
+      // --- END FAB ---
       body: _buildBody(context, state, profile, likeDetails, ref),
     );
   }
@@ -8848,6 +9195,7 @@ class LikerProfileScreen extends ConsumerWidget {
           child: CircularProgressIndicator(color: Color(0xFF8B5CF6)));
     }
 
+    // Display API error if present (from the likerProfileProvider state)
     if (state.error != null) {
       return _buildErrorState(context, state.error!, ref); // Pass context
     }
@@ -8873,33 +9221,43 @@ class LikerProfileScreen extends ConsumerWidget {
             onPressed: () => Navigator.of(context).pop(),
           ),
           title: Text(
-            // --- FIX: Use profile.name ---
             profile.name ?? 'Profile',
-            // --- END FIX ---
             style:
                 GoogleFonts.poppins(fontWeight: FontWeight.w600, fontSize: 18),
           ),
           actions: [
+            // --- ADDED: Dislike Button ---
+            if (!_isInteracting) // Hide if interacting
+              IconButton(
+                icon: Icon(Icons.block_flipped,
+                    color: Colors.redAccent[100], size: 24),
+                tooltip: "Dislike",
+                onPressed: _handleDislike, // Use the handler
+              ),
+            // --- END Dislike Button ---
             Padding(
               padding: const EdgeInsets.only(right: 8.0),
               child: IconButton(
                 icon: const Icon(Icons.message_outlined,
                     color: Color(0xFF8B5CF6)),
                 tooltip: "Send Message",
-                onPressed: () {
-                  // --- FIX: Use profile.id ---
-                  print("Navigate to chat with user ${profile.id}");
-                  // --- END FIX ---
-                  ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-                      content:
-                          Text('Chat functionality not yet implemented.')));
-                },
+                onPressed: _isInteracting
+                    ? null
+                    : () {
+                        // Disable if interacting
+                        // TODO: Implement chat navigation if needed after match
+                        print("Navigate to chat with user ${profile.id}");
+                        ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(
+                                content: Text(
+                                    'Chat functionality TBD after matching.')));
+                      },
               ),
             )
           ],
         ),
 
-        // --- Like Details Banner ---
+        // --- Like Details Banner (unchanged) ---
         SliverToBoxAdapter(
           child: Container(
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
@@ -8951,7 +9309,7 @@ class LikerProfileScreen extends ConsumerWidget {
           ),
         ),
 
-        // --- Profile Content ---
+        // --- Profile Content (unchanged) ---
         SliverPadding(
           padding: const EdgeInsets.symmetric(horizontal: 16),
           sliver: SliverList(
@@ -8972,7 +9330,7 @@ class LikerProfileScreen extends ConsumerWidget {
                     context, profile.audioPrompt!), // Pass context
               const SizedBox(height: 32),
               _buildPersonalDetailsSection(profile),
-              const SizedBox(height: 40), // Bottom padding
+              SizedBox(height: 80), // << INCREASED Bottom padding for FAB space
             ]),
           ),
         ),
@@ -8980,9 +9338,8 @@ class LikerProfileScreen extends ConsumerWidget {
     );
   }
 
-  // --- Error State Widget ---
+  // --- Error State Widget (unchanged) ---
   Widget _buildErrorState(BuildContext context, AppError error, WidgetRef ref) {
-    // Added context
     return Center(
       child: Padding(
         padding: const EdgeInsets.all(30.0),
@@ -9017,8 +9374,9 @@ class LikerProfileScreen extends ConsumerWidget {
                 padding:
                     const EdgeInsets.symmetric(horizontal: 30, vertical: 12),
               ),
+              // Use widget.likerUserId in retry
               onPressed: () => ref
-                  .read(likerProfileProvider(likerUserId).notifier)
+                  .read(likerProfileProvider(widget.likerUserId).notifier)
                   .fetchProfile(),
             ),
             const SizedBox(height: 10),
@@ -9033,21 +9391,16 @@ class LikerProfileScreen extends ConsumerWidget {
     );
   }
 
-  // --- Replicated/Adapted Widgets ---
-
+  // --- Replicated/Adapted Widgets (unchanged) ---
   Widget _buildProfileHeader(UserProfileData user) {
-    // --- FIX: Use user.age getter ---
     final age = user.age;
-    // --- END FIX ---
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
-          // --- FIX: Use user.name and check lastName ---
           '${user.name ?? ''}${user.lastName != null && user.lastName!.isNotEmpty ? ' ${user.lastName}' : ''}${age != null ? ' • $age' : ''}',
-          // --- END FIX ---
           style: GoogleFonts.poppins(
-            fontSize: 36, // Slightly smaller if too large
+            fontSize: 36,
             fontWeight: FontWeight.w700,
             color: const Color(0xFF1A1A1A),
             height: 1.2,
@@ -9073,10 +9426,10 @@ class LikerProfileScreen extends ConsumerWidget {
   }
 
   Widget _buildMediaGallery(BuildContext context, List<String> images) {
-    // Added context
     if (images.isEmpty) return const SizedBox.shrink();
 
-    return Container(
+    return SizedBox(
+      // Use SizedBox instead of Container for height constraint
       height: MediaQuery.of(context).size.height * 0.4, // Responsive height
       child: ListView.builder(
         scrollDirection: Axis.horizontal,
@@ -9090,7 +9443,6 @@ class LikerProfileScreen extends ConsumerWidget {
               color: Colors.grey[200],
             ),
             child: ClipRRect(
-              // Clip the image
               borderRadius: BorderRadius.circular(12),
               child: Image.network(
                 images[index],
@@ -9103,7 +9455,7 @@ class LikerProfileScreen extends ConsumerWidget {
                               ? progress.cumulativeBytesLoaded /
                                   progress.expectedTotalBytes!
                               : null,
-                          color: Color(0xFF8B5CF6)));
+                          color: const Color(0xFF8B5CF6)));
                 },
                 errorBuilder: (context, error, stackTrace) {
                   print("Error loading image: ${images[index]} - $error");
@@ -9119,7 +9471,6 @@ class LikerProfileScreen extends ConsumerWidget {
   }
 
   Widget _buildInfoSection(String title, String content) {
-    // Check if content is not empty before building
     if (content.isEmpty) return const SizedBox.shrink();
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 12.0),
@@ -9168,7 +9519,6 @@ class LikerProfileScreen extends ConsumerWidget {
   }
 
   Widget _buildPromptCard(Prompt prompt) {
-    // Check if answer is not empty before building
     if (prompt.answer.isEmpty) return const SizedBox.shrink();
     return Container(
       width: double.infinity,
@@ -9205,8 +9555,7 @@ class LikerProfileScreen extends ConsumerWidget {
   }
 
   Widget _buildAudioPrompt(BuildContext context, AudioPromptModel audio) {
-    // Added context
-    // Simple display, no playback logic here for now
+    // Simple display, no playback logic needed here
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -9236,7 +9585,7 @@ class LikerProfileScreen extends ConsumerWidget {
                   borderRadius: BorderRadius.circular(24),
                 ),
                 child: const Icon(
-                  Icons.graphic_eq, // Use a different icon for display only
+                  Icons.graphic_eq,
                   color: Colors.white,
                   size: 28,
                 ),
@@ -9252,6 +9601,7 @@ class LikerProfileScreen extends ConsumerWidget {
                   ),
                 ),
               ),
+              // Maybe add a play button later if needed
             ],
           ),
         ),
@@ -9261,7 +9611,6 @@ class LikerProfileScreen extends ConsumerWidget {
 
   Widget _buildPersonalDetailsSection(UserProfileData user) {
     final details = <Widget>[];
-    // Add checks for empty strings as well
     if (user.height != null && user.height!.isNotEmpty)
       details.add(_buildDetailChip(Icons.height, "Height: ${user.height}"));
     if (user.religiousBeliefs != null)
@@ -9302,7 +9651,6 @@ class LikerProfileScreen extends ConsumerWidget {
   }
 
   Widget _buildDetailChip(IconData icon, String label, {bool subtle = false}) {
-    // Check if label is empty
     if (label.isEmpty) return const SizedBox.shrink();
     return Container(
       padding: EdgeInsets.symmetric(
@@ -9323,7 +9671,6 @@ class LikerProfileScreen extends ConsumerWidget {
           ),
           const SizedBox(width: 6),
           Flexible(
-            // Allow text to wrap if needed
             child: Text(
               label,
               style: GoogleFonts.poppins(
@@ -9331,7 +9678,7 @@ class LikerProfileScreen extends ConsumerWidget {
                 fontWeight: FontWeight.w500,
                 color: subtle ? Colors.grey.shade700 : Colors.grey[800],
               ),
-              overflow: TextOverflow.ellipsis, // Prevent long text overflow
+              overflow: TextOverflow.ellipsis,
               maxLines: 2,
             ),
           ),
@@ -9339,7 +9686,7 @@ class LikerProfileScreen extends ConsumerWidget {
       ),
     );
   }
-}
+} // End of State class
 
 
 
@@ -9836,11 +10183,6 @@ import 'package:mime/mime.dart'; // Use mime package
 import '../models/error_model.dart';
 import '../models/media_upload_model.dart'; // Import MediaUploadModel
 
-// Wrapper class using MediaUploadModel now for consistency
-// Using MediaUploadModel directly in the list might be simpler if no extra UI state needed here.
-// Let's try using MediaUploadModel directly.
-// class EditableMediaItem { ... } // Removed wrapper
-
 class MediaPickerScreen extends ConsumerStatefulWidget {
   final bool isEditing;
 
@@ -9854,21 +10196,20 @@ class MediaPickerScreen extends ConsumerStatefulWidget {
 }
 
 class _MediaPickerState extends ConsumerState<MediaPickerScreen> {
-  // State now directly uses MediaUploadModel?
-  // Initialize this in initState based on mode
-  List<MediaUploadModel?> _mediaSlots = List.filled(6, null);
+  // Holds String URLs for existing media, MediaUploadModel for new/local files, or null for empty slots.
+  List<dynamic> _displayItems = List.filled(6, null);
   bool _isInitialized = false; // Track initialization
 
   // Keep allowed types
   final Set<String> _allowedImageMime = {
-    /* ... as before ... */ 'image/jpeg',
+    'image/jpeg',
     'image/png',
     'image/gif',
     'image/webp',
     'image/jpg'
   };
   final Set<String> _allowedVideoMime = {
-    /* ... as before ... */ 'video/mp4',
+    'video/mp4',
     'video/quicktime',
     'video/x-msvideo',
     'video/mpeg',
@@ -9876,7 +10217,7 @@ class _MediaPickerState extends ConsumerState<MediaPickerScreen> {
     'video/mp2t'
   };
   final Set<String> _allowedImageExtensions = {
-    /* ... as before ... */ 'jpg',
+    'jpg',
     'jpeg',
     'png',
     'gif',
@@ -9885,7 +10226,7 @@ class _MediaPickerState extends ConsumerState<MediaPickerScreen> {
     'tiff'
   };
   final Set<String> _allowedVideoExtensions = {
-    /* ... as before ... */ 'mp4',
+    'mp4',
     'mov',
     'avi',
     'mpeg',
@@ -9898,73 +10239,113 @@ class _MediaPickerState extends ConsumerState<MediaPickerScreen> {
   @override
   void initState() {
     super.initState();
-    // Delay initialization until the first build context is available
     WidgetsBinding.instance.addPostFrameCallback((_) => _initializeMedia());
   }
 
+  // *** --- START FIX: Modified Initialization Logic --- ***
   void _initializeMedia() {
-    if (_isInitialized) return; // Prevent re-initialization
-    print("[MediaPickerScreen] Initializing Media...");
+    if (_isInitialized && !widget.isEditing)
+      return; // Prevent re-init on onboarding if already done
+    // Allow re-initialization if entering edit mode again
+    print(
+        "[MediaPickerScreen] Initializing Media (isEditing: ${widget.isEditing})...");
 
     final mediaUploadNotifier = ref.read(mediaUploadProvider.notifier);
     final currentUser = ref.read(userProvider);
 
-    List<MediaUploadModel?> initialSlots = List.filled(6, null);
+    // Clear the mediaUploadProvider state ONLY when entering the screen.
+    // It tracks *unsaved* local file selections made during THIS session.
+    mediaUploadNotifier.state = List.filled(6, null);
+    print("[MediaPickerScreen] Cleared mediaUploadProvider state.");
 
-    if (widget.isEditing) {
-      print("[MediaPickerScreen] Mode: Editing. Populating from userProvider.");
-      final currentUrls = currentUser.mediaUrls ?? [];
-      for (int i = 0; i < currentUrls.length && i < 6; i++) {
-        final url = currentUrls[i];
-        if (url.isNotEmpty && url.startsWith('http')) {
-          // Represent existing URL - use a placeholder model or null?
-          // Let's use null for simplicity in the provider state,
-          // ProfileScreen will use _originalProfileData to fetch the URL.
-          initialSlots[i] = null; // Represents existing URL slot
-          print("  - Slot $i: Existing URL (set as null in provider)");
-        } else if (url.isNotEmpty) {
+    List<dynamic> tempDisplayItems =
+        List.filled(6, null); // Use local temp list
+
+    // Populate based on current user state (URLs or local paths from previous edits)
+    final currentIdentifiers = currentUser.mediaUrls ?? [];
+    print(
+        "[MediaPickerScreen] Populating from userProvider identifiers: $currentIdentifiers");
+
+    for (int i = 0; i < currentIdentifiers.length && i < 6; i++) {
+      final identifier = currentIdentifiers[i];
+      if (identifier.isNotEmpty) {
+        // 1. Check if it's an HTTP URL
+        if (identifier.startsWith('http')) {
+          tempDisplayItems[i] = identifier; // Store the URL string
+          print("  - Slot $i: Existing URL: $identifier");
+        }
+        // 2. Check if it's a potentially valid local file path
+        else if (identifier.contains('/') || identifier.contains('\\')) {
+          try {
+            final file = File(identifier);
+            // IMPORTANT: We cannot call file.exists() synchronously here.
+            // Assume if it's a path stored previously, it *was* valid.
+            // We'll create a MediaUploadModel optimistically. If the file is
+            // deleted later, the UI build (_buildMediaPlaceholder) will handle the error.
+
+            final fileName = p.basename(file.path);
+            final mimeType = lookupMimeType(file.path) ??
+                'application/octet-stream'; // Default MIME
+
+            tempDisplayItems[i] = MediaUploadModel(
+                file: file,
+                fileName: fileName,
+                fileType: mimeType,
+                status: UploadStatus.idle // Local files are initially idle
+                );
+            print(
+                "  - Slot $i: Local File Path (from previous edit): $identifier");
+          } catch (e) {
+            print(
+                "  - Slot $i: Error processing potential path '$identifier': $e. Treating as empty.");
+            tempDisplayItems[i] = null;
+          }
+        }
+        // 3. Otherwise, treat as invalid/empty
+        else {
           print(
-              "  - Slot $i: Found non-URL in user.mediaUrls: $url (Ignoring for edit init)");
+              "  - Slot $i: Invalid identifier '$identifier'. Treating as empty.");
+          tempDisplayItems[i] = null;
         }
       }
-    } else {
-      print("[MediaPickerScreen] Mode: Onboarding. Starting fresh.");
     }
-
-    // Set the initial state in the provider
-    mediaUploadNotifier.state = initialSlots; // Directly set the state list
 
     // Update local state for UI building
     setState(() {
-      _mediaSlots = List.from(initialSlots); // Copy for local UI state
+      _displayItems = tempDisplayItems; // Use the populated temp list
       _isInitialized = true;
       _updateForwardButtonState(); // Update button based on initial state
     });
     print(
-        "[MediaPickerScreen] Initialization complete. Slots: ${_mediaSlots.map((m) => m?.fileName ?? m?.presignedUrl ?? 'null').toList()}");
+        "[MediaPickerScreen] Initialization complete. Display Items: ${_displayItems.map((item) {
+      if (item is MediaUploadModel) return "File: ${item.fileName}";
+      if (item is String)
+        return "URL: ${item.substring(item.length - 10)}"; // Show end of URL
+      return 'null';
+    }).toList()}");
   }
+  // *** --- END FIX --- ***
 
   @override
   void dispose() {
     super.dispose();
   }
 
+  // *** --- START FIX: Modified _pickMedia --- ***
   Future<void> _pickMedia(int index) async {
-    // (Keep validation logic, but update provider state)
     ref.read(errorProvider.notifier).clearError();
     final ImagePicker picker = ImagePicker();
     final XFile? media = await picker.pickMedia();
 
     if (media != null) {
       final mimeType = media.mimeType?.toLowerCase();
-      // Use p.basename for path manipulation
       final fileName = p.basename(media.path);
       final extension =
           p.extension(media.path).toLowerCase().replaceAll('.', '');
       final filePath = media.path.replaceFirst('file://', '');
       final file = File(filePath);
 
-      // Validation... (keep existing validation logic)
+      // Validation...
       final isValidImage = _allowedImageMime.contains(mimeType) ||
           _allowedImageExtensions.contains(extension);
       final isValidVideo = _allowedVideoMime.contains(mimeType) ||
@@ -9976,29 +10357,55 @@ class _MediaPickerState extends ConsumerState<MediaPickerScreen> {
       if (isImage && fileSize > 10 * 1024 * 1024) {
         ref.read(errorProvider.notifier).setError(
             AppError.validation("Image is too large. Maximum size is 10 MB."));
-        _clearSlot(index);
+        // Don't clear slot here, let validation prevent update below
         return;
       }
       if (isVideo && fileSize > 50 * 1024 * 1024) {
         ref.read(errorProvider.notifier).setError(
             AppError.validation("Video is too large. Maximum size is 50 MB."));
-        _clearSlot(index);
         return;
       }
-      // First image must be an image
-      if (index == 0 && !isValidImage) {
+      // --- End Basic Validation ---
+
+      // --- First Item Image Validation (using temp state) ---
+      final tempDisplayItems = List.from(_displayItems);
+      final potentialNewModel = MediaUploadModel(
+          file: file,
+          fileName: fileName,
+          fileType: mimeType ?? (isVideo ? 'video/mp4' : 'image/jpeg'));
+      tempDisplayItems[index] =
+          potentialNewModel; // Simulate adding the new file
+
+      final firstItem = tempDisplayItems[0];
+      bool firstIsImage = false;
+      if (firstItem is MediaUploadModel) {
+        firstIsImage = firstItem.fileType.startsWith('image/');
+      } else if (firstItem is String) {
+        final lowerUrl = firstItem.toLowerCase();
+        firstIsImage = [
+          '.jpg',
+          '.jpeg',
+          '.png',
+          '.gif',
+          '.webp',
+          '.bmp',
+          '.tiff'
+        ].any((ext) => lowerUrl.endsWith(ext));
+      }
+
+      if (index == 0 && !firstIsImage) {
         await _showErrorDialog(context, isMainImage: true);
-        _clearSlot(index);
-        return;
+        return; // Prevent update if first item isn't image
       }
+      // --- End First Item Validation ---
+
       if (!isValidImage && !isValidVideo) {
         await _showErrorDialog(context);
-        _clearSlot(index);
         return;
       }
-      // --- End Validation ---
+      // --- End Format Validation ---
 
-      // Update provider directly
+      // If all validations pass, create the final model
       final newModel = MediaUploadModel(
           file: file,
           fileName: fileName,
@@ -10006,14 +10413,19 @@ class _MediaPickerState extends ConsumerState<MediaPickerScreen> {
               (isVideo ? 'video/mp4' : 'image/jpeg'), // Provide fallback MIME
           status: UploadStatus.idle // Initial status
           );
-      ref
-          .read(mediaUploadProvider.notifier)
-          .setMediaFile(index, file); // Use existing provider method
 
-      // Update local state for UI
+      // Update provider state (only holds NEW files selected in *this* session)
+      // Need to copy current provider state and update the specific index
+      final currentProviderState =
+          List<MediaUploadModel?>.from(ref.read(mediaUploadProvider));
+      currentProviderState[index] = newModel;
+      ref.read(mediaUploadProvider.notifier).state = currentProviderState;
+      print(
+          "[MediaPickerScreen] Updated mediaUploadProvider at index $index with ${newModel.fileName}");
+
+      // Update local display state for UI
       setState(() {
-        _mediaSlots = List.from(
-            ref.read(mediaUploadProvider)); // Sync local with provider
+        _displayItems[index] = newModel; // Update the display list directly
         _updateForwardButtonState();
       });
       // Signal change if editing
@@ -10022,32 +10434,81 @@ class _MediaPickerState extends ConsumerState<MediaPickerScreen> {
       }
     }
   }
+  // *** --- END FIX --- ***
 
+  // *** --- START FIX: Modified _clearSlot --- ***
   void _clearSlot(int index) {
-    // (Keep validation logic for min 3 items)
-    final currentCount = _countSelectedMedia();
-    // Prevent clearing main photo if <= 3 items
-    if (index == 0 && currentCount <= 3 && _mediaSlots[index] != null) {
-      ref.read(errorProvider.notifier).setError(AppError.validation(
-          "Cannot remove the main photo when less than 3 items are present."));
-      return;
-    }
-    // Prevent clearing any item if it would result in less than 3 items remaining
-    if (_mediaSlots[index] != null && currentCount <= 3) {
+    // Count selected based on the local display list
+    final currentCount = _displayItems.where((item) => item != null).length;
+
+    // --- Minimum Items Validation ---
+    // Check if clearing this slot would result in less than 3 items
+    bool wouldBeLessThanMin =
+        (_displayItems[index] != null && currentCount <= 3);
+    if (wouldBeLessThanMin) {
       ref
           .read(errorProvider.notifier)
           .setError(AppError.validation("Minimum of 3 media items required."));
       return;
     }
-    // --- End Validation ---
+    // --- End Minimum Items Validation ---
 
-    // Update provider directly
-    ref.read(mediaUploadProvider.notifier).removeMedia(index);
+    // --- First Item Image Validation ---
+    // Simulate state after clearing to check if first item is still valid
+    final tempDisplayItems = List.from(_displayItems);
+    tempDisplayItems[index] = null; // Simulate removal
+
+    final firstItemAfterClear = tempDisplayItems[0];
+    bool firstIsImageAfterClear = false;
+    if (firstItemAfterClear is MediaUploadModel) {
+      firstIsImageAfterClear =
+          firstItemAfterClear.fileType.startsWith('image/');
+    } else if (firstItemAfterClear is String) {
+      final lowerUrl = firstItemAfterClear.toLowerCase();
+      firstIsImageAfterClear = [
+        '.jpg',
+        '.jpeg',
+        '.png',
+        '.gif',
+        '.webp',
+        '.bmp',
+        '.tiff'
+      ].any((ext) => lowerUrl.endsWith(ext));
+    }
+
+    // If clearing the first item AND there are other items left,
+    // but the new first item isn't an image, prevent clearing.
+    if (index == 0 && currentCount > 1 && !firstIsImageAfterClear) {
+      ref.read(errorProvider.notifier).setError(AppError.validation(
+          "Cannot remove the main photo if the next item is not a photo. Reorder first."));
+      return;
+    }
+    // --- End First Item Validation ---
+
+    // --- If validations pass, proceed with clearing ---
+    ref.read(errorProvider.notifier).clearError(); // Clear any previous error
+
+    // Check if the item being cleared was a NEWLY added local file in this session
+    final itemToClear = _displayItems[index];
+    if (itemToClear is MediaUploadModel) {
+      // If it was a local file selected in THIS session, remove it from the mediaUploadProvider
+      final currentProviderState =
+          List<MediaUploadModel?>.from(ref.read(mediaUploadProvider));
+      if (index < currentProviderState.length) {
+        // Safety check
+        currentProviderState[index] = null; // Clear slot in provider state
+        ref.read(mediaUploadProvider.notifier).state = currentProviderState;
+        print(
+            "[MediaPickerScreen] Cleared slot $index in mediaUploadProvider.");
+      }
+    } else {
+      print(
+          "[MediaPickerScreen] Cleared slot $index which contained an existing URL or was empty.");
+    }
 
     // Update local state for UI
     setState(() {
-      _mediaSlots =
-          List.from(ref.read(mediaUploadProvider)); // Sync local with provider
+      _displayItems[index] = null; // Clear the local display slot
       _updateForwardButtonState();
     });
     // Signal change if editing
@@ -10055,6 +10516,7 @@ class _MediaPickerState extends ConsumerState<MediaPickerScreen> {
       ref.read(userProvider.notifier).setMediaChangedFlag(true);
     }
   }
+  // *** --- END FIX --- ***
 
   Future<void> _showErrorDialog(BuildContext context,
       {bool isMainImage = false}) async {
@@ -10076,80 +10538,77 @@ class _MediaPickerState extends ConsumerState<MediaPickerScreen> {
     );
   }
 
+  // *** --- START FIX: Modified _reorderMedia --- ***
   void _reorderMedia(int oldGridIndex, int newGridIndex) {
-    // (Keep validation logic)
-    // Allow reordering even if it involves index 0 temporarily
-    // Validation happens on save/done
-    // if (oldGridIndex == 0 || newGridIndex == 0) return; // Removed this restriction
+    ref.read(errorProvider.notifier).clearError(); // Clear previous errors
 
-    final currentSlots = ref.read(mediaUploadProvider);
-    final item = currentSlots[oldGridIndex];
+    // Create a mutable copy of the local display list
+    List<dynamic> reorderedDisplayItems = List.from(_displayItems);
+    final item = reorderedDisplayItems.removeAt(oldGridIndex);
+    reorderedDisplayItems.insert(newGridIndex, item);
 
-    // Create a mutable copy
-    List<MediaUploadModel?> mutableSlots = List.from(currentSlots);
+    // --- VALIDATION: Ensure first slot is an image AFTER reorder ---
+    final firstItem = reorderedDisplayItems[0];
+    bool firstIsImage = false;
+    if (firstItem is MediaUploadModel) {
+      firstIsImage = firstItem.fileType.startsWith('image/');
+    } else if (firstItem is String) {
+      final lowerUrl = firstItem.toLowerCase();
+      firstIsImage = ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp', '.tiff']
+          .any((ext) => lowerUrl.endsWith(ext));
+    }
 
-    // Perform reorder
-    mutableSlots.removeAt(oldGridIndex);
-    mutableSlots.insert(newGridIndex, item);
-
-    // Ensure first slot is an image after reorder
-    if (mutableSlots[0] != null &&
-        !(mutableSlots[0]!.fileType.startsWith('image/'))) {
+    if (firstItem == null || !firstIsImage) {
+      // Also check if first item is null
       ref
           .read(errorProvider.notifier)
           .setError(AppError.validation("The first item must be a photo."));
-      // Optional: Revert the reorder visually immediately? Or just prevent saving later?
-      // For now, just show error. User needs to fix order before saving.
-      setState(() {
-        // Update local state immediately to show error state potentially
-        _mediaSlots =
-            List.from(ref.read(mediaUploadProvider)); // Keep old order for now
-        _updateForwardButtonState(); // Re-evaluate button state
-      });
-      return; // Prevent updating provider with invalid state
+      // Do NOT update state if invalid
+      return;
     }
-
-    // Update provider state
-    ref.read(mediaUploadProvider.notifier).state = mutableSlots;
+    // --- End Validation ---
 
     // Update local state for UI
     setState(() {
-      _mediaSlots = List.from(mutableSlots); // Sync local with provider
+      _displayItems = reorderedDisplayItems;
       _updateForwardButtonState();
     });
+
+    // --- Update mediaUploadProvider state ---
+    // Reconstruct the provider state to match the new order,
+    // containing only the MediaUploadModels (representing NEW files).
+    List<MediaUploadModel?> newProviderState = List.filled(6, null);
+    for (int i = 0; i < reorderedDisplayItems.length; i++) {
+      if (reorderedDisplayItems[i] is MediaUploadModel) {
+        newProviderState[i] = reorderedDisplayItems[i] as MediaUploadModel;
+      }
+    }
+    ref.read(mediaUploadProvider.notifier).state = newProviderState;
+    print("[MediaPickerScreen] Reordered. Updated mediaUploadProvider state.");
+    // --- End Provider State Update ---
+
     // Signal change if editing
     if (widget.isEditing) {
       ref.read(userProvider.notifier).setMediaChangedFlag(true);
     }
   }
+  // *** --- END FIX --- ***
 
-  // Count selected based on provider state
+  // Count selected based on local display list
   int _countSelectedMedia() {
-    // Counts non-null items in the provider state
-    return ref.read(mediaUploadProvider).where((item) => item != null).length;
+    return _displayItems.where((item) => item != null).length;
   }
 
-  // Update button state based on provider state
+  // Update button state based on local display list
   void _updateForwardButtonState() {
-    int selectedCount = _countSelectedMedia();
-    bool firstIsImage = true;
-    final slots = ref.read(mediaUploadProvider);
-    if (slots.isNotEmpty &&
-        slots[0] != null &&
-        !slots[0]!.fileType.startsWith('image/')) {
-      firstIsImage = false;
-    }
-    // No local state needed for the button enabled status anymore
-    // setState(() {
-    //   _isForwardButtonEnabled = selectedCount >= 3 && firstIsImage;
-    // });
+    // No need to call setState here as this is called within setState blocks elsewhere
+    // Logic to determine button state is moved to the build method.
   }
 
-  // --- *** SIMPLIFIED Done Handler *** ---
+  // *** --- START FIX: Modified _handleDone --- ***
   void _handleDone() {
-    final slots = ref.read(mediaUploadProvider);
-    final currentCount = slots.where((item) => item != null).length;
-    final errorNotifier = ref.read(errorProvider.notifier);
+    final currentCount = _countSelectedMedia(); // Use local count
+    final errorNotifier = ref.read(errorProvider.notifier)..clearError();
 
     // Validate minimum items
     if (currentCount < 3) {
@@ -10158,48 +10617,52 @@ class _MediaPickerState extends ConsumerState<MediaPickerScreen> {
       return;
     }
 
-    // Validate first item is image
-    if (slots.isNotEmpty &&
-        slots[0] != null &&
-        !slots[0]!.fileType.startsWith('image/')) {
+    // Validate first item is image (check local display list)
+    final firstItem = _displayItems[0];
+    bool firstIsImage = false;
+    if (firstItem is MediaUploadModel) {
+      firstIsImage = firstItem.fileType.startsWith('image/');
+    } else if (firstItem is String) {
+      final lowerUrl = firstItem.toLowerCase();
+      firstIsImage = ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp', '.tiff']
+          .any((ext) => lowerUrl.endsWith(ext));
+    }
+
+    if (firstItem == null || !firstIsImage) {
+      // Check for null as well
       errorNotifier
           .setError(AppError.validation("The first item must be a photo."));
       return;
     }
 
-    // If editing, update user provider state with local file paths for ProfileScreen to handle
+    // If editing, update user provider state with local file paths/URLs
     if (widget.isEditing) {
       List<String> identifiers = [];
-      final originalUrls =
-          ref.read(userProvider).mediaUrls ?? []; // Get original URLs
-
-      // Iterate through the provider's state (_mediaSlots reflects this)
-      for (int i = 0; i < slots.length; ++i) {
-        final model = slots[i];
-        if (model != null) {
-          // It's a local file selected/replaced during this edit
-          identifiers.add(model.file.path);
-        } else {
-          // It's potentially an existing URL slot (or empty)
-          // We need the original URL if it existed at this index
-          if (i < originalUrls.length && originalUrls[i].startsWith('http')) {
-            identifiers.add(originalUrls[i]);
-          }
-          // If it wasn't an original URL, it remains an empty slot implicitly
+      for (final item in _displayItems) {
+        // Iterate through local display list
+        if (item is MediaUploadModel) {
+          identifiers.add(item.file.path); // Add local path
+        } else if (item is String) {
+          identifiers.add(item); // Add existing URL
         }
+        // Null items are skipped, resulting in potentially fewer than 6 items in the final list
       }
 
-      // Update user provider with the mixed list (paths and original URLs)
+      // Update user provider with the final list of identifiers
       ref.read(userProvider.notifier).updateMediaUrls(identifiers);
-      // The mediaChanged flag was already set when picking/clearing/reordering
+      // If any local file was picked/reordered/cleared, this flag should be true
+      ref
+          .read(userProvider.notifier)
+          .setMediaChangedFlag(true); // Ensure flag is set if changes were made
       print(
-          "[MediaPickerScreen Edit] Updated userProvider state. Popping back.");
+          "[MediaPickerScreen Edit] Updated userProvider state with identifiers: $identifiers. Popping back.");
       Navigator.of(context).pop();
     } else {
       // --- ONBOARDING Flow ---
-      // Provider state is already updated. Just navigate.
+      // Provider state (mediaUploadProvider) already holds the MediaUploadModels.
+      // No further action needed here before navigation.
       print(
-          "[MediaPickerScreen Onboarding] Files set in provider. Navigating to Prompts.");
+          "[MediaPickerScreen Onboarding] Files ready in provider. Navigating to Prompts.");
       Navigator.pushReplacement(
           context,
           MaterialPageRoute(
@@ -10207,24 +10670,29 @@ class _MediaPickerState extends ConsumerState<MediaPickerScreen> {
       // --- End ONBOARDING Flow ---
     }
   }
-  // --- *** END SIMPLIFIED Done Handler *** ---
+  // *** --- END FIX --- ***
 
   @override
   Widget build(BuildContext context) {
-    // Read state directly from provider for build
-    _mediaSlots =
-        ref.watch(mediaUploadProvider); // Keep UI in sync with provider
+    // Watch provider only for errors, maybe? Grid uses local state.
+    // final providerState = ref.watch(mediaUploadProvider); // Less relevant now
     final errorState = ref.watch(errorProvider);
     final screenSize = MediaQuery.of(context).size;
 
-    // Calculate enabled state within build
-    final int selectedCount = _mediaSlots.where((item) => item != null).length;
+    // Calculate enabled state within build using local list
+    final int selectedCount = _countSelectedMedia();
     bool firstIsImage = true;
-    if (_mediaSlots.isNotEmpty &&
-        _mediaSlots[0] != null &&
-        !_mediaSlots[0]!.fileType.startsWith('image/')) {
-      firstIsImage = false;
+    final firstItem = _displayItems[0]; // Check local list
+    if (firstItem is MediaUploadModel) {
+      firstIsImage = firstItem.fileType.startsWith('image/');
+    } else if (firstItem is String) {
+      final lowerUrl = firstItem.toLowerCase();
+      firstIsImage = ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp', '.tiff']
+          .any((ext) => lowerUrl.endsWith(ext));
+    } else {
+      firstIsImage = false; // Cannot proceed if first slot is null
     }
+
     final bool isForwardButtonEnabled = selectedCount >= 3 && firstIsImage;
 
     // Show loading if not initialized yet
@@ -10335,7 +10803,8 @@ class _MediaPickerState extends ConsumerState<MediaPickerScreen> {
                     childAspectRatio: 0.95, // Adjust aspect ratio if needed
                     shrinkWrap: true,
                     physics: const BouncingScrollPhysics(),
-                    children: List.generate(_mediaSlots.length,
+                    // *** FIX: Use _displayItems.length ***
+                    children: List.generate(_displayItems.length,
                         (index) => _buildMediaPlaceholder(index)),
                     onReorder: _reorderMedia,
                   ),
@@ -10444,17 +10913,66 @@ class _MediaPickerState extends ConsumerState<MediaPickerScreen> {
     );
   }
 
+  // *** --- START FIX: Modified _buildMediaPlaceholder --- ***
   Widget _buildMediaPlaceholder(int index) {
-    final itemModel =
-        _mediaSlots[index]; // Read from local state synced with provider
-    // Generate a unique key based on file path or index
-    final key = itemModel != null
-        ? ValueKey(itemModel.file.path)
-        : ValueKey('empty_$index');
+    final item = _displayItems[index]; // Read from local display list
+    final key = ValueKey(item is String
+        ? item
+        : (item as MediaUploadModel?)?.file.path ?? 'empty_$index');
 
     bool isVideo = false;
-    if (itemModel != null) {
-      isVideo = itemModel.fileType.startsWith('video/');
+    bool isImage = false;
+    Widget imageWidget = Container(); // Default empty
+
+    if (item is MediaUploadModel) {
+      final file = item.file;
+      final mimeType = item.fileType;
+      isImage = mimeType.startsWith('image/');
+      isVideo = mimeType.startsWith('video/');
+      if (isImage) {
+        imageWidget = Image.file(file, fit: BoxFit.cover,
+            errorBuilder: (_, error, stack) {
+          print("Error loading local file ${file.path}: $error");
+          return const Icon(Icons.broken_image);
+        });
+      } else if (isVideo) {
+        imageWidget = Container(
+            color: Colors.grey[300],
+            child: const Center(
+                child: Icon(Icons.videocam_outlined,
+                    color: Colors.grey, size: 40)));
+      }
+    } else if (item is String && item.startsWith('http')) {
+      final lowerUrl = item.toLowerCase();
+      isImage = ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp', '.tiff']
+          .any((ext) => lowerUrl.endsWith(ext));
+      isVideo = ['.mp4', '.mov', '.avi', '.mpeg', '.mpg', '.3gp', '.ts', '.mkv']
+          .any((ext) => lowerUrl.endsWith(ext));
+      if (isImage) {
+        imageWidget = Image.network(item,
+            fit: BoxFit.cover,
+            loadingBuilder: (ctx, child, prog) => prog == null
+                ? child
+                : Center(
+                    child: CircularProgressIndicator(
+                        value: prog.expectedTotalBytes != null
+                            ? prog.cumulativeBytesLoaded /
+                                prog.expectedTotalBytes!
+                            : null,
+                        color: Colors.grey[400])),
+            errorBuilder: (ctx, err, st) {
+              print("Error loading network image $item: $err");
+              return Center(
+                  child: Icon(Icons.image_not_supported_outlined,
+                      color: Colors.grey[400], size: 40));
+            });
+      } else if (isVideo) {
+        imageWidget = Container(
+            color: Colors.grey[300],
+            child: const Center(
+                child: Icon(Icons.videocam_outlined,
+                    color: Colors.grey, size: 40)));
+      }
     }
 
     return GestureDetector(
@@ -10476,20 +10994,12 @@ class _MediaPickerState extends ConsumerState<MediaPickerScreen> {
           child: Stack(
             fit: StackFit.expand,
             children: [
-              if (itemModel != null)
+              if (item != null) // Show image/video placeholder if item exists
                 ClipRRect(
                     borderRadius: BorderRadius.circular(16),
-                    child: isVideo
-                        ? Container(
-                            color: Colors.grey[300],
-                            child: const Center(
-                                child: Icon(Icons.videocam_outlined,
-                                    color: Colors.grey, size: 40)))
-                        : Image.file(itemModel.file,
-                            fit: BoxFit.cover,
-                            errorBuilder: (_, __, ___) =>
-                                const Icon(Icons.broken_image))),
-              if (itemModel == null)
+                    child: imageWidget),
+
+              if (item == null) // Show Add icon if slot is empty
                 Center(
                   child: Column(
                     mainAxisAlignment: MainAxisAlignment.center,
@@ -10510,13 +11020,13 @@ class _MediaPickerState extends ConsumerState<MediaPickerScreen> {
                     ],
                   ),
                 ),
-              if (isVideo)
+              if (isVideo) // Show video overlay if it's a video
                 const Center(
                   child: Icon(Icons.play_circle_fill_rounded,
                       color: Colors.white70, size: 48),
                 ),
-              // Show remove button always if item exists (editing or onboarding)
-              if (itemModel != null)
+              // Show remove button if item exists (local or remote)
+              if (item != null)
                 Positioned(
                   top: 4,
                   right: 4,
@@ -10539,9 +11049,10 @@ class _MediaPickerState extends ConsumerState<MediaPickerScreen> {
       ),
     );
   }
+  // *** --- END FIX --- ***
 }
 
-enum MediaType { image, video } // Keep enum (though less used directly now)
+enum MediaType { image, video }
 
 
 
@@ -10765,7 +11276,6 @@ class _NameInputScreenState extends ConsumerState<NameInputScreen> {
 ================================================
 File: views/profile_screens.dart
 ================================================
-// File: views/profile_screens.dart
 import 'dart:math';
 import 'dart:io';
 
@@ -11608,10 +12118,15 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                       // Handle Content Items
                       else if (item is Map && item["type"] == "media") {
                         String displayValue = item["value"];
-                        bool isLocalFile =
-                            Uri.tryParse(displayValue)?.isAbsolute == false ||
-                                displayValue.startsWith('/');
-                        // Use _buildMediaItem, passing isLocalFile flag derived more robustly if needed
+                        bool isLocalFile = false;
+                        // More robust check if it's a local file path vs URL
+                        if (!displayValue.startsWith('http') &&
+                            (displayValue.contains('/') ||
+                                displayValue.contains('\\'))) {
+                          // Basic check: Doesn't start with http and contains path separators
+                          // A more reliable check might involve trying File(displayValue).exists() but that's async
+                          isLocalFile = true;
+                        }
                         contentWidget = _buildMediaItem(
                             context, ref, displayValue, item["index"],
                             isLocalFile: isLocalFile);
@@ -11757,11 +12272,21 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
       {required bool isLocalFile}) {
     bool isVideo = false;
     if (!isLocalFile) {
-      isVideo = urlOrPath.toLowerCase().contains('.mp4') ||
-          urlOrPath.toLowerCase().contains('.mov');
+      // Basic URL check for video extensions
+      final lowerUrl = urlOrPath.toLowerCase();
+      isVideo = ['.mp4', '.mov', '.avi', '.mpeg', '.mpg', '.3gp', '.ts', '.mkv']
+          .any((ext) => lowerUrl.endsWith(ext));
     } else {
-      String ext = path.basename(urlOrPath).split('.').last.toLowerCase();
-      isVideo = ['mp4', 'mov', 'avi', 'mkv', 'mpeg', '3gp', 'ts'].contains(ext);
+      // Use MIME type for local files if possible, fallback to extension
+      final mimeType = lookupMimeType(urlOrPath);
+      if (mimeType != null) {
+        isVideo = mimeType.startsWith('video/');
+      } else {
+        // Fallback extension check for local files
+        String ext = path.basename(urlOrPath).split('.').last.toLowerCase();
+        isVideo = ['mp4', 'mov', 'avi', 'mpeg', 'mpg', '3gp', 'ts', 'mkv']
+            .contains(ext);
+      }
     }
 
     return ClipRRect(
@@ -11807,19 +12332,33 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                   ),
                 ),
 
-              // Edit Button (Top Right, conditionally shown ONLY FOR THE FIRST IMAGE)
-              if (_isEditing && index == 0)
+              // *** --- START FIX: Edit Button Condition --- ***
+              // Show edit button if _isEditing, regardless of index
+              if (_isEditing)
+                // *** --- END FIX --- ***
                 Positioned(
                   top: 8,
                   right: 8,
                   child: _buildSmallEditButton(
                       icon: Icons.edit, // Use edit icon
                       tooltip: "Edit Media Gallery",
-                      onPressed: () => Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                              builder: (context) =>
-                                  const MediaPickerScreen(isEditing: true)))),
+                      onPressed: () async {
+                        // Make async
+                        // --- ADDED: Clear media provider before navigating ---
+                        print(
+                            "[ProfileScreen] Clearing mediaUploadProvider before navigating to MediaPickerScreen (Edit).");
+                        ref.read(mediaUploadProvider.notifier).state =
+                            List.filled(6, null);
+                        // --- END ADDED ---
+                        await Navigator.push(
+                            // Await navigation
+                            context,
+                            MaterialPageRoute(
+                                builder: (context) =>
+                                    const MediaPickerScreen(isEditing: true)));
+                        // Optional: Force rebuild or state sync after returning?
+                        // Not strictly necessary if MediaPickerScreen correctly updates userProvider.
+                      }),
                 ),
             ],
           ),
@@ -15743,21 +16282,29 @@ typedef PerformLikeApiCall = Future<bool> Function({
   String? comment,
 });
 
+// --- ADDED: Dislike Callback Type ---
+typedef PerformDislikeApiCall = Future<bool> Function();
+
 typedef InteractionCompleteCallback = void Function();
 
 class HomeProfileCard extends ConsumerWidget {
   final UserModel profile;
   final PerformLikeApiCall performLikeApiCall;
+  // --- ADDED: Dislike Callback Parameter ---
+  final PerformDislikeApiCall performDislikeApiCall;
   final InteractionCompleteCallback onInteractionComplete;
 
   const HomeProfileCard({
     super.key,
     required this.profile,
     required this.performLikeApiCall,
+    required this.performDislikeApiCall, // <<< ADDED
     required this.onInteractionComplete,
   });
 
-  // --- METHOD TO SHOW INTERACTION DIALOG (REFINED) ---
+  // _showInteractionDialog(...) remains the same as previous version
+
+  // --- METHOD TO SHOW INTERACTION DIALOG (REFINED from previous version) ---
   Future<void> _showInteractionDialog(
     BuildContext context,
     WidgetRef ref,
@@ -16115,12 +16662,21 @@ class HomeProfileCard extends ConsumerWidget {
     }
   } // End of _showInteractionDialog
 
-  // --- build method and block builders (remain unchanged from previous version) ---
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final List<dynamic> contentBlocks = [];
     final mediaUrls = profile.mediaUrls ?? [];
     final prompts = profile.prompts;
+
+    // --- ADD Dislike Button Logic ---
+    Future<void> _handleDislike() async {
+      bool success = await performDislikeApiCall();
+      if (success) {
+        onInteractionComplete(); // Remove card if dislike succeeds
+      }
+      // Error handling (snackbar?) is likely managed in HomeScreen's _callDislikeRepository
+    }
+    // --- END Dislike Button Logic ---
 
     contentBlocks.add("header_section");
     if (mediaUrls.isNotEmpty) contentBlocks.add(mediaUrls[0]);
@@ -16145,6 +16701,9 @@ class HomeProfileCard extends ConsumerWidget {
       contentBlocks.add(profile.audioPrompt!);
     }
 
+    // --- ADD Action Buttons Row ---
+    contentBlocks.add("action_buttons_section"); // Add placeholder for buttons
+
     return Container(
       color: Colors.white,
       child: ListView.builder(
@@ -16154,7 +16713,9 @@ class HomeProfileCard extends ConsumerWidget {
           itemBuilder: (context, index) {
             final item = contentBlocks[index];
             final double topPadding = (index == 0) ? 16.0 : 0;
-            final double bottomPadding = 20.0;
+            final double bottomPadding = (item == "action_buttons_section")
+                ? 10.0
+                : 20.0; // Less padding for button row
             final double horizontalPadding = 12.0;
             Widget contentWidget;
 
@@ -16171,7 +16732,45 @@ class HomeProfileCard extends ConsumerWidget {
               contentWidget = _buildAudioItem(context, ref, item);
             } else if (item is String && item == "vitals_section") {
               contentWidget = _buildVitalsBlock(profile);
-            } else {
+            }
+            // --- BUILD ACTION BUTTONS ---
+            else if (item is String && item == "action_buttons_section") {
+              contentWidget = Padding(
+                padding:
+                    const EdgeInsets.only(top: 10.0), // Add space above buttons
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                  children: [
+                    // Dislike Button
+                    _buildActionButton(
+                        icon: Icons.close_rounded,
+                        color: Colors.redAccent.shade100,
+                        onPressed: _handleDislike, // Call dislike handler
+                        tooltip: "Dislike"),
+                    // Like Button (Placeholder, real logic handled per item)
+                    // This button here is just for visual balance, we use the small ones on items.
+                    // Or you could make this a general 'like profile' button if needed.
+                    // _buildActionButton(
+                    //   icon: Icons.favorite_rounded,
+                    //   color: Colors.pink.shade300,
+                    //   onPressed: () {
+                    //       _showInteractionDialog(context, ref, ContentLikeType.profile, ContentLikeType.profile.value, profile.firstMediaUrl);
+                    //   },
+                    //   tooltip: "Like Profile"
+                    // ),
+                    // Send Rose Button (Placeholder)
+                    // _buildActionButton(
+                    //   icon: Icons.star_rounded,
+                    //   color: Colors.purple.shade300,
+                    //   onPressed: () { /* Placeholder */ },
+                    //   tooltip: "Send Rose"
+                    // ),
+                  ],
+                ),
+              );
+            }
+            // --- END ACTION BUTTONS ---
+            else {
               contentWidget = const SizedBox.shrink();
             }
 
@@ -16184,6 +16783,7 @@ class HomeProfileCard extends ConsumerWidget {
     );
   }
 
+  // _buildHeaderBlock, _buildVitalsBlock, _buildVitalRow remain unchanged
   Widget _buildHeaderBlock(UserModel profile) {
     final age = profile.age;
     return Column(
@@ -16289,6 +16889,7 @@ class HomeProfileCard extends ConsumerWidget {
     );
   }
 
+  // _buildMediaItem, _buildPromptItem, _buildAudioItem remain unchanged
   Widget _buildMediaItem(
       BuildContext context, WidgetRef ref, String url, int index) {
     bool isVideo = url.toLowerCase().contains('.mp4') ||
@@ -16504,6 +17105,7 @@ class HomeProfileCard extends ConsumerWidget {
     );
   }
 
+  // _buildSmallLikeButton remains unchanged
   Widget _buildSmallLikeButton(VoidCallback onPressed) {
     return Container(
       width: 40,
@@ -16525,6 +17127,44 @@ class HomeProfileCard extends ConsumerWidget {
       ),
     );
   }
+
+  // --- ADDED: Helper for main action buttons ---
+  Widget _buildActionButton({
+    required IconData icon,
+    required Color color,
+    required VoidCallback onPressed,
+    required String tooltip,
+    double size = 60.0, // Default size
+    double iconSize = 30.0,
+  }) {
+    return Tooltip(
+      message: tooltip,
+      child: Material(
+        color: Colors.white,
+        shape: const CircleBorder(),
+        elevation: 3.0,
+        shadowColor: Colors.black.withOpacity(0.2),
+        child: InkWell(
+          customBorder: const CircleBorder(),
+          onTap: onPressed,
+          child: Container(
+            width: size,
+            height: size,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              border: Border.all(color: Colors.grey.shade200, width: 1.0),
+            ),
+            child: Icon(
+              icon,
+              color: color,
+              size: iconSize,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+  // --- END Helper ---
 } // End of HomeProfileCard
 
 

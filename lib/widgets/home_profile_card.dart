@@ -18,21 +18,26 @@ typedef PerformLikeApiCall = Future<bool> Function({
   String? comment,
 });
 
+// --- ADDED: Dislike Callback Type ---
+typedef PerformDislikeApiCall = Future<bool> Function();
+
 typedef InteractionCompleteCallback = void Function();
 
 class HomeProfileCard extends ConsumerWidget {
   final UserModel profile;
   final PerformLikeApiCall performLikeApiCall;
+  final PerformDislikeApiCall performDislikeApiCall; // <<< ADDED
   final InteractionCompleteCallback onInteractionComplete;
 
   const HomeProfileCard({
     super.key,
     required this.profile,
     required this.performLikeApiCall,
+    required this.performDislikeApiCall, // <<< ADDED
     required this.onInteractionComplete,
   });
 
-  // --- METHOD TO SHOW INTERACTION DIALOG (REFINED) ---
+  // _showInteractionDialog(...) remains the same as previous version
   Future<void> _showInteractionDialog(
     BuildContext context,
     WidgetRef ref,
@@ -40,20 +45,16 @@ class HomeProfileCard extends ConsumerWidget {
     String contentIdentifier,
     String? previewImageUrl,
   ) async {
-    // Use try-finally for resource cleanup (controllers, notifiers)
     final currentUserGender = ref.read(userProvider).gender;
     final isMale = currentUserGender == Gender.man;
     final FocusNode commentFocusNode = FocusNode();
     final TextEditingController commentController = TextEditingController();
-    // Notifier to enable/disable buttons based on comment (for male users)
     final ValueNotifier<bool> sendLikeEnabledNotifier =
         ValueNotifier<bool>(!isMale);
-    // Notifier to track if the dialog's interaction process is active (for disabling buttons)
     final ValueNotifier<bool> _isDialogInteractionActive =
         ValueNotifier<bool>(false);
     VoidCallback? listenerCallback;
 
-    // Setup listener for comment field if user is male
     if (isMale) {
       listenerCallback = () {
         if (context.mounted && commentController.value.text != null) {
@@ -61,7 +62,6 @@ class HomeProfileCard extends ConsumerWidget {
             sendLikeEnabledNotifier.value =
                 commentController.text.trim().isNotEmpty;
           } catch (e) {
-            // Handle potential error if notifier disposed unexpectedly
             print(
                 "Error accessing sendLikeEnabledNotifier in listener (might be disposed): $e");
           }
@@ -70,9 +70,7 @@ class HomeProfileCard extends ConsumerWidget {
       commentController.addListener(listenerCallback);
     }
 
-    // Define the interaction handler
     Future<void> _handleInteraction(LikeInteractionType interactionType) async {
-      // Prevent multiple taps if already interacting
       if (_isDialogInteractionActive.value) return;
 
       String comment = "";
@@ -80,14 +78,12 @@ class HomeProfileCard extends ConsumerWidget {
         comment = commentController.text.trim();
       } catch (e) {
         print("Error reading commentController text: $e");
-        return; // Exit if controller disposed
+        return;
       }
 
       commentFocusNode.unfocus();
-      // Small delay to allow keyboard dismissal animation
       await Future.delayed(const Duration(milliseconds: 100));
 
-      // Set dialog interaction state to true (disables buttons)
       try {
         _isDialogInteractionActive.value = true;
       } catch (e) {
@@ -97,7 +93,6 @@ class HomeProfileCard extends ConsumerWidget {
 
       bool success = false;
       try {
-        // Call the function passed from HomeScreen (this triggers screen overlay)
         success = await performLikeApiCall(
           contentType: contentType,
           contentIdentifier: contentIdentifier,
@@ -105,15 +100,11 @@ class HomeProfileCard extends ConsumerWidget {
           comment: comment.isNotEmpty ? comment : null,
         );
 
-        // Pop dialog ONLY on successful API call completion
-        // The HomeScreen overlay handles visual loading feedback.
         if (success && context.mounted) {
-          Navigator.of(context, rootNavigator: true).pop(); // Close dialog
-          onInteractionComplete(); // Notify HomeScreen to remove card
+          Navigator.of(context, rootNavigator: true).pop();
+          onInteractionComplete();
         }
       } finally {
-        // Set dialog interaction state back to false (enables buttons)
-        // Add checks for mounted status and notifier validity
         try {
           if (context.mounted && _isDialogInteractionActive.value) {
             _isDialogInteractionActive.value = false;
@@ -123,13 +114,12 @@ class HomeProfileCard extends ConsumerWidget {
               "Error setting _isDialogInteractionActive to false (notifier disposed?): $e");
         }
       }
-    } // End of _handleInteraction
+    }
 
-    // Show the actual dialog
     try {
       await showDialog<void>(
         context: context,
-        barrierDismissible: true, // User can dismiss by tapping outside
+        barrierDismissible: true,
         builder: (BuildContext dialogContext) {
           return AlertDialog(
             contentPadding: const EdgeInsets.all(16),
@@ -142,7 +132,6 @@ class HomeProfileCard extends ConsumerWidget {
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    // Preview Image or Placeholder (same as before)
                     if (previewImageUrl != null)
                       ClipRRect(
                         borderRadius: BorderRadius.circular(12.0),
@@ -185,8 +174,6 @@ class HomeProfileCard extends ConsumerWidget {
                                 size: 40, color: Colors.grey[500])),
                       ),
                     const SizedBox(height: 16),
-
-                    // Comment Text Field (same as before)
                     TextField(
                       controller: commentController,
                       focusNode: commentFocusNode,
@@ -210,26 +197,20 @@ class HomeProfileCard extends ConsumerWidget {
                       textCapitalization: TextCapitalization.sentences,
                     ),
                     const SizedBox(height: 16),
-
-                    // --- ACTION BUTTONS ROW (MODIFIED - No Spinners) ---
                     Row(
                       mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                       children: [
-                        // Send Rose Button
                         ValueListenableBuilder<bool>(
-                          // Listens to comment validity for enabling
                           valueListenable: sendLikeEnabledNotifier,
                           builder: (context, isCommentValid, child) {
                             final bool roseButtonEnabled =
                                 !isMale || isCommentValid;
-                            // Listen also to interaction state for disabling
                             return ValueListenableBuilder<bool>(
                               valueListenable: _isDialogInteractionActive,
                               builder: (context, isInteractionActive, child) {
                                 final bool effectiveEnabled =
                                     roseButtonEnabled && !isInteractionActive;
                                 return OutlinedButton.icon(
-                                  // REMOVED spinner icon logic
                                   icon: Icon(
                                     Icons.star_rounded,
                                     color: effectiveEnabled
@@ -272,22 +253,17 @@ class HomeProfileCard extends ConsumerWidget {
                             );
                           },
                         ),
-
-                        // Send Like Button
                         ValueListenableBuilder<bool>(
-                          // Listens to comment validity for enabling
                           valueListenable: sendLikeEnabledNotifier,
                           builder: (context, isCommentValid, child) {
                             final bool likeButtonEnabled =
                                 !isMale || isCommentValid;
-                            // Listen also to interaction state for disabling
                             return ValueListenableBuilder<bool>(
                               valueListenable: _isDialogInteractionActive,
                               builder: (context, isInteractionActive, child) {
                                 final bool effectiveEnabled =
                                     likeButtonEnabled && !isInteractionActive;
                                 return ElevatedButton.icon(
-                                  // REMOVED spinner icon logic
                                   icon: Icon(
                                     Icons.favorite_rounded,
                                     color: effectiveEnabled
@@ -329,9 +305,6 @@ class HomeProfileCard extends ConsumerWidget {
                         ),
                       ],
                     ),
-                    // --- END ACTION BUTTONS ROW ---
-
-                    // Cancel Button (Disabled during interaction)
                     ValueListenableBuilder<bool>(
                         valueListenable: _isDialogInteractionActive,
                         builder: (context, isInteractionActive, child) {
@@ -342,7 +315,7 @@ class HomeProfileCard extends ConsumerWidget {
                                         ? Colors.grey.shade400
                                         : Colors.grey)),
                             onPressed: isInteractionActive
-                                ? null // Disable cancel while interaction is happening
+                                ? null
                                 : () => Navigator.of(dialogContext).pop(),
                           );
                         }),
@@ -354,18 +327,15 @@ class HomeProfileCard extends ConsumerWidget {
         },
       );
     } finally {
-      // --- ENSURE CLEANUP ---
-      // Remove listener safely
       if (listenerCallback != null) {
         try {
           commentController.removeListener(listenerCallback);
-          listenerCallback = null; // Avoid potential duplicate removal
+          listenerCallback = null;
         } catch (e) {
           print(
               "Error removing commentController listener (already removed?): $e");
         }
       }
-      // Dispose controllers and notifiers safely
       try {
         sendLikeEnabledNotifier.dispose();
       } catch (e) {
@@ -386,11 +356,9 @@ class HomeProfileCard extends ConsumerWidget {
       } catch (e) {
         print("Error disposing _isDialogInteractionActive: $e");
       }
-      // --- END CLEANUP ---
     }
-  } // End of _showInteractionDialog
+  }
 
-  // --- build method and block builders (remain unchanged from previous version) ---
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final List<dynamic> contentBlocks = [];
@@ -422,43 +390,77 @@ class HomeProfileCard extends ConsumerWidget {
 
     return Container(
       color: Colors.white,
-      child: ListView.builder(
-          physics: const ClampingScrollPhysics(),
-          padding: EdgeInsets.zero,
-          itemCount: contentBlocks.length,
-          itemBuilder: (context, index) {
-            final item = contentBlocks[index];
-            final double topPadding = (index == 0) ? 16.0 : 0;
-            final double bottomPadding = 20.0;
-            final double horizontalPadding = 12.0;
-            Widget contentWidget;
+      child: Stack(
+        // <-- Use Stack here
+        children: [
+          // --- Main Scrollable Content ---
+          ListView.builder(
+            physics: const ClampingScrollPhysics(),
+            padding: const EdgeInsets.only(
+                bottom: 80.0), // <-- Add padding for buttons
+            itemCount: contentBlocks.length,
+            itemBuilder: (context, index) {
+              final item = contentBlocks[index];
+              final double topPadding = (index == 0) ? 16.0 : 0;
+              final double bottomPadding = 20.0;
+              final double horizontalPadding = 12.0;
+              Widget contentWidget;
 
-            if (item is String && item == "header_section") {
-              contentWidget = _buildHeaderBlock(profile);
-            } else if (item is String && item.startsWith('http')) {
-              int originalMediaIndex = (profile.mediaUrls ?? []).indexOf(item);
-              if (originalMediaIndex == -1) originalMediaIndex = 0;
-              contentWidget =
-                  _buildMediaItem(context, ref, item, originalMediaIndex);
-            } else if (item is Prompt) {
-              contentWidget = _buildPromptItem(context, ref, item);
-            } else if (item is AudioPromptModel) {
-              contentWidget = _buildAudioItem(context, ref, item);
-            } else if (item is String && item == "vitals_section") {
-              contentWidget = _buildVitalsBlock(profile);
-            } else {
-              contentWidget = const SizedBox.shrink();
-            }
+              // --- BUILD BLOCKS (Keep existing logic) ---
+              if (item is String && item == "header_section") {
+                contentWidget = _buildHeaderBlock(profile);
+              } else if (item is String && item.startsWith('http')) {
+                int originalMediaIndex =
+                    (profile.mediaUrls ?? []).indexOf(item);
+                if (originalMediaIndex == -1) originalMediaIndex = 0;
+                contentWidget =
+                    _buildMediaItem(context, ref, item, originalMediaIndex);
+              } else if (item is Prompt) {
+                contentWidget = _buildPromptItem(context, ref, item);
+              } else if (item is AudioPromptModel) {
+                contentWidget = _buildAudioItem(context, ref, item);
+              } else if (item is String && item == "vitals_section") {
+                contentWidget = _buildVitalsBlock(profile);
+              } else {
+                contentWidget = const SizedBox.shrink();
+              }
+              // --- END BUILD BLOCKS ---
 
-            return Padding(
-              padding: EdgeInsets.fromLTRB(horizontalPadding, topPadding,
-                  horizontalPadding, bottomPadding),
-              child: contentWidget,
-            );
-          }),
+              return Padding(
+                padding: EdgeInsets.fromLTRB(horizontalPadding, topPadding,
+                    horizontalPadding, bottomPadding),
+                child: contentWidget,
+              );
+            },
+          ),
+          // --- END Main Scrollable Content ---
+
+          // --- MODIFIED: Only Dislike Button in Overlay ---
+          Positioned(
+            bottom: 15, // Adjust vertical position as needed
+            left: 30, // Position it on the left
+            child: _buildActionButton(
+                icon: Icons.close_rounded,
+                color: Colors.redAccent.shade100,
+                onPressed: () async {
+                  // Make async
+                  bool success = await performDislikeApiCall();
+                  if (success) {
+                    onInteractionComplete(); // Remove card if dislike succeeds
+                  }
+                },
+                tooltip: "Dislike",
+                size: 55 // Slightly smaller buttons if desired
+                ),
+          ),
+          // --- END MODIFICATION ---
+        ],
+      ),
+      // --- END Stack ---
     );
   }
 
+  // --- Helper methods (_buildHeaderBlock, _buildVitalsBlock, _buildVitalRow, etc.) remain unchanged ---
   Widget _buildHeaderBlock(UserModel profile) {
     final age = profile.age;
     return Column(
@@ -797,6 +799,42 @@ class HomeProfileCard extends ConsumerWidget {
             size: 22), // Icon size
         tooltip: 'Like this item',
         onPressed: onPressed,
+      ),
+    );
+  }
+
+  Widget _buildActionButton({
+    required IconData icon,
+    required Color color,
+    required VoidCallback onPressed,
+    required String tooltip,
+    double size = 60.0, // Default size
+    double iconSize = 30.0,
+  }) {
+    return Tooltip(
+      message: tooltip,
+      child: Material(
+        color: Colors.white,
+        shape: const CircleBorder(),
+        elevation: 3.0,
+        shadowColor: Colors.black.withOpacity(0.2),
+        child: InkWell(
+          customBorder: const CircleBorder(),
+          onTap: onPressed,
+          child: Container(
+            width: size,
+            height: size,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              border: Border.all(color: Colors.grey.shade200, width: 1.0),
+            ),
+            child: Icon(
+              icon,
+              color: color,
+              size: iconSize,
+            ),
+          ),
+        ),
       ),
     );
   }

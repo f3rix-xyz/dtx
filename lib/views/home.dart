@@ -6,7 +6,7 @@ import 'package:dtx/providers/error_provider.dart';
 import 'package:dtx/providers/feed_provider.dart';
 import 'package:dtx/providers/filter_provider.dart';
 import 'package:dtx/providers/service_provider.dart';
-import 'package:dtx/providers/user_provider.dart'; // Keep user provider for gender check if needed here (though moved to card)
+import 'package:dtx/providers/user_provider.dart';
 import 'package:dtx/services/api_service.dart';
 import 'package:dtx/views/filter_settings_dialog.dart';
 import 'package:dtx/views/name.dart';
@@ -41,6 +41,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
         _fetchFeed();
       } else {
         if (mounted) {
+          // Initialize local state from provider if already fetched
           setState(() {
             _feedProfiles = feedState.profiles;
           });
@@ -65,6 +66,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     print("[HomeScreen _fetchFeed] Fetching home feed. Force: $force");
     ref.read(errorProvider.notifier).clearError();
     await ref.read(feedProvider.notifier).fetchFeed(forceRefresh: force);
+    // State update is handled by the ref.listen below
   }
 
   // Dialog shown if user tries to interact before completing onboarding step 2
@@ -101,18 +103,24 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     );
   }
 
-  // Called by HomeProfileCard after a successful interaction
+  // Called by HomeProfileCard after a successful interaction (like OR dislike)
   void _removeTopCard() {
-    print("[HomeScreen _removeTopCard] Removing top card.");
+    print("[HomeScreen _removeTopCard] Removing top card from local state.");
     if (!mounted) return;
     if (_feedProfiles.isNotEmpty) {
-      ref.read(feedProvider.notifier).removeProfile(_feedProfiles[0].id!);
+      final removedUserId = _feedProfiles[0].id!;
+      // Update local state FIRST for immediate UI reflection
+      setState(() {
+        _feedProfiles.removeAt(0);
+      });
+      // Then notify the provider
+      print(
+          "[HomeScreen _removeTopCard] Notifying FeedProvider to remove profile ID: $removedUserId");
+      ref.read(feedProvider.notifier).removeProfile(removedUserId);
     }
-    // The loading overlay (_isInteracting) is handled in _callLikeRepository
   }
 
-  // This method is passed to the card to handle the actual API call
-  // It allows HomeScreen to manage the loading overlay (_isInteracting)
+  // API call handler for LIKES (passed to card)
   Future<bool> _callLikeRepository({
     required int targetUserId,
     required ContentLikeType contentType,
@@ -152,27 +160,31 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
               "[HomeScreen _callLikeRepository] API returned false, setting generic error.");
           errorNotifier.setError(
               AppError.server("Could not send ${interactionType.value}."));
+          _showErrorSnackbar(
+              "Could not send ${interactionType.value}."); // Show feedback
         }
       } else {
         print("[HomeScreen _callLikeRepository] API call successful.");
       }
     } on LikeLimitExceededException catch (e) {
       print("[HomeScreen _callLikeRepository] Like Limit Error: ${e.message}");
-      errorNotifier.setError(AppError.validation(e.message));
+      if (mounted) errorNotifier.setError(AppError.validation(e.message));
       _showErrorSnackbar(e.message); // Show specific feedback
     } on InsufficientRosesException catch (e) {
       print(
           "[HomeScreen _callLikeRepository] Insufficient Roses: ${e.message}");
-      errorNotifier.setError(AppError.validation(e.message));
+      if (mounted) errorNotifier.setError(AppError.validation(e.message));
       _showErrorSnackbar(e.message); // Show specific feedback
     } on ApiException catch (e) {
       print("[HomeScreen _callLikeRepository] API Exception: ${e.message}");
-      errorNotifier.setError(AppError.server(e.message));
+      if (mounted) errorNotifier.setError(AppError.server(e.message));
       _showErrorSnackbar(e.message); // Show API error message
     } catch (e) {
       print(
           "[HomeScreen _callLikeRepository] Unexpected Error: ${e.toString()}");
-      errorNotifier.setError(AppError.generic("An unexpected error occurred."));
+      if (mounted)
+        errorNotifier
+            .setError(AppError.generic("An unexpected error occurred."));
       _showErrorSnackbar("An unexpected error occurred.");
     } finally {
       if (mounted) setState(() => _isInteracting = false); // Hide overlay
@@ -180,6 +192,57 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     print("[HomeScreen _callLikeRepository] Returning success: $success");
     return success; // Return the outcome
   }
+
+  // --- ADDED: API call handler for DISLIKES (passed to card) ---
+  Future<bool> _callDislikeRepository(int targetUserId) async {
+    // Check if profile is complete before allowing interaction
+    final authStatus = ref.read(authProvider).authStatus;
+    if (authStatus == AuthStatus.onboarding2) {
+      print(
+          "[HomeScreen _callDislikeRepository] Interaction blocked: Profile incomplete (onboarding2).");
+      _showCompleteProfileDialog();
+      return false;
+    }
+
+    if (_isInteracting) return false;
+    if (mounted) setState(() => _isInteracting = true);
+
+    final errorNotifier = ref.read(errorProvider.notifier)..clearError();
+    bool success = false;
+    try {
+      final likeRepo = ref.read(likeRepositoryProvider);
+      print(
+          "[HomeScreen _callDislikeRepository] Calling dislike API for Target $targetUserId");
+      success = await likeRepo.dislikeUser(dislikedUserId: targetUserId);
+
+      if (!success) {
+        if (mounted && ref.read(errorProvider) == null) {
+          print(
+              "[HomeScreen _callDislikeRepository] API returned false, setting generic error.");
+          errorNotifier.setError(AppError.server("Could not dislike user."));
+          _showErrorSnackbar("Could not dislike user.");
+        }
+      } else {
+        print("[HomeScreen _callDislikeRepository] API call successful.");
+      }
+    } on ApiException catch (e) {
+      print("[HomeScreen _callDislikeRepository] API Exception: ${e.message}");
+      if (mounted) errorNotifier.setError(AppError.server(e.message));
+      _showErrorSnackbar(e.message);
+    } catch (e) {
+      print(
+          "[HomeScreen _callDislikeRepository] Unexpected Error: ${e.toString()}");
+      if (mounted)
+        errorNotifier
+            .setError(AppError.generic("An unexpected error occurred."));
+      _showErrorSnackbar("An unexpected error occurred.");
+    } finally {
+      if (mounted) setState(() => _isInteracting = false);
+    }
+    print("[HomeScreen _callDislikeRepository] Returning success: $success");
+    return success;
+  }
+  // --- END ADDED ---
 
   void _showErrorSnackbar(String message) {
     if (!mounted) return;
@@ -205,16 +268,20 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
 
     // Update local profile list when provider changes
     ref.listen<HomeFeedState>(feedProvider, (_, next) {
-      if (mounted) {
+      if (mounted && _feedProfiles != next.profiles) {
+        // Only update if different
         setState(() {
           _feedProfiles = next.profiles;
+          print(
+              "[HomeScreen Listener] Updated local _feedProfiles. Count: ${_feedProfiles.length}");
         });
       }
     });
 
     final error = feedState.error ?? ref.watch(errorProvider);
     final isLoadingFeed = feedState.isLoading && !feedState.hasFetchedOnce;
-    final bool hasProfilesToShow = _feedProfiles.isNotEmpty;
+    final bool hasProfilesToShow =
+        _feedProfiles.isNotEmpty; // Use local state list
 
     return Scaffold(
       backgroundColor: Colors.grey[50],
@@ -267,7 +334,9 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                 else if (!hasProfilesToShow)
                   _buildEmptyState() // Show empty state if no profiles and no error
                 else // Only build the card if there are profiles
-                  _buildProfileCardAtIndex(0),
+                  // --- Pass Dislike Callback ---
+                  _buildProfileCardAtIndex(
+                      0), // Build using local _feedProfiles
 
                 // General interaction loading overlay (covers everything)
                 if (_isInteracting)
@@ -282,15 +351,12 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
               ],
             ),
           ),
-
-          // --- REMOVED BOTTOM ACTION BUTTONS ---
-          // Padding(...) // Removed the entire Padding widget with action buttons
         ],
       ),
     );
   }
 
-  // --- Helper methods (_buildFilterChips, _buildFilterChip, _buildEmptyState, _buildErrorState) remain the same ---
+  // _buildFilterChips, _buildFilterChip, _buildEmptyState, _buildErrorState remain the same
   List<Widget> _buildFilterChips(FilterSettings filters) {
     List<Widget> chips = [];
     chips.add(_buildFilterChip(
@@ -339,12 +405,15 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     );
   }
 
+  // --- MODIFIED: Build card using local state ---
   Widget _buildProfileCardAtIndex(int index) {
     if (index >= 0 && index < _feedProfiles.length) {
       final currentProfile = _feedProfiles[index];
       return HomeProfileCard(
+        // Use unique key based on profile ID to help Flutter optimize
+        key: ValueKey(currentProfile.id),
         profile: currentProfile,
-        // Pass the callback function to handle the API call
+        // Pass the callback function to handle the LIKE API call
         performLikeApiCall: (
             {required contentType,
             required contentIdentifier,
@@ -358,91 +427,121 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
               interactionType: interactionType,
               comment: comment);
         },
-        // Callback to remove the card after success
+        // --- Pass DISLIKE callback ---
+        performDislikeApiCall: () async {
+          if (currentProfile.id == null) return false;
+          return await _callDislikeRepository(currentProfile.id!);
+        },
+        // Callback to remove the card after success (like OR dislike)
         onInteractionComplete: _removeTopCard,
       );
     }
+    // Should ideally not happen if hasProfilesToShow is checked correctly
     return Container(
         alignment: Alignment.center,
-        child: const Text("Error loading profile."));
+        child: Text("No more profiles.", style: GoogleFonts.poppins()));
   }
+  // --- END MODIFICATION ---
 
   Widget _buildEmptyState() {
-    return Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Icon(Icons.people_outline_rounded, size: 80, color: Colors.grey[400]),
-          const SizedBox(height: 20),
-          Text(
-            "That's everyone for now!",
-            style: GoogleFonts.poppins(fontSize: 18, color: Colors.grey[600]),
-          ),
-          const SizedBox(height: 10),
-          Text(
-            "Adjust your filters or check back later.",
-            textAlign: TextAlign.center,
-            style: GoogleFonts.poppins(fontSize: 14, color: Colors.grey[500]),
-          ),
-          const SizedBox(height: 20),
-          ElevatedButton.icon(
-            icon: const Icon(Icons.refresh_rounded, size: 18),
-            label: const Text("Refresh Feed"),
-            style: ElevatedButton.styleFrom(
-              foregroundColor: Colors.white,
-              backgroundColor: const Color(0xFF8B5CF6),
-              shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(20)),
-              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+    // Wrap in LayoutBuilder to ensure scroll physics work for refresh
+    return LayoutBuilder(builder: (context, constraints) {
+      return SingleChildScrollView(
+        physics: const AlwaysScrollableScrollPhysics(),
+        child: ConstrainedBox(
+          constraints: BoxConstraints(minHeight: constraints.maxHeight),
+          child: Center(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(Icons.people_outline_rounded,
+                    size: 80, color: Colors.grey[400]),
+                const SizedBox(height: 20),
+                Text(
+                  "That's everyone for now!",
+                  style: GoogleFonts.poppins(
+                      fontSize: 18, color: Colors.grey[600]),
+                ),
+                const SizedBox(height: 10),
+                Text(
+                  "Adjust your filters or check back later.",
+                  textAlign: TextAlign.center,
+                  style: GoogleFonts.poppins(
+                      fontSize: 14, color: Colors.grey[500]),
+                ),
+                const SizedBox(height: 20),
+                ElevatedButton.icon(
+                  icon: const Icon(Icons.refresh_rounded, size: 18),
+                  label: const Text("Refresh Feed"),
+                  style: ElevatedButton.styleFrom(
+                    foregroundColor: Colors.white,
+                    backgroundColor: const Color(0xFF8B5CF6),
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(20)),
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 20, vertical: 10),
+                  ),
+                  onPressed: () => _fetchFeed(force: true),
+                ),
+              ],
             ),
-            onPressed: () => _fetchFeed(force: true),
           ),
-        ],
-      ),
-    );
+        ),
+      );
+    });
   }
 
   Widget _buildErrorState(AppError error) {
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(20.0),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(Icons.error_outline_rounded,
-                size: 60, color: Colors.redAccent[100]),
-            const SizedBox(height: 20),
-            Text(
-              "Oops! Something went wrong",
-              style: GoogleFonts.poppins(
-                  fontSize: 18,
-                  fontWeight: FontWeight.w600,
-                  color: Colors.grey[700]),
-              textAlign: TextAlign.center,
-            ),
-            const SizedBox(height: 10),
-            Text(
-              error.message,
-              style: GoogleFonts.poppins(fontSize: 14, color: Colors.grey[600]),
-              textAlign: TextAlign.center,
-            ),
-            const SizedBox(height: 20),
-            ElevatedButton.icon(
-              icon: const Icon(Icons.refresh_rounded, size: 18),
-              label: const Text("Retry"),
-              style: ElevatedButton.styleFrom(
-                foregroundColor: Colors.white,
-                backgroundColor: const Color(0xFF8B5CF6),
-                shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(20)),
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 30, vertical: 12),
+    // Wrap in LayoutBuilder to ensure scroll physics work for refresh
+    return LayoutBuilder(builder: (context, constraints) {
+      return SingleChildScrollView(
+        physics: const AlwaysScrollableScrollPhysics(),
+        child: ConstrainedBox(
+          constraints: BoxConstraints(minHeight: constraints.maxHeight),
+          child: Center(
+            child: Padding(
+              padding: const EdgeInsets.all(20.0),
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(Icons.error_outline_rounded,
+                      size: 60, color: Colors.redAccent[100]),
+                  const SizedBox(height: 20),
+                  Text(
+                    "Oops! Something went wrong",
+                    style: GoogleFonts.poppins(
+                        fontSize: 18,
+                        fontWeight: FontWeight.w600,
+                        color: Colors.grey[700]),
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: 10),
+                  Text(
+                    error.message,
+                    style: GoogleFonts.poppins(
+                        fontSize: 14, color: Colors.grey[600]),
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: 20),
+                  ElevatedButton.icon(
+                    icon: const Icon(Icons.refresh_rounded, size: 18),
+                    label: const Text("Retry"),
+                    style: ElevatedButton.styleFrom(
+                      foregroundColor: Colors.white,
+                      backgroundColor: const Color(0xFF8B5CF6),
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(20)),
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 30, vertical: 12),
+                    ),
+                    onPressed: () => _fetchFeed(force: true),
+                  ),
+                ],
               ),
-              onPressed: () => _fetchFeed(force: true),
             ),
-          ],
+          ),
         ),
-      ),
-    );
+      );
+    });
   }
 }
