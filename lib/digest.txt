@@ -1849,6 +1849,8 @@ File: providers/audio_upload_provider.dart
 ================================================
 // providers/audio_upload_provider.dart
 import 'dart:io';
+import 'dart:math';
+import 'package:dtx/services/api_service.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:path/path.dart' as path;
 import 'package:mime/mime.dart';
@@ -1861,7 +1863,9 @@ import 'error_provider.dart';
 import 'service_provider.dart';
 import 'user_provider.dart';
 
-final audioUploadProvider = StateNotifierProvider<AudioUploadNotifier, MediaUploadModel?>(
+// Provider definition remains the same
+final audioUploadProvider =
+    StateNotifierProvider<AudioUploadNotifier, MediaUploadModel?>(
   (ref) {
     print('[AudioUpload] Initializing AudioUploadProvider');
     final mediaRepository = ref.watch(mediaRepositoryProvider);
@@ -1872,7 +1876,7 @@ final audioUploadProvider = StateNotifierProvider<AudioUploadNotifier, MediaUplo
 class AudioUploadNotifier extends StateNotifier<MediaUploadModel?> {
   final Ref ref;
   final MediaRepository _mediaRepository;
-  AudioPrompt? _selectedPrompt;
+  AudioPrompt? _selectedPrompt; // Internal state to hold the selected prompt
   String? _recordingPath;
 
   // Initialize with null (no audio uploaded yet)
@@ -1884,42 +1888,49 @@ class AudioUploadNotifier extends StateNotifier<MediaUploadModel?> {
   static const int _maxAudioSizeBytes = 10 * 1024 * 1024;
 
   // Supported audio MIME types
-static final Set<String> _supportedAudioTypes = {
-  'audio/mpeg', 'audio/wav', 'audio/ogg', 'audio/webm',
-  'audio/aac', 'audio/x-m4a', 'audio/x-aiff', 'audio/flac',
-  'audio/mp4'  // Add this line to support M4A files
-};
+  static final Set<String> _supportedAudioTypes = {
+    'audio/mpeg', 'audio/wav', 'audio/ogg', 'audio/webm',
+    'audio/aac', 'audio/x-m4a', 'audio/x-aiff', 'audio/flac',
+    'audio/mp4' // Add this line to support M4A files
+  };
 
   // Save the recording path for later use
   void setRecordingPath(String path) {
     print('[AudioUpload] Setting recording path: $path');
     _recordingPath = path;
+    // Don't clear the selected prompt when setting path
   }
 
   // Prepare audio file with validation
   bool prepareAudioFile() {
     print('[AudioUpload] Preparing audio file');
     print('[AudioUpload] Recording path: $_recordingPath');
+    // --- FIX: Read internal _selectedPrompt ---
     print('[AudioUpload] Selected prompt: ${_selectedPrompt?.value}');
-    
+
     if (_recordingPath == null || _selectedPrompt == null) {
+      // --- END FIX ---
       print('[AudioUpload] ERROR: Missing recording path or prompt');
+      // Optionally set an error if needed
+      // ref.read(errorProvider.notifier).setError(AppError.validation("Please select a prompt and record audio."));
       return false;
     }
-    
+
     final file = File(_recordingPath!);
     if (!file.existsSync()) {
-      print('[AudioUpload] ERROR: File does not exist at path: $_recordingPath');
+      print(
+          '[AudioUpload] ERROR: File does not exist at path: $_recordingPath');
       return false;
     }
-    
+
     try {
       // Validate file size
       final fileSize = file.lengthSync();
       print('[AudioUpload] File size: ${fileSize / 1024} KB');
-      
+
       if (fileSize > _maxAudioSizeBytes) {
-        print('[AudioUpload] ERROR: File too large: ${fileSize / 1024 / 1024} MB (max: ${_maxAudioSizeBytes / 1024 / 1024} MB)');
+        print(
+            '[AudioUpload] ERROR: File too large: ${fileSize / 1024 / 1024} MB (max: ${_maxAudioSizeBytes / 1024 / 1024} MB)');
         ref.read(errorProvider.notifier).setError(
               AppError.validation("Audio is too large. Maximum size is 10 MB."),
             );
@@ -1928,7 +1939,8 @@ static final Set<String> _supportedAudioTypes = {
 
       // Detect MIME type
       final fileName = path.basename(file.path);
-      final mimeType = lookupMimeType(file.path) ?? 'audio/mpeg';
+      final mimeType =
+          lookupMimeType(file.path) ?? 'audio/mpeg'; // Keep default
       print('[AudioUpload] Filename: $fileName');
       print('[AudioUpload] MIME type: $mimeType');
 
@@ -1936,49 +1948,74 @@ static final Set<String> _supportedAudioTypes = {
       if (!_supportedAudioTypes.contains(mimeType)) {
         print('[AudioUpload] ERROR: Unsupported audio format: $mimeType');
         ref.read(errorProvider.notifier).setError(
-              AppError.validation("Unsupported audio format. Please use MP3, WAV, OGG, or other common audio formats."),
+              AppError.validation(
+                  "Unsupported audio format. Please use MP3, WAV, OGG, M4A, or other common audio formats."), // Updated message
             );
         return false;
       }
 
-      // Update state
-      print('[AudioUpload] Creating MediaUploadModel');
+      // Update state (the MediaUploadModel itself)
+      print('[AudioUpload] Creating MediaUploadModel state');
       state = MediaUploadModel(
         file: file,
         fileName: fileName,
         fileType: mimeType,
         status: UploadStatus.idle,
       );
-      
-      print('[AudioUpload] Audio file prepared successfully');
+
+      print('[AudioUpload] Audio file prepared successfully (state updated)');
       return true;
     } catch (e, stack) {
       print('[AudioUpload] ERROR preparing audio file: $e');
       print('[AudioUpload] Stack trace: $stack');
+      ref
+          .read(errorProvider.notifier)
+          .setError(AppError.generic("Error preparing audio file."));
       return false;
     }
   }
 
-  // Clear audio file
+  // Clear audio state (MediaUploadModel) AND internal variables
   void clearAudio() {
-    print('[AudioUpload] Clearing audio state');
+    print('[AudioUpload] Clearing audio state and internal variables');
     state = null;
     _recordingPath = null;
-    _selectedPrompt = null;
+    _selectedPrompt = null; // Also clear the internal selected prompt
   }
 
   // Upload audio and save to user profile
   Future<bool> uploadAudioAndSaveToProfile() async {
     print('[AudioUpload] Starting uploadAudioAndSaveToProfile');
-    
+
+    // --- FIX: Check internal _selectedPrompt ---
     if (state == null || _selectedPrompt == null) {
-      print('[AudioUpload] State or prompt is null, attempting to prepare file');
+      // --- END FIX ---
+      print(
+          '[AudioUpload] State or prompt is null, attempting to prepare file');
       final prepared = prepareAudioFile();
       if (!prepared) {
         print('[AudioUpload] Failed to prepare audio file');
+        // Error should be set within prepareAudioFile
+        return false;
+      }
+      // Re-check state after preparation
+      if (state == null) {
+        print(
+            '[AudioUpload] Error: State is still null after successful preparation.');
+        ref.read(errorProvider.notifier).setError(
+            AppError.generic("Internal error preparing audio state."));
         return false;
       }
     }
+
+    // --- FIX: Ensure _selectedPrompt is not null again ---
+    if (_selectedPrompt == null) {
+      print('[AudioUpload] Error: Selected prompt became null unexpectedly.');
+      ref.read(errorProvider.notifier).setError(AppError.validation(
+          "Audio prompt selection was lost. Please re-select."));
+      return false;
+    }
+    // --- END FIX ---
 
     try {
       print('[AudioUpload] Clearing any previous errors');
@@ -1986,6 +2023,7 @@ static final Set<String> _supportedAudioTypes = {
 
       // Update state to show upload in progress
       print('[AudioUpload] Setting state to UPLOADING');
+      // Use the state that was confirmed/set after prepareAudioFile
       state = state!.copyWith(status: UploadStatus.inProgress);
 
       // Get presigned URL for audio
@@ -1993,10 +2031,11 @@ static final Set<String> _supportedAudioTypes = {
       final presignedUrlResponse = await _mediaRepository.getAudioPresignedUrl(
         state!.fileName,
         state!.fileType,
-        _selectedPrompt!,
+        _selectedPrompt!, // Use the validated internal prompt
       );
-      
-      print('[AudioUpload] Received presigned URL response: ${presignedUrlResponse.toString().substring(0, 100)}...');
+
+      print(
+          '[AudioUpload] Received presigned URL response: ${presignedUrlResponse.toString().substring(0, min(100, presignedUrlResponse.toString().length))}...'); // Safely print start
 
       // Update state with presigned URL
       print('[AudioUpload] Updating state with presigned URL');
@@ -2017,7 +2056,8 @@ static final Set<String> _supportedAudioTypes = {
       }
 
       // Update state with result
-      print('[AudioUpload] Setting final upload status: ${success ? "SUCCESS" : "FAILED"}');
+      print(
+          '[AudioUpload] Setting final upload status: ${success ? "SUCCESS" : "FAILED"}');
       state = state!.copyWith(
         status: success ? UploadStatus.success : UploadStatus.failed,
         errorMessage: success ? () => null : () => 'Failed to upload audio',
@@ -2025,9 +2065,10 @@ static final Set<String> _supportedAudioTypes = {
 
       if (success) {
         // Create AudioPromptModel
-        print('[AudioUpload] Creating AudioPromptModel with prompt: ${_selectedPrompt!.value}');
+        print(
+            '[AudioUpload] Creating AudioPromptModel with prompt: ${_selectedPrompt!.value}');
         final audioPromptModel = AudioPromptModel(
-          prompt: _selectedPrompt!,
+          prompt: _selectedPrompt!, // Use the internal prompt
           audioUrl: presignedUrlResponse['url'],
         );
 
@@ -2035,30 +2076,50 @@ static final Set<String> _supportedAudioTypes = {
         print('[AudioUpload] Updating user model with audio prompt');
         ref.read(userProvider.notifier).updateAudioPrompt(audioPromptModel);
         print('[AudioUpload] User model updated successfully');
+      } else {
+        // If upload failed, set error if not already set by repo/service
+        if (ref.read(errorProvider) == null) {
+          ref
+              .read(errorProvider.notifier)
+              .setError(AppError.network("Failed to upload audio to storage."));
+        }
       }
 
       return success;
     } catch (e, stack) {
       print('[AudioUpload] ERROR during upload: $e');
       print('[AudioUpload] Stack trace: $stack');
-      
+
       if (state != null) {
         state = state!.copyWith(
           status: UploadStatus.failed,
           errorMessage: () => 'Failed to upload audio: ${e.toString()}',
         );
       }
+      // Set error if not already set
+      if (ref.read(errorProvider) == null) {
+        if (e is ApiException) {
+          ref.read(errorProvider.notifier).setError(AppError.server(e.message));
+        } else {
+          ref.read(errorProvider.notifier).setError(AppError.generic(
+              "An unexpected error occurred during audio upload."));
+        }
+      }
       return false;
     }
   }
 
-  // Get the selected prompt
+  // Get the selected prompt (public getter for the internal state)
   AudioPrompt? get selectedPrompt => _selectedPrompt;
 
-  // Set the selected prompt
-  void setSelectedPrompt(AudioPrompt prompt) {
-    print('[AudioUpload] Setting selected prompt: ${prompt.value}');
+  // --- FIX: Update setSelectedPrompt to accept nullable AudioPrompt ---
+  // Set the selected prompt (updates internal state)
+  void setSelectedPrompt(AudioPrompt? prompt) {
+    // --- END FIX ---
+    print('[AudioUpload] Setting selected prompt: ${prompt?.value}');
     _selectedPrompt = prompt;
+    // Note: This does NOT change the main `state` (MediaUploadModel) directly.
+    // It only updates the internal variable used for validation and API calls.
   }
 }
 
@@ -2585,18 +2646,17 @@ final feedProvider = StateNotifierProvider<FeedNotifier, HomeFeedState>((ref) {
 ================================================
 File: providers/filter_provider.dart
 ================================================
-// lib/providers/filter_provider.dart
+// File: lib/providers/filter_provider.dart
 import 'package:dtx/models/error_model.dart';
 import 'package:dtx/models/filter_model.dart';
 import 'package:dtx/providers/error_provider.dart';
+import 'package:dtx/providers/feed_provider.dart'; // Import feed provider
 import 'package:dtx/providers/service_provider.dart';
 import 'package:dtx/repositories/filter_repository.dart';
 import 'package:dtx/services/api_service.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-// --- REMOVED: filterLoadingProvider - manage loading within the notifier ---
-
-// --- StateNotifier Provider ---
+// --- StateNotifier Provider (No change) ---
 final filterProvider =
     StateNotifierProvider<FilterNotifier, FilterSettings>((ref) {
   final filterRepository = ref.watch(filterRepositoryProvider);
@@ -2616,7 +2676,7 @@ class FilterNotifier extends StateNotifier<FilterSettings> {
     // loadFilters();
   }
 
-  // Load filters from the repository
+  // Load filters from the repository (No change)
   Future<void> loadFilters({bool forceRemote = false}) async {
     // Prevent multiple fetches if already loading or if data exists and not forced
     if (_isLoading || (state != const FilterSettings() && !forceRemote)) {
@@ -2642,7 +2702,7 @@ class FilterNotifier extends StateNotifier<FilterSettings> {
     }
   }
 
-  // Save filters to the repository
+  // Save filters (used by full dialog)
   Future<bool> saveFilters(FilterSettings newFilters) async {
     if (_isLoading) return false;
     _setLoading(true);
@@ -2662,6 +2722,9 @@ class FilterNotifier extends StateNotifier<FilterSettings> {
         }
         return false;
       }
+      // Refresh feed after saving from the *full* dialog as well
+      print("[FilterNotifier] Filters saved via full dialog. Refreshing feed.");
+      ref.read(feedProvider.notifier).fetchFeed(forceRefresh: true);
       return true; // Success
     } on ApiException catch (e) {
       if (mounted) {
@@ -2682,23 +2745,22 @@ class FilterNotifier extends StateNotifier<FilterSettings> {
     }
   }
 
-  // Helper to manage internal loading state
+  // Helper to manage internal loading state (No change)
   void _setLoading(bool loading) {
-    // Could add notifyListeners() if using ChangeNotifier, but not needed for StateNotifier
     if (_isLoading != loading) {
       _isLoading = loading;
-      // No need to call setState or notifyListeners for StateNotifier's internal state
     }
   }
 
-  // Method to update a single filter value directly (e.g., from slider/switch)
+  // Method to update a single filter value in the *state* (No change)
   // Ensures immutability by using copyWith
   void updateSingleFilter<T>(T value, FilterField field) {
     if (_isLoading) return; // Prevent updates while saving/loading
+    print("[FilterNotifier] Updating single filter state $field to $value");
     state = state.copyWith(
       whoYouWantToSee: field == FilterField.whoYouWantToSee
-          ? () => value as FilterGenderPref? // Cast to correct type
-          : null, // Return null for other fields
+          ? () => value as FilterGenderPref?
+          : null,
       radiusKm: field == FilterField.radiusKm ? () => value as int? : null,
       activeToday:
           field == FilterField.activeToday ? () => value as bool? : null,
@@ -2706,9 +2768,51 @@ class FilterNotifier extends StateNotifier<FilterSettings> {
       ageMax: field == FilterField.ageMax ? () => value as int? : null,
     );
   }
+
+  // --- *** NEW METHOD: Save Current State *** ---
+  // Saves the current state held by the notifier to the backend
+  Future<bool> saveCurrentFilterState() async {
+    if (_isLoading) return false;
+    _setLoading(true);
+    ref.read(errorProvider.notifier).clearError();
+    print("[FilterNotifier] Saving current filter state via API: ${state.toJsonForApi()}");
+
+    try {
+      final success = await _filterRepository.updateFilters(state); // Pass current state
+      if (!success) {
+        if (mounted) {
+          // Error is likely set by repo, but add fallback
+          if (ref.read(errorProvider) == null) {
+            ref.read(errorProvider.notifier).setError(AppError.server("Failed to save filter change."));
+          }
+        }
+        print("[FilterNotifier] Failed to save current filter state via API.");
+        return false;
+      }
+      // Filters saved, now refresh feed
+      print("[FilterNotifier] Current filter state saved successfully via API. Refreshing feed.");
+      ref.read(feedProvider.notifier).fetchFeed(forceRefresh: true);
+      return true; // Success
+    } on ApiException catch (e) {
+      if (mounted) {
+        ref.read(errorProvider.notifier).setError(AppError.server(e.message));
+      }
+       print("[FilterNotifier] API Exception saving current filter state: ${e.message}");
+      return false;
+    } catch (e) {
+       if (mounted) {
+         ref.read(errorProvider.notifier).setError(AppError.generic("An unexpected error occurred saving filter."));
+      }
+      print("[FilterNotifier] Unexpected error saving current filter state: $e");
+      return false;
+    } finally {
+      if (mounted) _setLoading(false);
+    }
+  }
+  // --- *** END NEW METHOD *** ---
 }
 
-// Enum to identify which filter field is being updated
+// Enum to identify which filter field is being updated (No change)
 enum FilterField { whoYouWantToSee, radiusKm, activeToday, ageMin, ageMax }
 
 
@@ -5916,20 +6020,22 @@ class TokenStorage {
 ================================================
 File: views/audioprompt.dart
 ================================================
+// File: lib/views/audioprompt.dart
 import 'dart:async';
-import 'dart:io'; // Keep for File checks
+import 'dart:io';
+import 'dart:math'; // Import math
 
 import 'package:audioplayers/audioplayers.dart';
 import 'package:dtx/models/error_model.dart';
 import 'package:dtx/models/media_upload_model.dart';
-import 'package:dtx/models/auth_model.dart'; // Keep for AuthStatus check
+import 'package:dtx/models/auth_model.dart';
 import 'package:dtx/models/user_model.dart';
 import 'package:dtx/providers/audio_upload_provider.dart';
-import 'package:dtx/providers/auth_provider.dart'; // Keep for status check
+import 'package:dtx/providers/auth_provider.dart';
 import 'package:dtx/providers/error_provider.dart';
-import 'package:dtx/providers/media_upload_provider.dart'; // <<< ADDED for general media
-import 'package:dtx/providers/service_provider.dart'; // Keep for repository access
-import 'package:dtx/providers/user_provider.dart'; // <<< ENSURE IMPORT
+import 'package:dtx/providers/media_upload_provider.dart';
+import 'package:dtx/providers/service_provider.dart';
+import 'package:dtx/providers/user_provider.dart';
 import 'package:dtx/services/api_service.dart';
 import 'package:dtx/utils/app_enums.dart';
 import 'package:dtx/views/audiopromptsselect.dart';
@@ -5940,6 +6046,7 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:record/record.dart';
+import 'package:dtx/repositories/user_repository.dart';
 
 class VoicePromptScreen extends ConsumerStatefulWidget {
   final bool isEditing;
@@ -5963,7 +6070,7 @@ class _VoicePromptScreenState extends ConsumerState<VoicePromptScreen> {
   DateTime? _startTime;
   Timer? _recordingTimer;
   bool _isSaving = false;
-  AudioPrompt? _selectedPrompt;
+  // Selected prompt is now managed solely within AudioUploadNotifier
   String? _existingAudioUrl;
 
   @override
@@ -5972,14 +6079,27 @@ class _VoicePromptScreenState extends ConsumerState<VoicePromptScreen> {
     if (widget.isEditing) {
       final existingPromptModel = ref.read(userProvider).audioPrompt;
       if (existingPromptModel != null) {
-        _selectedPrompt = existingPromptModel.prompt;
-        _existingAudioUrl = existingPromptModel.audioUrl;
+        // Initialize the provider's internal selected prompt
         ref
             .read(audioUploadProvider.notifier)
-            .setSelectedPrompt(_selectedPrompt!);
+            .setSelectedPrompt(existingPromptModel.prompt);
+        _existingAudioUrl = existingPromptModel.audioUrl;
+        print(
+            "[VoicePromptScreen initState] Editing mode. Initial prompt set in provider: ${existingPromptModel.prompt.value}, Existing URL: $_existingAudioUrl");
+      } else {
+        // --- FIX: Pass null correctly ---
+        ref.read(audioUploadProvider.notifier).setSelectedPrompt(null);
+        _existingAudioUrl = null;
+        print(
+            "[VoicePromptScreen initState] Editing mode. No existing prompt found. Provider prompt set to null.");
+        // --- END FIX ---
       }
     } else {
+      // Onboarding: Clear audio provider state
       ref.read(audioUploadProvider.notifier).clearAudio();
+      print(
+          "[VoicePromptScreen initState] Onboarding mode. Cleared audio provider.");
+      _existingAudioUrl = null;
     }
     _initializeAudioSession();
     _audioPlayer.onPlayerComplete.listen((_) {
@@ -5994,9 +6114,9 @@ class _VoicePromptScreenState extends ConsumerState<VoicePromptScreen> {
     });
   }
 
+  // _initializeAudioSession, _startRecording, _stopRecording, _playRecording remain the same
   Future<void> _initializeAudioSession() async {
-    /* ... same as before ... */ print(
-        "[VoicePromptScreen] Requesting microphone permission...");
+    print("[VoicePromptScreen] Requesting microphone permission...");
     final status = await Permission.microphone.request();
     print("[VoicePromptScreen] Microphone permission status: $status");
     if (!status.isGranted && mounted) {
@@ -6007,12 +6127,16 @@ class _VoicePromptScreenState extends ConsumerState<VoicePromptScreen> {
   }
 
   Future<void> _startRecording() async {
-    /* ... same as before ... */ setState(() {
-      _existingAudioUrl = null;
+    setState(() {
+      _existingAudioUrl =
+          null; // Clear existing URL when starting new recording
       _audioPath = null;
       _recordingTime = "0:00 / 0:30";
     });
-    ref.read(audioUploadProvider.notifier).clearAudio();
+    // Keep clearAudio call here? Yes, it clears the provider's file/path state.
+    ref
+        .read(audioUploadProvider.notifier)
+        .clearAudio(); // Clears provider's file state AND internal selected prompt
     if (!await _audioRecorder.hasPermission()) {
       print("[VoicePromptScreen] Start Recording: Permission denied.");
       if (mounted)
@@ -6067,7 +6191,7 @@ class _VoicePromptScreenState extends ConsumerState<VoicePromptScreen> {
   }
 
   Future<void> _stopRecording() async {
-    /* ... same as before ... */ if (!_isRecording) return;
+    if (!_isRecording) return;
     _recordingTimer?.cancel();
     try {
       final path = await _audioRecorder.stop();
@@ -6092,6 +6216,7 @@ class _VoicePromptScreenState extends ConsumerState<VoicePromptScreen> {
           setState(() {
             _isRecording = false;
           });
+          // Set the path in the provider, which is needed for prepareAudioFile
           ref.read(audioUploadProvider.notifier).setRecordingPath(_audioPath!);
           print(
               "[VoicePromptScreen] Recording path saved to provider: $_audioPath");
@@ -6117,8 +6242,7 @@ class _VoicePromptScreenState extends ConsumerState<VoicePromptScreen> {
   }
 
   Future<void> _playRecording() async {
-    /* ... same as before ... */ final String? pathOrUrlToPlay =
-        _audioPath ?? _existingAudioUrl;
+    final String? pathOrUrlToPlay = _audioPath ?? _existingAudioUrl;
     print(
         "[VoicePromptScreen] Play recording requested. Source: $pathOrUrlToPlay");
     if (pathOrUrlToPlay == null) {
@@ -6129,6 +6253,7 @@ class _VoicePromptScreenState extends ConsumerState<VoicePromptScreen> {
                 Text('Please record or ensure existing audio is loaded.')));
       return;
     }
+    // Check local file existence if _audioPath is set
     if (_audioPath != null) {
       final file = File(_audioPath!);
       if (!await file.exists() || await file.length() == 0) {
@@ -6137,29 +6262,38 @@ class _VoicePromptScreenState extends ConsumerState<VoicePromptScreen> {
         if (mounted)
           ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
               content: Text('Recording file error. Please record again.')));
-        setState(() => _audioPath = null);
+        setState(() {
+          _audioPath = null; // Clear invalid path
+          _recordingTime = "0:00 / 0:30";
+        });
         return;
       }
     }
     try {
-      final Source audioSource = _audioPath != null
+      // Determine the source based on whether _audioPath or _existingAudioUrl should be used
+      final Source audioSource = (_audioPath != null &&
+              File(_audioPath!).existsSync())
           ? DeviceFileSource(_audioPath!)
-          : UrlSource(pathOrUrlToPlay);
+          : UrlSource(
+              pathOrUrlToPlay); // Fallback to existing URL if local path invalid/null
+
       if (_isPlaying) {
         print("[VoicePromptScreen] Pausing playback.");
         await _audioPlayer.pause();
       } else {
         if (_audioPlayer.state == PlayerState.playing ||
             _audioPlayer.state == PlayerState.paused) {
-          await _audioPlayer.stop();
+          await _audioPlayer.stop(); // Stop previous before playing new/resume
         }
-        print("[VoicePromptScreen] Starting playback from: $pathOrUrlToPlay");
+        print(
+            "[VoicePromptScreen] Starting playback from: ${audioSource is UrlSource ? audioSource.url : (audioSource as DeviceFileSource).path}");
         await _audioPlayer.play(audioSource);
       }
+      // State update (_isPlaying) is handled by listeners
     } catch (e) {
       print('[VoicePromptScreen] Playback error: $e');
       if (mounted) {
-        setState(() => _isPlaying = false);
+        setState(() => _isPlaying = false); // Reset playing state on error
         ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(content: Text('Playback failed: ${e.toString()}')));
       }
@@ -6167,7 +6301,7 @@ class _VoicePromptScreenState extends ConsumerState<VoicePromptScreen> {
   }
 
   void _selectPrompt() {
-    /* ... same as before ... */ if (_isPlaying) {
+    if (_isPlaying) {
       _audioPlayer.pause();
     }
     print("[VoicePromptScreen] Navigating to select audio prompt.");
@@ -6178,34 +6312,32 @@ class _VoicePromptScreenState extends ConsumerState<VoicePromptScreen> {
                 isEditing: widget.isEditing,
               )),
     ).then((_) {
+      // Trigger rebuild after returning to update the displayed prompt text
       if (mounted) {
-        setState(() {
-          _selectedPrompt =
-              ref.read(audioUploadProvider.notifier).selectedPrompt;
-        });
+        setState(
+            () {}); // Rebuild to reflect the change in the provider's selected prompt
+        final selectedPrompt =
+            ref.read(audioUploadProvider.notifier).selectedPrompt;
         print(
-            "[VoicePromptScreen] Returned from prompt selection. Selected: ${_selectedPrompt?.label}");
+            "[VoicePromptScreen] Returned from prompt selection. Selected in provider: ${selectedPrompt?.label}");
       }
     });
   }
 
-  // --- *** MODIFIED SAVE METHOD *** ---
+  // --- SAVE METHOD (No functional changes needed from previous fix) ---
   Future<void> _saveProfileAndNavigate() async {
-    // <-- Added async
     print(
         '[VoicePromptScreen] Starting _saveProfileAndNavigate (isEditing: ${widget.isEditing})');
     final errorNotifier = ref.read(errorProvider.notifier);
     final userNotifier = ref.read(userProvider.notifier);
-    final authNotifier =
-        ref.read(authProvider.notifier); // Needed for status check
+    final authNotifier = ref.read(authProvider.notifier);
+    final audioUploadNotifier = ref.read(audioUploadProvider.notifier);
     errorNotifier.clearError();
 
-    // Refresh local selected prompt state
-    setState(() {
-      _selectedPrompt = ref.read(audioUploadProvider.notifier).selectedPrompt;
-    });
+    // Read selected prompt directly from the provider
+    final AudioPrompt? selectedPrompt = audioUploadNotifier.selectedPrompt;
 
-    if (_selectedPrompt == null) {
+    if (selectedPrompt == null) {
       print('[VoicePromptScreen] Validation Error: No audio prompt selected.');
       errorNotifier
           .setError(AppError.validation("Please select an audio prompt."));
@@ -6223,21 +6355,21 @@ class _VoicePromptScreenState extends ConsumerState<VoicePromptScreen> {
     if (isNewAudioRecording) {
       print(
           '[VoicePromptScreen] New audio recording found at $_audioPath. Preparing for upload.');
-      ref.read(audioUploadProvider.notifier).setRecordingPath(_audioPath!);
-      audioPrepared = ref.read(audioUploadProvider.notifier).prepareAudioFile();
+      audioPrepared = audioUploadNotifier.prepareAudioFile();
       if (!audioPrepared) {
         print('[VoicePromptScreen] Audio file preparation/validation failed.');
-        return; // Error should be set by prepareAudioFile
+        return;
       }
-      audioUploadModel = ref.read(audioUploadProvider); // Get prepared model
+      audioUploadModel =
+          ref.read(audioUploadProvider); // Get prepared model state
       if (audioUploadModel == null) {
-        print('[VoicePromptScreen] Error: Audio prepared but model is null.');
+        print(
+            '[VoicePromptScreen] Error: Audio prepared but provider state is null.');
         errorNotifier
-            .setError(AppError.generic("Error preparing audio model."));
+            .setError(AppError.generic("Error preparing audio model state."));
         return;
       }
     } else if (_existingAudioUrl == null && !widget.isEditing) {
-      // If onboarding and no existing URL AND no new recording, require recording
       print(
           '[VoicePromptScreen] Validation Error: No audio recorded for onboarding.');
       errorNotifier.setError(
@@ -6246,12 +6378,11 @@ class _VoicePromptScreenState extends ConsumerState<VoicePromptScreen> {
     } else if (_existingAudioUrl != null) {
       print('[VoicePromptScreen] Using existing audio URL: $_existingAudioUrl');
     }
-    // If editing and neither new nor existing audio, allow saving without audio (nulls it out later)
 
     setState(() => _isSaving = true);
 
     try {
-      // --- *** STEP 1: Upload General Media (ONLY during ONBOARDING) *** ---
+      // --- STEP 1: Upload General Media (ONLY during ONBOARDING) ---
       if (!widget.isEditing) {
         print(
             "[VoicePromptScreen Onboarding] Attempting to upload general media...");
@@ -6259,7 +6390,6 @@ class _VoicePromptScreenState extends ConsumerState<VoicePromptScreen> {
             await ref.read(mediaUploadProvider.notifier).uploadAllMedia();
         if (!mediaSuccess) {
           print("[VoicePromptScreen Onboarding] General media upload failed.");
-          // Error likely set by mediaUploadProvider, but set a generic one if not
           if (ref.read(errorProvider) == null) {
             errorNotifier
                 .setError(AppError.server("Failed to upload photos/videos."));
@@ -6270,46 +6400,36 @@ class _VoicePromptScreenState extends ConsumerState<VoicePromptScreen> {
         print(
             "[VoicePromptScreen Onboarding] General media upload successful.");
       }
-      // --- *** END General Media Upload Step *** ---
 
       // --- STEP 2: Upload Audio (if new recording exists) ---
       bool audioUploadedSuccessfully = true;
       if (isNewAudioRecording && audioPrepared && audioUploadModel != null) {
         print('[VoicePromptScreen] Attempting audio upload...');
-        // Use the dedicated provider method which also updates userNotifier internally
-        audioUploadedSuccessfully = await ref
-            .read(audioUploadProvider.notifier)
-            .uploadAudioAndSaveToProfile();
+        audioUploadedSuccessfully =
+            await audioUploadNotifier.uploadAudioAndSaveToProfile();
 
         if (!audioUploadedSuccessfully) {
           print('[VoicePromptScreen] Audio upload failed.');
-          // Error should be set by audioUploadProvider
-          throw ApiException("Audio upload failed."); // Stop the process
+          throw ApiException("Audio upload failed.");
         }
-        // Get the new URL from the successful upload state
-        finalAudioUrl = ref
-            .read(audioUploadProvider)
-            ?.presignedUrl; // Read state AFTER upload
+        finalAudioUrl = ref.read(audioUploadProvider)?.presignedUrl;
         print(
             '[VoicePromptScreen] Audio upload successful. New URL: $finalAudioUrl');
       } else if (!isNewAudioRecording && _existingAudioUrl != null) {
-        // No NEW audio upload needed, just ensure user model is updated with existing URL and selected prompt
         print(
             '[VoicePromptScreen] No new audio upload needed. Updating user model with existing URL.');
         final currentAudioModel = AudioPromptModel(
-            prompt: _selectedPrompt!, audioUrl: _existingAudioUrl!);
+            prompt: selectedPrompt, audioUrl: _existingAudioUrl!);
         userNotifier.updateAudioPrompt(currentAudioModel);
-        finalAudioUrl = _existingAudioUrl; // Keep track of the URL
+        finalAudioUrl = _existingAudioUrl;
       } else if (widget.isEditing &&
           !isNewAudioRecording &&
           _existingAudioUrl == null) {
         print(
             '[VoicePromptScreen Editing] No existing or new audio. Setting audio prompt to null.');
-        userNotifier.updateAudioPrompt(
-            null); // Explicitly set to null when editing and no audio is provided
+        userNotifier.updateAudioPrompt(null);
         finalAudioUrl = null;
       }
-      // --- END Audio Upload Step ---
 
       // --- STEP 3: Save Profile (POST for Onboarding, PATCH for Editing) ---
       bool profileSaved = false;
@@ -6317,29 +6437,21 @@ class _VoicePromptScreenState extends ConsumerState<VoicePromptScreen> {
         print('[VoicePromptScreen Editing] Saving profile changes (PATCH)...');
         final latestUserState = ref.read(userProvider);
         final payload = latestUserState.toJsonForEdit();
-        // Ensure audio prompt in payload is correct (null if removed, new URL if uploaded, existing if kept)
         if (finalAudioUrl != null) {
-          payload['audio_prompt'] = AudioPromptModel(
-                  prompt: _selectedPrompt!, audioUrl: finalAudioUrl)
-              .toJson();
+          payload['audio_prompt'] =
+              AudioPromptModel(prompt: selectedPrompt, audioUrl: finalAudioUrl)
+                  .toJson();
         } else {
-          payload['audio_prompt'] = null; // Ensure it's null if no audio
+          payload['audio_prompt'] = null;
         }
-        // Media URLs are handled by the PATCH endpoint itself based on userProvider state
-        // which was updated in MediaPickerScreen edit flow
-
         print("[VoicePromptScreen Editing] PATCH Payload: $payload");
         profileSaved =
             await ref.read(userRepositoryProvider).editProfile(payload);
       } else {
-        // Onboarding flow
         print(
             '[VoicePromptScreen Onboarding] Saving profile details (POST)...');
-        // The POST /api/profile doesn't take media/audio URLs.
-        // Those uploads happened earlier and are linked via token.
-        profileSaved = await userNotifier.saveProfile(); // Uses the POST method
+        profileSaved = await userNotifier.saveProfile();
       }
-      // --- END Save Profile Step ---
 
       // --- STEP 4: Navigation ---
       if (profileSaved) {
@@ -6352,17 +6464,14 @@ class _VoicePromptScreenState extends ConsumerState<VoicePromptScreen> {
                   content: Text("Audio prompt updated!"),
                   backgroundColor: Colors.green),
             );
-            Navigator.of(context).pop(); // Pop back to ProfileScreen
+            Navigator.of(context).pop();
           }
         } else {
-          // Onboarding success
-          // *** --- START FIX: FETCH PROFILE BEFORE NAVIGATION --- ***
           print('[VoicePromptScreen Onboarding] Fetching updated profile...');
-          await userNotifier.fetchProfile(); // <<< ADDED: Fetch fresh data
+          await userNotifier.fetchProfile();
           print('[VoicePromptScreen Onboarding] Profile fetch complete.');
-          // *** --- END FIX ---
-          final finalStatus = await authNotifier.checkAuthStatus(
-              updateState: true); // Check status again after save
+          final finalStatus =
+              await authNotifier.checkAuthStatus(updateState: true);
           if (mounted) {
             print(
                 '[VoicePromptScreen Onboarding] Navigating to MainNavigationScreen. Status: $finalStatus');
@@ -6374,21 +6483,18 @@ class _VoicePromptScreenState extends ConsumerState<VoicePromptScreen> {
         }
       } else {
         print('[VoicePromptScreen] Profile save failed.');
-        // Error should be set by saveProfile/editProfile method
         if (mounted && ref.read(errorProvider) == null) {
           errorNotifier
               .setError(AppError.server("Failed to save profile changes."));
         }
       }
-      // --- END Navigation ---
     } on ApiException catch (e) {
       print(
           '[VoicePromptScreen] Save Process Failed: API Exception - ${e.message}');
       if (mounted) errorNotifier.setError(AppError.server(e.message));
     } catch (e, stack) {
-      // Catch unexpected errors
       print('[VoicePromptScreen] Save Process Failed: Unexpected Error - $e');
-      print(stack); // Log stack trace
+      print(stack);
       if (mounted)
         errorNotifier.setError(AppError.generic(
             "An unexpected error occurred. Please try again."));
@@ -6396,24 +6502,29 @@ class _VoicePromptScreenState extends ConsumerState<VoicePromptScreen> {
       if (mounted) setState(() => _isSaving = false);
     }
   }
-  // --- *** END MODIFIED SAVE METHOD *** ---
 
   @override
   Widget build(BuildContext context) {
-    // Build method layout remains the same, logic for enabling button updated
     final errorState = ref.watch(errorProvider);
-    final bool hasSelection = _selectedPrompt != null;
-    final bool hasAudioSource = _audioPath != null || _existingAudioUrl != null;
-    final bool canSave = hasSelection &&
-        (hasAudioSource ||
-            (widget.isEditing &&
-                _existingAudioUrl == null &&
-                _audioPath == null)) &&
-        !_isRecording; // Allow saving null in edit mode
+    // --- FIX: Read selected prompt directly from the notifier ---
+    final AudioPrompt? selectedPrompt =
+        ref.watch(audioUploadProvider.notifier).selectedPrompt;
+    // --- END FIX ---
 
-    // --- UI Code (Unchanged) ---
+    final bool hasSelection = selectedPrompt != null;
+    final bool hasAudioSource = _audioPath != null || _existingAudioUrl != null;
+    // Allow saving null in edit mode OR if a new recording exists OR if an existing URL is present
+    final bool canSave = hasSelection &&
+        ((widget.isEditing &&
+                _existingAudioUrl == null &&
+                _audioPath == null) // Allow saving null
+            ||
+            hasAudioSource // Allow saving if audio exists
+        ) &&
+        !_isRecording;
+
+    // --- UI Code ---
     return Scaffold(
-      /* ... Scaffold setup ... */
       backgroundColor: Colors.white,
       body: SafeArea(
         child: Padding(
@@ -6422,7 +6533,7 @@ class _VoicePromptScreenState extends ConsumerState<VoicePromptScreen> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Padding(
-                /* ... Header for Edit/Onboarding ... */
+                // Header
                 padding: const EdgeInsets.only(top: 10.0, bottom: 10.0),
                 child: Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -6430,10 +6541,12 @@ class _VoicePromptScreenState extends ConsumerState<VoicePromptScreen> {
                     if (widget.isEditing)
                       IconButton(
                         icon: const Icon(Icons.close, color: Colors.grey),
-                        onPressed: () => Navigator.of(context).pop(),
+                        onPressed: _isSaving
+                            ? null
+                            : () => Navigator.of(context).pop(),
                       )
                     else
-                      const SizedBox(width: 48),
+                      const SizedBox(width: 48), // Placeholder for alignment
                     Text(
                       widget.isEditing ? "Edit Voice Prompt" : "",
                       style: GoogleFonts.poppins(
@@ -6448,12 +6561,12 @@ class _VoicePromptScreenState extends ConsumerState<VoicePromptScreen> {
                             ? const SizedBox(
                                 width: 20,
                                 height: 20,
-                                child:
-                                    CircularProgressIndicator(strokeWidth: 2))
+                                child: CircularProgressIndicator(
+                                    strokeWidth: 2, color: Color(0xFF8B5CF6)))
                             : Text(
                                 "Done",
                                 style: GoogleFonts.poppins(
-                                  color: canSave
+                                  color: canSave && !_isSaving
                                       ? const Color(0xFF8B5CF6)
                                       : Colors.grey,
                                   fontWeight: FontWeight.w600,
@@ -6461,12 +6574,13 @@ class _VoicePromptScreenState extends ConsumerState<VoicePromptScreen> {
                               ),
                       )
                     else
-                      const SizedBox(width: 48),
+                      const SizedBox(width: 48), // Placeholder for alignment
                   ],
                 ),
               ),
               if (!widget.isEditing) ...[
-                /* ... Onboarding Dots ... */ const SizedBox(height: 10),
+                // Onboarding Dots
+                const SizedBox(height: 10),
                 Row(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: List.generate(
@@ -6485,6 +6599,7 @@ class _VoicePromptScreenState extends ConsumerState<VoicePromptScreen> {
                 ),
                 const SizedBox(height: 20),
               ],
+              // Title
               Text(
                 widget.isEditing
                     ? 'Edit your Voice Prompt'
@@ -6497,6 +6612,7 @@ class _VoicePromptScreenState extends ConsumerState<VoicePromptScreen> {
                 ),
               ),
               const SizedBox(height: 12),
+              // Subtitle
               Text(
                 widget.isEditing
                     ? "Select a prompt and record your answer."
@@ -6505,9 +6621,11 @@ class _VoicePromptScreenState extends ConsumerState<VoicePromptScreen> {
                     GoogleFonts.poppins(fontSize: 16, color: Colors.grey[600]),
               ),
               const SizedBox(height: 32),
+              // Prompt Selection Row
               GestureDetector(
-                /* ... Prompt Selection Row ... */
-                onTap: _selectPrompt,
+                onTap: _isSaving
+                    ? null
+                    : _selectPrompt, // Disable tap while saving
                 child: Container(
                   padding:
                       const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
@@ -6526,13 +6644,14 @@ class _VoicePromptScreenState extends ConsumerState<VoicePromptScreen> {
                     children: [
                       Expanded(
                         child: Text(
-                          _selectedPrompt?.label ?? 'Select a prompt *',
+                          selectedPrompt?.label ??
+                              'Select a prompt *', // Read from variable
                           style: GoogleFonts.poppins(
-                            color: _selectedPrompt != null
+                            color: selectedPrompt != null
                                 ? Colors.black87
                                 : Colors.grey[600],
                             fontSize: 16,
-                            fontWeight: _selectedPrompt != null
+                            fontWeight: selectedPrompt != null
                                 ? FontWeight.w500
                                 : FontWeight.normal,
                           ),
@@ -6548,10 +6667,12 @@ class _VoicePromptScreenState extends ConsumerState<VoicePromptScreen> {
                 ),
               ),
               const SizedBox(height: 24),
+              // Recording Area
               Expanded(
                 child: GestureDetector(
-                  /* ... Recording Area ... */
-                  onTap: _isRecording ? null : _startRecording,
+                  onTap: _isRecording || _isSaving
+                      ? null
+                      : _startRecording, // Disable tap if recording/saving
                   child: Container(
                     width: double.infinity,
                     padding: const EdgeInsets.all(24),
@@ -6581,21 +6702,29 @@ class _VoicePromptScreenState extends ConsumerState<VoicePromptScreen> {
                         ),
                         const Spacer(),
                         GestureDetector(
-                          onTap:
-                              _isRecording ? _stopRecording : _startRecording,
+                          onTap: _isSaving
+                              ? null
+                              : (_isRecording
+                                  ? _stopRecording
+                                  : _startRecording), // Disable tap if saving
                           child: Container(
                             padding: const EdgeInsets.all(24),
                             decoration: BoxDecoration(
                               color: _isRecording
                                   ? Colors.redAccent
-                                  : const Color(0xFF8b5cf6),
+                                  : (_isSaving
+                                      ? Colors.grey
+                                      : const Color(
+                                          0xFF8b5cf6)), // Grey out if saving
                               shape: BoxShape.circle,
                               boxShadow: [
                                 BoxShadow(
                                     color: (_isRecording
                                             ? Colors.redAccent
                                             : const Color(0xFF8b5cf6))
-                                        .withOpacity(0.3),
+                                        .withOpacity(_isSaving
+                                            ? 0.1
+                                            : 0.3), // Reduce shadow if saving
                                     blurRadius: 10,
                                     offset: const Offset(0, 4))
                               ],
@@ -6609,13 +6738,16 @@ class _VoicePromptScreenState extends ConsumerState<VoicePromptScreen> {
                           ),
                         ),
                         const Spacer(),
-                        if ((_audioPath != null &&
-                                File(_audioPath!).existsSync()) ||
-                            _existingAudioUrl != null)
+                        if (hasAudioSource) // Show button if audio source exists
                           TextButton.icon(
-                            onPressed: _playRecording,
+                            onPressed: _isSaving || _isRecording
+                                ? null
+                                : _playRecording, // Disable if saving/recording
                             style: TextButton.styleFrom(
-                                foregroundColor: const Color(0xFF8b5cf6)),
+                                foregroundColor: _isSaving || _isRecording
+                                    ? Colors.grey
+                                    : const Color(
+                                        0xFF8b5cf6)), // Grey out if disabled
                             icon: Icon(_isPlaying
                                 ? Icons.pause_rounded
                                 : Icons.play_arrow_rounded),
@@ -6628,12 +6760,13 @@ class _VoicePromptScreenState extends ConsumerState<VoicePromptScreen> {
                             ),
                           )
                         else
-                          const SizedBox(height: 48),
+                          const SizedBox(height: 48), // Keep placeholder space
                       ],
                     ),
                   ),
                 ),
               ),
+              // Error Display
               if (errorState != null)
                 Padding(
                   padding: const EdgeInsets.only(top: 12.0, bottom: 8.0),
@@ -6647,6 +6780,7 @@ class _VoicePromptScreenState extends ConsumerState<VoicePromptScreen> {
                   ),
                 ),
               const SizedBox(height: 16),
+              // Onboarding FAB
               if (!widget.isEditing)
                 Align(
                   alignment: Alignment.centerRight,
@@ -6676,8 +6810,7 @@ class _VoicePromptScreenState extends ConsumerState<VoicePromptScreen> {
 
   @override
   void dispose() {
-    /* ... same as before ... */ print(
-        "[VoicePromptScreen] Disposing screen...");
+    print("[VoicePromptScreen] Disposing screen...");
     _recordingTimer?.cancel();
     try {
       _audioRecorder.dispose();
@@ -9189,7 +9322,7 @@ import 'package:dtx/providers/filter_provider.dart';
 import 'package:dtx/providers/service_provider.dart';
 import 'package:dtx/providers/user_provider.dart';
 import 'package:dtx/services/api_service.dart';
-import 'package:dtx/views/filter_settings_dialog.dart';
+import 'package:dtx/views/filter_settings_dialog.dart'; // Keep for full dialog
 import 'package:dtx/views/name.dart';
 import 'package:dtx/models/user_model.dart';
 import 'package:dtx/widgets/home_profile_card.dart';
@@ -9212,6 +9345,10 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
   List<UserModel> _feedProfiles = [];
   bool _isInteracting = false; // To show overlay during API call
 
+  // --- initState, dispose, _fetchFeed, _showCompleteProfileDialog, _removeTopCard ---
+  // --- _callLikeRepository, _callDislikeRepository, _showErrorSnackbar ---
+  // --- _openFilterDialog ---
+  // --- Remain the same as in the previous version ---
   @override
   void initState() {
     super.initState();
@@ -9222,7 +9359,6 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
         _fetchFeed();
       } else {
         if (mounted) {
-          // Initialize local state from provider if already fetched
           setState(() {
             _feedProfiles = feedState.profiles;
           });
@@ -9247,10 +9383,8 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     print("[HomeScreen _fetchFeed] Fetching home feed. Force: $force");
     ref.read(errorProvider.notifier).clearError();
     await ref.read(feedProvider.notifier).fetchFeed(forceRefresh: force);
-    // State update is handled by the ref.listen below
   }
 
-  // Dialog shown if user tries to interact before completing onboarding step 2
   void _showCompleteProfileDialog() {
     showDialog(
       context: context,
@@ -9270,10 +9404,9 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
             ),
             TextButton(
               child: Text("Complete Profile",
-                  style: GoogleFonts.poppins(color: Color(0xFF8B5CF6))),
+                  style: GoogleFonts.poppins(color: const Color(0xFF8B5CF6))),
               onPressed: () {
                 Navigator.of(dialogContext).pop();
-                // Navigate to the first screen of the remaining onboarding flow
                 Navigator.push(context,
                     MaterialPageRoute(builder: (_) => const NameInputScreen()));
               },
@@ -9284,24 +9417,20 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     );
   }
 
-  // Called by HomeProfileCard after a successful interaction (like OR dislike)
   void _removeTopCard() {
     print("[HomeScreen _removeTopCard] Removing top card from local state.");
     if (!mounted) return;
     if (_feedProfiles.isNotEmpty) {
       final removedUserId = _feedProfiles[0].id!;
-      // Update local state FIRST for immediate UI reflection
       setState(() {
         _feedProfiles.removeAt(0);
       });
-      // Then notify the provider
       print(
           "[HomeScreen _removeTopCard] Notifying FeedProvider to remove profile ID: $removedUserId");
       ref.read(feedProvider.notifier).removeProfile(removedUserId);
     }
   }
 
-  // API call handler for LIKES (passed to card)
   Future<bool> _callLikeRepository({
     required int targetUserId,
     required ContentLikeType contentType,
@@ -9309,110 +9438,38 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     required LikeInteractionType interactionType,
     String? comment,
   }) async {
-    // Check if profile is complete before allowing interaction
     final authStatus = ref.read(authProvider).authStatus;
     if (authStatus == AuthStatus.onboarding2) {
-      print(
-          "[HomeScreen _callLikeRepository] Interaction blocked: Profile incomplete (onboarding2).");
       _showCompleteProfileDialog();
-      return false; // Indicate failure
+      return false;
     }
-
-    if (_isInteracting) return false; // Prevent double taps during API call
-    if (mounted) setState(() => _isInteracting = true); // Show overlay
-
+    if (_isInteracting) return false;
+    if (mounted) setState(() => _isInteracting = true);
     final errorNotifier = ref.read(errorProvider.notifier)..clearError();
     bool success = false;
     try {
       final likeRepo = ref.read(likeRepositoryProvider);
-      print(
-          "[HomeScreen _callLikeRepository] Calling API: Target $targetUserId, Type: $contentType, ID: $contentIdentifier, Interaction: $interactionType, Comment: ${comment != null}");
       success = await likeRepo.likeContent(
           likedUserId: targetUserId,
           contentType: contentType,
           contentIdentifier: contentIdentifier,
           interactionType: interactionType,
           comment: comment);
-
-      if (!success) {
-        // If API returns false, check if an error was already set by repo/service
-        if (mounted && ref.read(errorProvider) == null) {
-          print(
-              "[HomeScreen _callLikeRepository] API returned false, setting generic error.");
-          errorNotifier.setError(
-              AppError.server("Could not send ${interactionType.value}."));
-          _showErrorSnackbar(
-              "Could not send ${interactionType.value}."); // Show feedback
-        }
-      } else {
-        print("[HomeScreen _callLikeRepository] API call successful.");
+      if (!success && mounted && ref.read(errorProvider) == null) {
+        errorNotifier.setError(
+            AppError.server("Could not send ${interactionType.value}."));
+        _showErrorSnackbar("Could not send ${interactionType.value}.");
       }
     } on LikeLimitExceededException catch (e) {
-      print("[HomeScreen _callLikeRepository] Like Limit Error: ${e.message}");
       if (mounted) errorNotifier.setError(AppError.validation(e.message));
-      _showErrorSnackbar(e.message); // Show specific feedback
+      _showErrorSnackbar(e.message);
     } on InsufficientRosesException catch (e) {
-      print(
-          "[HomeScreen _callLikeRepository] Insufficient Roses: ${e.message}");
       if (mounted) errorNotifier.setError(AppError.validation(e.message));
-      _showErrorSnackbar(e.message); // Show specific feedback
+      _showErrorSnackbar(e.message);
     } on ApiException catch (e) {
-      print("[HomeScreen _callLikeRepository] API Exception: ${e.message}");
-      if (mounted) errorNotifier.setError(AppError.server(e.message));
-      _showErrorSnackbar(e.message); // Show API error message
-    } catch (e) {
-      print(
-          "[HomeScreen _callLikeRepository] Unexpected Error: ${e.toString()}");
-      if (mounted)
-        errorNotifier
-            .setError(AppError.generic("An unexpected error occurred."));
-      _showErrorSnackbar("An unexpected error occurred.");
-    } finally {
-      if (mounted) setState(() => _isInteracting = false); // Hide overlay
-    }
-    print("[HomeScreen _callLikeRepository] Returning success: $success");
-    return success; // Return the outcome
-  }
-
-  // --- ADDED: API call handler for DISLIKES (passed to card) ---
-  Future<bool> _callDislikeRepository(int targetUserId) async {
-    // Check if profile is complete before allowing interaction
-    final authStatus = ref.read(authProvider).authStatus;
-    if (authStatus == AuthStatus.onboarding2) {
-      print(
-          "[HomeScreen _callDislikeRepository] Interaction blocked: Profile incomplete (onboarding2).");
-      _showCompleteProfileDialog();
-      return false;
-    }
-
-    if (_isInteracting) return false;
-    if (mounted) setState(() => _isInteracting = true);
-
-    final errorNotifier = ref.read(errorProvider.notifier)..clearError();
-    bool success = false;
-    try {
-      final likeRepo = ref.read(likeRepositoryProvider);
-      print(
-          "[HomeScreen _callDislikeRepository] Calling dislike API for Target $targetUserId");
-      success = await likeRepo.dislikeUser(dislikedUserId: targetUserId);
-
-      if (!success) {
-        if (mounted && ref.read(errorProvider) == null) {
-          print(
-              "[HomeScreen _callDislikeRepository] API returned false, setting generic error.");
-          errorNotifier.setError(AppError.server("Could not dislike user."));
-          _showErrorSnackbar("Could not dislike user.");
-        }
-      } else {
-        print("[HomeScreen _callDislikeRepository] API call successful.");
-      }
-    } on ApiException catch (e) {
-      print("[HomeScreen _callDislikeRepository] API Exception: ${e.message}");
       if (mounted) errorNotifier.setError(AppError.server(e.message));
       _showErrorSnackbar(e.message);
     } catch (e) {
-      print(
-          "[HomeScreen _callDislikeRepository] Unexpected Error: ${e.toString()}");
       if (mounted)
         errorNotifier
             .setError(AppError.generic("An unexpected error occurred."));
@@ -9420,37 +9477,314 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     } finally {
       if (mounted) setState(() => _isInteracting = false);
     }
-    print("[HomeScreen _callDislikeRepository] Returning success: $success");
     return success;
   }
-  // --- END ADDED ---
+
+  Future<bool> _callDislikeRepository(int targetUserId) async {
+    final authStatus = ref.read(authProvider).authStatus;
+    if (authStatus == AuthStatus.onboarding2) {
+      _showCompleteProfileDialog();
+      return false;
+    }
+    if (_isInteracting) return false;
+    if (mounted) setState(() => _isInteracting = true);
+    final errorNotifier = ref.read(errorProvider.notifier)..clearError();
+    bool success = false;
+    try {
+      final likeRepo = ref.read(likeRepositoryProvider);
+      success = await likeRepo.dislikeUser(dislikedUserId: targetUserId);
+      if (!success && mounted && ref.read(errorProvider) == null) {
+        errorNotifier.setError(AppError.server("Could not dislike user."));
+        _showErrorSnackbar("Could not dislike user.");
+      }
+    } on ApiException catch (e) {
+      if (mounted) errorNotifier.setError(AppError.server(e.message));
+      _showErrorSnackbar(e.message);
+    } catch (e) {
+      if (mounted)
+        errorNotifier
+            .setError(AppError.generic("An unexpected error occurred."));
+      _showErrorSnackbar("An unexpected error occurred.");
+    } finally {
+      if (mounted) setState(() => _isInteracting = false);
+    }
+    return success;
+  }
 
   void _showErrorSnackbar(String message) {
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
           content: Text(message, style: GoogleFonts.poppins()),
-          backgroundColor: Colors.redAccent), // Use red for errors
+          backgroundColor: Colors.redAccent),
     );
   }
 
   Future<void> _openFilterDialog() async {
-    print("[HomeScreen] Opening Filter Dialog.");
+    print("[HomeScreen] Opening Full Filter Dialog.");
     await showDialog<bool>(
       context: context,
       builder: (context) => const FilterSettingsDialog(),
     );
   }
 
+  // --- *** CORRECTED: _showMiniFilterEditor *** ---
+  Future<void> _showMiniFilterEditor(FilterField filterType) async {
+    final filterNotifier = ref.read(filterProvider.notifier);
+    final currentFilters = ref.read(filterProvider);
+    bool changesMade = false; // Track if the user confirms a change
+
+    print("[HomeScreen] Opening mini-editor for: $filterType");
+
+    // --- Store initial values for comparison ---
+    final initialGender = currentFilters.whoYouWantToSee;
+    final initialAgeRange = RangeValues(
+      currentFilters.ageMin?.toDouble() ??
+          FilterSettings.defaultAgeMin.toDouble(),
+      currentFilters.ageMax?.toDouble() ??
+          FilterSettings.defaultAgeMax.toDouble(),
+    );
+    final initialRadius = currentFilters.radiusKm?.toDouble() ??
+        FilterSettings.defaultRadius.toDouble();
+    final initialActive =
+        currentFilters.activeToday ?? FilterSettings.defaultActiveToday;
+    // --- End Store initial values ---
+
+    await showDialog(
+        context: context,
+        barrierDismissible: true,
+        builder: (dialogContext) {
+          // Use StatefulBuilder to manage local state within the dialog
+          // Declare the temporary state variables *outside* the builder but *inside* showDialog
+          FilterGenderPref? tempGender = initialGender;
+          RangeValues tempAgeRange = initialAgeRange;
+          double tempRadius = initialRadius;
+          bool tempActive = initialActive;
+
+          return StatefulBuilder(
+              // The builder receives the correct context and the StateSetter for THIS builder
+              builder: (stfContext, stfSetState) {
+            Widget editorContent;
+            String title = "Edit Filter"; // Default title
+
+            // Build the specific editor UI based on filterType
+            switch (filterType) {
+              case FilterField.whoYouWantToSee:
+                title = "Show Me";
+                editorContent = Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: FilterGenderPref.values.map((gender) {
+                    return RadioListTile<FilterGenderPref>(
+                      title: Text(
+                          gender.value[0].toUpperCase() +
+                              gender.value.substring(1),
+                          style: GoogleFonts.poppins()),
+                      value: gender,
+                      groupValue:
+                          tempGender, // Bind to temporary state variable
+                      onChanged: (FilterGenderPref? value) {
+                        if (value != null) {
+                          // Use the stfSetState from the builder argument
+                          stfSetState(() {
+                            print(
+                                "[MiniDialog stfSetState] Updating tempGender from $tempGender to $value");
+                            tempGender = value;
+                          });
+                        }
+                      },
+                      activeColor: const Color(0xFF8B5CF6),
+                      contentPadding: EdgeInsets.zero,
+                    );
+                  }).toList(),
+                );
+                break;
+              case FilterField.ageMin:
+              case FilterField.ageMax:
+                title = "Age Range";
+                editorContent = Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    RangeSlider(
+                      values: tempAgeRange, // Bind to temporary state variable
+                      min: 18,
+                      max: 70,
+                      divisions: 52,
+                      labels: RangeLabels(
+                        tempAgeRange.start.round().toString(),
+                        tempAgeRange.end.round().toString(),
+                      ),
+                      activeColor: const Color(0xFF8B5CF6),
+                      inactiveColor: const Color(0xFF8B5CF6).withOpacity(0.3),
+                      onChanged: (RangeValues values) {
+                        // Use the stfSetState from the builder argument
+                        stfSetState(() {
+                          if (values.start <= values.end) {
+                            print(
+                                "[MiniDialog stfSetState] Updating tempAgeRange from $tempAgeRange to $values");
+                            tempAgeRange = values;
+                          }
+                        });
+                      },
+                    ),
+                    Padding(
+                      padding: const EdgeInsets.only(top: 8.0),
+                      child: Text(
+                        "${tempAgeRange.start.round()} - ${tempAgeRange.end.round()} years",
+                        style: GoogleFonts.poppins(
+                            color: Colors.grey[600], fontSize: 14),
+                      ),
+                    ),
+                  ],
+                );
+                break;
+              case FilterField.radiusKm:
+                title = "Distance Radius";
+                editorContent = Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Slider(
+                      value: tempRadius, // Bind to temporary state variable
+                      min: 1,
+                      max: 500,
+                      divisions: 499,
+                      label: "${tempRadius.round()} km",
+                      activeColor: const Color(0xFF8B5CF6),
+                      inactiveColor: const Color(0xFF8B5CF6).withOpacity(0.3),
+                      onChanged: (double value) {
+                        // Use the stfSetState from the builder argument
+                        stfSetState(() {
+                          print(
+                              "[MiniDialog stfSetState] Updating tempRadius from $tempRadius to $value");
+                          tempRadius = value;
+                        });
+                      },
+                    ),
+                    Padding(
+                      padding: const EdgeInsets.only(top: 8.0),
+                      child: Text(
+                        "${tempRadius.round()} km",
+                        style: GoogleFonts.poppins(
+                            color: Colors.grey[600], fontSize: 14),
+                      ),
+                    ),
+                  ],
+                );
+                break;
+              case FilterField.activeToday:
+                title = "Activity";
+                editorContent = SwitchListTile(
+                  title:
+                      Text("Active Today Only", style: GoogleFonts.poppins()),
+                  value: tempActive, // Bind to temporary state variable
+                  activeColor: const Color(0xFF8B5CF6),
+                  contentPadding: EdgeInsets.zero,
+                  onChanged: (bool value) {
+                    // Use the stfSetState from the builder argument
+                    stfSetState(() {
+                      print(
+                          "[MiniDialog stfSetState] Updating tempActive from $tempActive to $value");
+                      tempActive = value;
+                    });
+                  },
+                );
+                break;
+            }
+
+            // Build the AlertDialog using the temporary state variables
+            return AlertDialog(
+              title: Text(title,
+                  style: GoogleFonts.poppins(fontWeight: FontWeight.w600)),
+              contentPadding: const EdgeInsets.fromLTRB(20, 20, 20, 0),
+              content: editorContent,
+              actions: <Widget>[
+                TextButton(
+                  child: Text('Cancel',
+                      style: GoogleFonts.poppins(color: Colors.grey)),
+                  onPressed: () => Navigator.of(dialogContext).pop(),
+                ),
+                TextButton(
+                  child: Text('Apply',
+                      style: GoogleFonts.poppins(
+                          color: const Color(0xFF8B5CF6),
+                          fontWeight: FontWeight.w600)),
+                  onPressed: () async {
+                    // Compare final temp values with initial values
+                    bool valueChanged = false;
+                    switch (filterType) {
+                      case FilterField.whoYouWantToSee:
+                        valueChanged = (initialGender != tempGender);
+                        if (valueChanged)
+                          filterNotifier.updateSingleFilter(
+                              tempGender, filterType);
+                        break;
+                      case FilterField.ageMin:
+                      case FilterField.ageMax:
+                        valueChanged = (initialAgeRange.start.round() !=
+                                tempAgeRange.start.round() ||
+                            initialAgeRange.end.round() !=
+                                tempAgeRange.end.round());
+                        if (valueChanged) {
+                          filterNotifier.updateSingleFilter(
+                              tempAgeRange.start.round(), FilterField.ageMin);
+                          filterNotifier.updateSingleFilter(
+                              tempAgeRange.end.round(), FilterField.ageMax);
+                        }
+                        break;
+                      case FilterField.radiusKm:
+                        valueChanged =
+                            (initialRadius.round() != tempRadius.round());
+                        if (valueChanged)
+                          filterNotifier.updateSingleFilter(
+                              tempRadius.round(), filterType);
+                        break;
+                      case FilterField.activeToday:
+                        valueChanged = (initialActive != tempActive);
+                        if (valueChanged)
+                          filterNotifier.updateSingleFilter(
+                              tempActive, filterType);
+                        break;
+                    }
+
+                    if (valueChanged) {
+                      changesMade = true;
+                      print(
+                          "[HomeScreen] Mini-editor change confirmed for $filterType.");
+                    } else {
+                      print(
+                          "[HomeScreen] Mini-editor no change detected for $filterType.");
+                    }
+                    Navigator.of(dialogContext).pop(); // Close the dialog
+                  },
+                ),
+              ],
+              actionsPadding:
+                  const EdgeInsets.symmetric(horizontal: 15, vertical: 10),
+            );
+          }); // End StatefulBuilder
+        }); // End showDialog
+
+    // Save and refresh feed *after* the dialog closes if changes were made
+    if (changesMade && mounted) {
+      print("[HomeScreen] Mini-filter changed. Saving current state via API.");
+      await Future.delayed(
+          const Duration(milliseconds: 50)); // Small delay optional
+      final bool saveSuccess = await filterNotifier.saveCurrentFilterState();
+      if (!saveSuccess && mounted) {
+        _showErrorSnackbar("Failed to save filter change.");
+      }
+    } else if (!changesMade) {
+      print("[HomeScreen] No changes made in mini-filter editor, not saving.");
+    }
+  }
+  // --- *** END CORRECTED Function *** ---
+
   @override
   Widget build(BuildContext context) {
     final feedState = ref.watch(feedProvider);
-    final filters = ref.watch(filterProvider);
+    final filters = ref.watch(filterProvider); // Watch filters for chip display
 
-    // Update local profile list when provider changes
     ref.listen<HomeFeedState>(feedProvider, (_, next) {
       if (mounted && _feedProfiles != next.profiles) {
-        // Only update if different
         setState(() {
           _feedProfiles = next.profiles;
           print(
@@ -9461,8 +9795,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
 
     final error = feedState.error ?? ref.watch(errorProvider);
     final isLoadingFeed = feedState.isLoading && !feedState.hasFetchedOnce;
-    final bool hasProfilesToShow =
-        _feedProfiles.isNotEmpty; // Use local state list
+    final bool hasProfilesToShow = _feedProfiles.isNotEmpty;
 
     return Scaffold(
       backgroundColor: Colors.grey[50],
@@ -9477,49 +9810,43 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
           IconButton(
             icon: const Icon(Icons.tune_rounded, color: Color(0xFF8B5CF6)),
             tooltip: "Filters",
-            onPressed: _openFilterDialog,
+            onPressed: _openFilterDialog, // Opens the full dialog
           ),
         ],
       ),
       body: Column(
         children: [
-          // Filter Chips Row (remains the same)
+          // Filter Chips Row
           Padding(
             padding:
                 const EdgeInsets.symmetric(horizontal: 12.0, vertical: 10.0),
-            child: GestureDetector(
-                onTap: _openFilterDialog,
-                child: Container(
-                  color: Colors.transparent,
-                  height: 34,
-                  child: SingleChildScrollView(
-                    scrollDirection: Axis.horizontal,
-                    physics: const BouncingScrollPhysics(),
-                    child: Row(
-                      children: _buildFilterChips(filters),
-                    ),
-                  ),
-                )),
+            child: Container(
+              // Keep container for height constraint
+              color: Colors.transparent,
+              height: 34,
+              child: SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                physics: const BouncingScrollPhysics(),
+                child: Row(
+                  children: _buildFilterChips(filters), // Call modified builder
+                ),
+              ),
+            ),
           ),
 
           // Feed Area (Expanded)
           Expanded(
             child: Stack(
-              alignment: Alignment.center, // Center children like indicators
+              alignment: Alignment.center,
               children: [
                 if (isLoadingFeed)
                   const CircularProgressIndicator(color: Color(0xFF8B5CF6))
-                // Show loading only if initial fetch AND no profiles loaded yet
                 else if (error != null && !hasProfilesToShow)
-                  _buildErrorState(error) // Show error only if no profiles
+                  _buildErrorState(error)
                 else if (!hasProfilesToShow)
-                  _buildEmptyState() // Show empty state if no profiles and no error
-                else // Only build the card if there are profiles
-                  // --- Pass Dislike Callback ---
-                  _buildProfileCardAtIndex(
-                      0), // Build using local _feedProfiles
-
-                // General interaction loading overlay (covers everything)
+                  _buildEmptyState()
+                else
+                  _buildProfileCardAtIndex(0),
                 if (_isInteracting)
                   Positioned.fill(
                     child: Container(
@@ -9537,21 +9864,32 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     );
   }
 
-  // _buildFilterChips, _buildFilterChip, _buildEmptyState, _buildErrorState remain the same
+  // --- _buildFilterChips (Remains the same as previous fix) ---
   List<Widget> _buildFilterChips(FilterSettings filters) {
     List<Widget> chips = [];
     chips.add(_buildFilterChip(
-        Icons.wc_rounded,
-        filters.whoYouWantToSee?.value.replaceFirst(
-                filters.whoYouWantToSee!.value[0],
-                filters.whoYouWantToSee!.value[0].toUpperCase()) ??
-            FilterSettings.defaultGenderPref.value.replaceFirst(
-                FilterSettings.defaultGenderPref.value[0],
-                FilterSettings.defaultGenderPref.value[0].toUpperCase())));
-    chips.add(_buildFilterChip(Icons.cake_outlined,
-        '${filters.ageMin ?? FilterSettings.defaultAgeMin}-${filters.ageMax ?? FilterSettings.defaultAgeMax}'));
-    chips.add(_buildFilterChip(Icons.social_distance_outlined,
-        '${filters.radiusKm ?? FilterSettings.defaultRadius} km'));
+      Icons.wc_rounded,
+      filters.whoYouWantToSee?.value.replaceFirst(
+              filters.whoYouWantToSee!.value[0],
+              filters.whoYouWantToSee!.value[0].toUpperCase()) ??
+          FilterSettings.defaultGenderPref.value.replaceFirst(
+              FilterSettings.defaultGenderPref.value[0],
+              FilterSettings.defaultGenderPref.value[0].toUpperCase()),
+      FilterField.whoYouWantToSee,
+      () => _showMiniFilterEditor(FilterField.whoYouWantToSee),
+    ));
+    chips.add(_buildFilterChip(
+      Icons.cake_outlined,
+      '${filters.ageMin ?? FilterSettings.defaultAgeMin}-${filters.ageMax ?? FilterSettings.defaultAgeMax}',
+      FilterField.ageMin,
+      () => _showMiniFilterEditor(FilterField.ageMin),
+    ));
+    chips.add(_buildFilterChip(
+      Icons.social_distance_outlined,
+      '${filters.radiusKm ?? FilterSettings.defaultRadius} km',
+      FilterField.radiusKm,
+      () => _showMiniFilterEditor(FilterField.radiusKm),
+    ));
     bool activeTodayValue =
         filters.activeToday ?? FilterSettings.defaultActiveToday;
     chips.add(_buildFilterChip(
@@ -9559,42 +9897,49 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
           ? Icons.access_time_filled_rounded
           : Icons.access_time_rounded,
       activeTodayValue ? 'Active Today' : 'Active: Any',
+      FilterField.activeToday,
+      () => _showMiniFilterEditor(FilterField.activeToday),
     ));
     return chips;
   }
 
-  Widget _buildFilterChip(IconData icon, String label) {
+  // --- _buildFilterChip (Remains the same as previous fix) ---
+  Widget _buildFilterChip(
+      IconData icon, String label, FilterField type, VoidCallback onTap) {
     const Color themeColor = Color(0xFF8B5CF6);
     const Color themeBgColor = Color(0xFFEDE9FE);
     const Color themeTextColor = themeColor;
 
     return Padding(
       padding: const EdgeInsets.only(right: 8.0),
-      child: Chip(
-        avatar: Icon(icon, size: 16, color: themeColor),
-        label: Text(label),
-        labelStyle: GoogleFonts.poppins(
-            fontSize: 12, color: themeTextColor, fontWeight: FontWeight.w500),
-        backgroundColor: themeBgColor,
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-        materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-        visualDensity: const VisualDensity(horizontal: 0.0, vertical: -2),
-        side: BorderSide.none,
-        elevation: 0.5,
-        shadowColor: themeColor.withOpacity(0.2),
+      child: GestureDetector(
+        // Ensure chip is tappable
+        onTap: onTap,
+        child: Chip(
+          avatar: Icon(icon, size: 16, color: themeColor),
+          label: Text(label),
+          labelStyle: GoogleFonts.poppins(
+              fontSize: 12, color: themeTextColor, fontWeight: FontWeight.w500),
+          backgroundColor: themeBgColor,
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+          materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+          visualDensity: const VisualDensity(horizontal: 0.0, vertical: -2),
+          side: BorderSide.none,
+          elevation: 0.5,
+          shadowColor: themeColor.withOpacity(0.2),
+        ),
       ),
     );
   }
 
-  // --- MODIFIED: Build card using local state ---
+  // --- _buildProfileCardAtIndex, _buildEmptyState, _buildErrorState ---
+  // --- Remain the same as in the previous version ---
   Widget _buildProfileCardAtIndex(int index) {
     if (index >= 0 && index < _feedProfiles.length) {
       final currentProfile = _feedProfiles[index];
       return HomeProfileCard(
-        // Use unique key based on profile ID to help Flutter optimize
         key: ValueKey(currentProfile.id),
         profile: currentProfile,
-        // Pass the callback function to handle the LIKE API call
         performLikeApiCall: (
             {required contentType,
             required contentIdentifier,
@@ -9608,24 +9953,19 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
               interactionType: interactionType,
               comment: comment);
         },
-        // --- Pass DISLIKE callback ---
         performDislikeApiCall: () async {
           if (currentProfile.id == null) return false;
           return await _callDislikeRepository(currentProfile.id!);
         },
-        // Callback to remove the card after success (like OR dislike)
         onInteractionComplete: _removeTopCard,
       );
     }
-    // Should ideally not happen if hasProfilesToShow is checked correctly
     return Container(
         alignment: Alignment.center,
         child: Text("No more profiles.", style: GoogleFonts.poppins()));
   }
-  // --- END MODIFICATION ---
 
   Widget _buildEmptyState() {
-    // Wrap in LayoutBuilder to ensure scroll physics work for refresh
     return LayoutBuilder(builder: (context, constraints) {
       return SingleChildScrollView(
         physics: const AlwaysScrollableScrollPhysics(),
@@ -9673,7 +10013,6 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
   }
 
   Widget _buildErrorState(AppError error) {
-    // Wrap in LayoutBuilder to ensure scroll physics work for refresh
     return LayoutBuilder(builder: (context, constraints) {
       return SingleChildScrollView(
         physics: const AlwaysScrollableScrollPhysics(),
@@ -9725,7 +10064,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
       );
     });
   }
-}
+} // End of _HomeScreenState
 
 
 

@@ -2,6 +2,7 @@
 import 'package:dtx/models/auth_model.dart';
 import 'package:dtx/providers/feed_provider.dart'; // Import providers to invalidate
 import 'package:dtx/providers/filter_provider.dart';
+import 'package:dtx/providers/matches_provider.dart';
 import 'package:dtx/providers/recieved_likes_provider.dart';
 import 'package:dtx/providers/user_provider.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -215,6 +216,7 @@ class AuthNotifier extends StateNotifier<AuthState> {
       ref.invalidate(feedProvider);
       ref.invalidate(receivedLikesProvider);
       ref.invalidate(filterProvider);
+      ref.invalidate(matchesProvider); // <--- ADD THIS LINE
       // Add any other providers that store user-specific data here
       // e.g., ref.invalidate(chatProvider);
       // e.g., ref.invalidate(likerProfileProvider); // .family needs specific handling if needed globally
