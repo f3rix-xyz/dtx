@@ -1,23 +1,16 @@
 // lib/services/chat_service.dart
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io'; // For WebSocketException
-// *** ADDED: math import (optional if using bit-shift) ***
-// import 'dart:math';
-
-// *** ADDED: web_socket_channel imports ***
+import 'dart:io';
 import 'package:web_socket_channel/io.dart';
 import 'package:web_socket_channel/status.dart' as WebSocketStatus;
 import 'package:web_socket_channel/web_socket_channel.dart';
-// *** END ADDED ***
 
 import 'package:dtx/models/chat_message.dart';
-import 'package:dtx/providers/auth_provider.dart'; // To get token
-import 'package:dtx/providers/conversation_provider.dart'; // To add received messages
-// *** ADDED: userProvider import ***
+import 'package:dtx/providers/auth_provider.dart';
+import 'package:dtx/providers/conversation_provider.dart';
 import 'package:dtx/providers/user_provider.dart';
-// *** END ADDED ***
-import 'package:dtx/utils/token_storage.dart'; // Fallback for token
+import 'package:dtx/utils/token_storage.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 enum WebSocketConnectionState { disconnected, connecting, connected, error }
@@ -38,11 +31,10 @@ class ChatService {
 
   ChatService(this._ref, this._wsUrl) {
     print("[ChatService] Initialized with URL: $_wsUrl");
-    // Optional: Auto-connect if a token exists? Or connect on demand?
-    // Let's connect on demand for now.
   }
 
   Future<void> connect() async {
+    // ... (connect logic remains the same) ...
     _isManualDisconnect = false; // Reset flag on connect attempt
     if (_channel != null &&
         _ref.read(webSocketStateProvider) ==
@@ -69,12 +61,10 @@ class ChatService {
     }
 
     try {
-      // Include the token in the connection headers
       final headers = {'Authorization': 'Bearer $token'};
       _channel = IOWebSocketChannel.connect(
         Uri.parse(_wsUrl),
         headers: headers,
-        // Optional: Add ping interval
         pingInterval: const Duration(seconds: 15),
       );
 
@@ -84,17 +74,15 @@ class ChatService {
         _onMessageReceived,
         onDone: _handleDisconnect,
         onError: _handleError,
-        cancelOnError: false, // Keep listening after errors if possible
+        cancelOnError: false,
       );
 
-      // If connection seems successful immediately (no error thrown by connect)
       _updateState(WebSocketConnectionState.connected);
-      _reconnectAttempts =
-          0; // Reset reconnect attempts on successful connection
+      _reconnectAttempts = 0;
       print("[ChatService] Connection established successfully.");
     } catch (e) {
       print("[ChatService] Connection failed: $e");
-      _handleError(e); // Treat connection error as a disconnect/error
+      _handleError(e);
     }
   }
 
@@ -102,106 +90,162 @@ class ChatService {
     print("[ChatService] Message received: $message");
     try {
       final Map<String, dynamic> decodedMessage = jsonDecode(message);
-
-      // --- Message Handling Logic ---
       final type = decodedMessage['type'] as String?;
-      final content = decodedMessage['content'] as String?; // For info/error
-      final senderId =
-          decodedMessage['sender_user_id'] as int?; // For actual messages
-      final currentUserId =
-          _ref.read(currentUserIdProvider); // Get current user ID
+      final senderId = decodedMessage['sender_user_id'] as int?;
+      final currentUserId = _ref.read(currentUserIdProvider);
 
       if (currentUserId == null) {
         print("[ChatService] Cannot process message: Current User ID is null.");
         return;
       }
 
-      if (type == 'message' && senderId != null) {
-        final chatMessage = ChatMessage.fromJson({
-          // Adapt to ChatMessage structure
-          // We don't get full ChatMessage JSON from WS, create it
-          'MessageID': 0, // Not provided by WS, set to 0 or fetch later?
-          'SenderUserID': senderId,
-          'RecipientUserID': currentUserId, // The current user is recipient
-          'MessageText': decodedMessage['text'] as String? ?? '',
-          'SentAt':
-              DateTime.now().toUtc().toIso8601String(), // Use current time
-          'IsRead': false, // Assume unread initially
-          'ReadAt': null,
-        });
-        // Add message to the correct conversation provider
-        // Need the sender's ID to access the correct provider instance
-        _ref
-            .read(conversationProvider(senderId).notifier)
-            .addReceivedMessage(chatMessage);
-        print(
-            "[ChatService] Added received message to conversation with $senderId");
+      // --- MODIFIED: Handle different message types ---
+      ChatMessage chatMessage;
+      if (type == 'text' && senderId != null) {
+        chatMessage = ChatMessage(
+          messageID: 0, // Not provided by WS
+          senderUserID: senderId,
+          recipientUserID: currentUserId,
+          messageText: decodedMessage['text'] as String? ?? '',
+          sentAt: DateTime.now().toUtc(), // Use UTC time from WS
+          isRead: false,
+          readAt: null,
+          // Media fields will be null for text
+          mediaUrl: null,
+          mediaType: null,
+        );
+      } else if (['image', 'video', 'audio', 'file'].contains(type) &&
+          senderId != null) {
+        chatMessage = ChatMessage(
+          messageID: 0, // Not provided by WS
+          senderUserID: senderId,
+          recipientUserID: currentUserId,
+          messageText: '', // Text is empty for media
+          sentAt: DateTime.now().toUtc(),
+          isRead: false,
+          readAt: null,
+          // Populate media fields
+          mediaUrl: decodedMessage['media_url'] as String?,
+          mediaType: decodedMessage['media_type'] as String?,
+        );
       } else if (type == 'error') {
-        print("[ChatService] Received error message: $content");
-        // Optionally show error to user via a global snackbar provider?
+        print(
+            "[ChatService] Received error message: ${decodedMessage['content']}");
+        // Optionally show error to user
+        return; // Don't add error messages to conversation
       } else if (type == 'info') {
-        print("[ChatService] Received info message: $content");
-        // Optionally show info to user?
+        print(
+            "[ChatService] Received info message: ${decodedMessage['content']}");
+        // Optionally show info to user
+        return; // Don't add info messages to conversation
       } else {
         print(
             "[ChatService] Received unknown message structure: $decodedMessage");
+        return; // Ignore unknown types
       }
+
+      // Add the parsed message to the correct conversation provider
+      _ref
+          .read(conversationProvider(senderId!)
+              .notifier) // Use senderId! as it's checked above
+          .addReceivedMessage(chatMessage);
+      print(
+          "[ChatService] Added received message (type: $type) to conversation with $senderId");
+      // --- END MODIFICATION ---
     } catch (e) {
       print("[ChatService] Error processing received message: $e");
     }
   }
 
-  void sendMessage(int recipientUserId, String text) {
+  // --- MODIFIED: sendMessage signature and payload ---
+  void sendMessage(
+    int recipientUserId, {
+    String? text,
+    String? mediaUrl,
+    String? mediaType,
+  }) {
     if (_channel == null ||
         _ref.read(webSocketStateProvider) !=
             WebSocketConnectionState.connected) {
       print("[ChatService] Cannot send message: Not connected.");
-      // Optionally try to reconnect here?
-      // connect(); // Be careful with potential loops
       return;
     }
 
-    // *** FIX: Use currentUserIdProvider ***
     final currentUserId = _ref.read(currentUserIdProvider);
     if (currentUserId == null) {
       print("[ChatService] Cannot send message: Current User ID is null.");
-      return; // Or handle appropriately
+      return;
     }
 
-    final messageJson = jsonEncode({
+    // Determine message type and build payload
+    Map<String, dynamic> payload = {
       'recipient_user_id': recipientUserId,
-      'text': text,
-    });
+    };
+    String messageType = "text"; // Default
 
-    print("[ChatService] Sending message: $messageJson");
+    if (mediaUrl != null && mediaType != null) {
+      // Basic check for media type validity
+      if (mediaType.startsWith('image/')) {
+        messageType = "image";
+      } else if (mediaType.startsWith('video/')) {
+        messageType = "video";
+      } else if (mediaType.startsWith('audio/')) {
+        messageType = "audio";
+      } else {
+        messageType = "file"; // Generic file type
+      }
+      payload['type'] = messageType;
+      payload['media_url'] = mediaUrl;
+      payload['media_type'] = mediaType;
+      payload['text'] = null; // Explicitly null for media
+    } else if (text != null && text.trim().isNotEmpty) {
+      messageType = "text";
+      payload['type'] = messageType;
+      payload['text'] = text.trim();
+      payload['media_url'] = null;
+      payload['media_type'] = null;
+    } else {
+      print("[ChatService] Cannot send: Message must have text or media.");
+      return; // Nothing to send
+    }
+
+    final messageJson = jsonEncode(payload);
+    print("[ChatService] Sending message (Type: $messageType): $messageJson");
+
     try {
       _channel!.sink.add(messageJson);
 
-      // --- Optimistic UI Update ---
-      // Create a temporary message object to display immediately
-      final sentMessage = ChatMessage(
-        messageID: 0, // Temporary ID
-        senderUserID: currentUserId, // Current user is sender
-        recipientUserID: recipientUserId,
-        messageText: text,
-        sentAt: DateTime.now(), // Use local time for immediate display
-        isRead: false,
-        readAt: null,
-      );
-      // Add it to the conversation provider
-      _ref
-          .read(conversationProvider(recipientUserId).notifier)
-          .addSentMessage(sentMessage);
-      print(
-          "[ChatService] Added sent message optimistically to conversation with $recipientUserId");
-      // --- End Optimistic Update ---
+      // Optimistic UI Update (only for text messages for now)
+      if (messageType == "text") {
+        final sentMessage = ChatMessage(
+          messageID: 0, // Temporary ID
+          senderUserID: currentUserId,
+          recipientUserID: recipientUserId,
+          messageText: text!, // Use the original text
+          sentAt: DateTime.now(),
+          isRead: false,
+          readAt: null,
+          mediaUrl: null,
+          mediaType: null,
+        );
+        _ref
+            .read(conversationProvider(recipientUserId).notifier)
+            .addSentMessage(sentMessage);
+        print(
+            "[ChatService] Added sent TEXT message optimistically to conversation with $recipientUserId");
+      } else {
+        // Optional: Add optimistic UI for media upload/sent status later
+        print(
+            "[ChatService] Media message sent to WebSocket. Optimistic UI not implemented yet.");
+      }
     } catch (e) {
       print("[ChatService] Error sending message: $e");
-      // Handle potential sink errors (e.g., connection closed)
       _handleError(e);
     }
   }
+  // --- END MODIFICATION ---
 
+  // ... (_handleDisconnect, _handleError, _scheduleReconnect, disconnect, _updateState remain the same) ...
   void _handleDisconnect() {
     print("[ChatService] WebSocket disconnected.");
     _channel = null;
@@ -241,9 +285,6 @@ class ChatService {
     final delayMilliseconds =
         _initialReconnectDelay.inMilliseconds * (1 << (_reconnectAttempts - 1));
     final delay = Duration(milliseconds: delayMilliseconds);
-    // Or use math.pow:
-    // final delaySeconds = _initialReconnectDelay.inSeconds * pow(2, _reconnectAttempts - 1);
-    // final delay = Duration(seconds: delaySeconds.toInt());
 
     print(
         "[ChatService] Scheduling reconnect attempt $_reconnectAttempts/$_maxReconnectAttempts in $delay...");
@@ -276,10 +317,7 @@ class ChatService {
   }
 }
 
-// Helper to get current user ID - needed often
+// Helper to get current user ID (remains the same)
 final currentUserIdProvider = Provider<int?>((ref) {
-  // Assuming you have user data in userProvider or authProvider
-  // Adjust based on where your user ID is stored
   return ref.watch(userProvider.select((user) => user.id));
-  // Or: return ref.watch(authProvider).userId; // Ensure authProvider state has userId if using this
 });

@@ -1,13 +1,13 @@
 // File: repositories/media_repository.dart
 import 'dart:convert';
 import 'dart:io';
-import 'package:dio/dio.dart'; // Keep if used elsewhere, not needed for HttpClient PUT
+import 'package:dio/dio.dart';
 import 'package:dtx/providers/auth_provider.dart';
 import 'package:dtx/utils/app_enums.dart';
 import 'package:dtx/utils/token_storage.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:http_parser/http_parser.dart'; // Keep if used elsewhere
-// Removed path import as not directly used here
+// Removed unused http_parser import
+// Removed unused path import
 
 import '../models/media_upload_model.dart';
 import '../services/api_service.dart';
@@ -18,7 +18,74 @@ class MediaRepository {
 
   MediaRepository(this._apiService, [this.ref]);
 
-  // --- NEW Method for Edit Presigned URLs ---
+  // --- Helper to get token (avoids repetition) ---
+  Future<String?> _getAuthToken() async {
+    String? token;
+    if (ref != null) {
+      try {
+        final authState = ref!.read(authProvider);
+        token = authState.jwtToken;
+      } catch (e) {
+        print(
+            "[MediaRepository _getAuthToken] Error reading auth provider: $e");
+      }
+    }
+    if (token == null || token.isEmpty) {
+      token = await TokenStorage.getToken();
+    }
+    return token;
+  }
+  // --- END Helper ---
+
+  // --- Method for CHAT Media Presigned URL ---
+  Future<Map<String, String>> getChatMediaPresignedUrl(
+      String filename, String fileType) async {
+    final String methodName = 'getChatMediaPresignedUrl';
+    print(
+        '[MediaRepository $methodName] Getting chat media presigned URL for $filename ($fileType)...');
+    try {
+      String? token = await _getAuthToken();
+      if (token == null) {
+        throw ApiException('Authentication token is missing');
+      }
+      final headers = {'Authorization': 'Bearer $token'};
+      final body = {'filename': filename, 'type': fileType};
+      print('[MediaRepository $methodName] Request Body: $body');
+
+      final response = await _apiService.post(
+        '/api/chat/upload', // Use the CHAT media endpoint
+        body: body,
+        headers: headers,
+      );
+
+      print('[MediaRepository $methodName] API Response: $response');
+      if (response['success'] == true &&
+          response['presigned_url'] != null &&
+          response['object_url'] != null) {
+        print('[MediaRepository $methodName] URLs received successfully.');
+        return {
+          'presigned_url': response['presigned_url'].toString(),
+          'object_url': response['object_url'].toString(),
+        };
+      } else {
+        final message = response['message']?.toString() ??
+            'Failed to get chat media presigned URL.';
+        print('[MediaRepository $methodName] Failed: $message');
+        throw ApiException(message);
+      }
+    } on ApiException catch (e) {
+      print(
+          '[MediaRepository $methodName] API Exception: ${e.message} (Status: ${e.statusCode})');
+      rethrow;
+    } catch (e) {
+      print('[MediaRepository $methodName] Unexpected Error: $e');
+      throw ApiException('Error getting chat presigned URL: ${e.toString()}');
+    }
+  }
+  // --- END CHAT Media Method ---
+
+  // --- Existing methods (getEditPresignedUrls, getPresignedUrls, getAudioPresignedUrl, getVerificationPresignedUrl) ---
+  // ... keep the existing code for these methods ...
   Future<List<Map<String, dynamic>>> getEditPresignedUrls(
       List<Map<String, String>> fileDetails) async {
     final String methodName = 'getEditPresignedUrls';
@@ -68,33 +135,7 @@ class MediaRepository {
       throw ApiException('Error getting edit presigned URLs: ${e.toString()}');
     }
   }
-  // --- END NEW Method ---
 
-  // --- Helper to get token (avoids repetition) ---
-  Future<String?> _getAuthToken() async {
-    String? token;
-    if (ref != null) {
-      // Try reading from auth provider state first
-      try {
-        final authState = ref!.read(authProvider);
-        token = authState.jwtToken;
-        // print("[MediaRepository _getAuthToken] Token from Provider: $token"); // Debug
-      } catch (e) {
-        print(
-            "[MediaRepository _getAuthToken] Error reading auth provider: $e");
-        // Fallback below
-      }
-    }
-    if (token == null || token.isEmpty) {
-      // Fallback to token storage
-      token = await TokenStorage.getToken();
-      // print("[MediaRepository _getAuthToken] Token from Storage: $token"); // Debug
-    }
-    return token;
-  }
-  // --- END Helper ---
-
-  // --- Existing methods (keep as they are for onboarding/audio/verification) ---
   Future<List<Map<String, dynamic>>> getPresignedUrls(
       List<Map<String, String>> fileDetails) async {
     // (Used for initial onboarding media upload)
@@ -204,8 +245,9 @@ class MediaRepository {
           'Error getting verification presigned URL: ${e.toString()}');
     }
   }
+  // --- End Existing Methods ---
 
-  // Upload a file to S3 using presigned URL (No changes needed)
+  // --- Upload a file to S3 using presigned URL (No changes needed) ---
   Future<bool> uploadFileToS3(MediaUploadModel mediaUpload) async {
     if (mediaUpload.presignedUrl == null) {
       throw ApiException('Missing presigned URL for upload');
@@ -226,12 +268,8 @@ class MediaRepository {
       final request = await client.putUrl(Uri.parse(mediaUpload.presignedUrl!));
 
       request.headers.set(HttpHeaders.contentTypeHeader, contentType);
-      request.contentLength = await file.length();
-
-      // print('📨 Request headers:');
-      // request.headers.forEach((name, values) {
-      //   print('   $name: ${values.join(', ')}');
-      // });
+      request.headers.set(HttpHeaders.contentLengthHeader,
+          (await file.length()).toString()); // Ensure length header
 
       final fileStream = file.openRead();
       await request.addStream(fileStream);
@@ -242,7 +280,8 @@ class MediaRepository {
 
       print('📩 Upload response: Status=$statusCode, Body=$responseBody');
 
-      if (statusCode != HttpStatus.ok) {
+      if (statusCode != HttpStatus.ok && statusCode != HttpStatus.created) {
+        // Allow 201 Created as well
         print('❌ Upload failed with status $statusCode');
         return false;
       }
@@ -255,8 +294,9 @@ class MediaRepository {
       return false; // Indicate failure
     }
   }
+  // --- End S3 Upload ---
 
-  // Retry failed uploads with exponential backoff (No changes needed)
+  // --- Retry failed uploads with exponential backoff (No changes needed) ---
   Future<bool> retryUpload(MediaUploadModel mediaUpload,
       {int maxRetries = 3}) async {
     int retryCount = 0;
@@ -284,4 +324,5 @@ class MediaRepository {
         '❌ Upload failed after $maxRetries retries for: ${mediaUpload.fileName}');
     return false;
   }
+  // --- End Retry Upload ---
 }

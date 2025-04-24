@@ -43,7 +43,6 @@ dependencies:
   get_thumbnail_video:
   path_provider:
   video_player:
-  google_mlkit_face_detection:
   lucide_icons:
   record:
   audioplayers:
@@ -60,6 +59,8 @@ dependencies:
   camera:
   google_sign_in:
   web_socket_channel: 
+  url_launcher:
+  file_picker:
 
 
 
