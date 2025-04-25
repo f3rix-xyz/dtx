@@ -2,21 +2,25 @@
 import 'dart:async';
 import 'dart:io';
 import 'dart:typed_data';
-import 'package:cached_network_image/cached_network_image.dart'; // Added
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:dtx/models/chat_message.dart';
 import 'package:dtx/models/media_upload_model.dart';
 import 'package:dtx/providers/conversation_provider.dart';
 import 'package:dtx/providers/error_provider.dart';
+import 'package:dtx/providers/matches_provider.dart'; // Added
 import 'package:dtx/providers/service_provider.dart';
 import 'package:dtx/providers/user_provider.dart';
+import 'package:dtx/repositories/like_repository.dart'; // Added
 import 'package:dtx/repositories/media_repository.dart';
 import 'package:dtx/services/api_service.dart';
 import 'package:dtx/services/chat_service.dart';
+import 'package:dtx/utils/app_enums.dart'; // Added
 import 'package:dtx/widgets/message_bubble.dart';
+import 'package:dtx/widgets/report_reason_dialog.dart'; // Added
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter_cache_manager/flutter_cache_manager.dart'; // Added
+import 'package:flutter_cache_manager/flutter_cache_manager.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:image_picker/image_picker.dart';
@@ -43,9 +47,10 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
   final TextEditingController _messageController = TextEditingController();
   final ScrollController _scrollController = ScrollController();
   final FocusNode _inputFocusNode = FocusNode();
-  bool _isUploadingMedia = false; // Tracks if ANY upload is active
+  bool _isUploadingMedia = false;
+  bool _isInteracting = false; // Added for unmatch/report actions
 
-  // --- Constants ---
+  // --- Constants (Keep as is) ---
   static const int _maxImageSizeBytes = 10 * 1024 * 1024;
   static const int _maxVideoSizeBytes = 50 * 1024 * 1024;
   static const int _maxAudioSizeBytes = 10 * 1024 * 1024;
@@ -81,10 +86,10 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
   @override
   void initState() {
     super.initState();
+    // ... (keep existing initState logic) ...
     print("[ChatDetailScreen Init: ${widget.matchUserId}] Initializing...");
     _inputFocusNode.addListener(_handleFocusChange);
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      // Ensure WebSocket is connected
       final chatService = ref.read(chatServiceProvider);
       if (ref.read(webSocketStateProvider) !=
           WebSocketConnectionState.connected) {
@@ -92,12 +97,12 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
             "[ChatDetailScreen Init: ${widget.matchUserId}] Connecting WebSocket...");
         chatService.connect();
       }
-      // Initial message fetch is handled by the provider itself now
     });
   }
 
   @override
   void dispose() {
+    // ... (keep existing dispose logic) ...
     print("[ChatDetailScreen Dispose: ${widget.matchUserId}] Disposing...");
     _messageController.dispose();
     _scrollController.dispose();
@@ -110,7 +115,8 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
     // Optional: Add logic if needed when focus changes
   }
 
-  // Helper to read header bytes for MIME type detection
+  // --- Existing methods: _readHeaderBytes, _sendMessage, _scrollToBottom, _showAttachmentOptions, _handleFileSelection, _handleMediaSelection, _initiateMediaSend, _uploadAndSendMediaInBackground, _showSnackbar, _showErrorSnackbar ---
+  // ... (Keep these methods as they are) ...
   Future<Uint8List?> _readHeaderBytes(File file, [int length = 1024]) async {
     try {
       final stream = file.openRead(0, length);
@@ -129,11 +135,9 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
     }
   }
 
-  // Send TEXT message
   void _sendMessage() {
     final text = _messageController.text.trim();
-    if (text.isEmpty || _isUploadingMedia)
-      return; // Prevent send if empty or uploading
+    if (text.isEmpty || _isUploadingMedia || _isInteracting) return;
 
     final chatService = ref.read(chatServiceProvider);
     final wsState = ref.read(webSocketStateProvider);
@@ -141,17 +145,14 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
     if (wsState == WebSocketConnectionState.connected) {
       chatService.sendMessage(widget.matchUserId, text: text);
       _messageController.clear();
-      ref.read(messageInputProvider.notifier).state =
-          false; // Update button state
-      FocusScope.of(context).requestFocus(_inputFocusNode); // Keep focus
-      // Scroll handled by listener
+      ref.read(messageInputProvider.notifier).state = false;
+      FocusScope.of(context).requestFocus(_inputFocusNode);
     } else {
       _showErrorSnackbar("Cannot send message. Not connected.");
-      chatService.connect(); // Attempt to reconnect
+      chatService.connect();
     }
   }
 
-  // Scroll to the newest message (top of the reversed list)
   void _scrollToBottom() {
     if (_scrollController.hasClients) {
       print(
@@ -167,10 +168,9 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
     }
   }
 
-  // Show options for attaching media/files
   void _showAttachmentOptions() {
-    if (_isUploadingMedia) return; // Don't show if already uploading
-    FocusScope.of(context).unfocus(); // Hide keyboard
+    if (_isUploadingMedia || _isInteracting) return;
+    FocusScope.of(context).unfocus();
     showModalBottomSheet(
       context: context,
       shape: const RoundedRectangleBorder(
@@ -216,9 +216,8 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
     );
   }
 
-  // Handle selecting general files
   Future<void> _handleFileSelection() async {
-    if (_isUploadingMedia) return;
+    if (_isUploadingMedia || _isInteracting) return;
     try {
       FilePickerResult? result =
           await FilePicker.platform.pickFiles(type: FileType.any);
@@ -231,8 +230,6 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
         String? mimeType = lookupMimeType(filePath, headerBytes: headerBytes) ??
             lookupMimeType(fileName) ??
             'application/octet-stream';
-
-        // Validation
         bool isValid = false;
         String errorMsg = "Unsupported file type.";
         int maxSize = _maxFileSizeBytes;
@@ -261,8 +258,6 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
               "File is too large. Max size: ${maxSize ~/ (1024 * 1024)} MB.");
           return;
         }
-
-        // Initiate the send process
         _initiateMediaSend(file, fileName, mimeType);
       } else {
         print("[ChatDetailScreen] File picking cancelled.");
@@ -273,9 +268,8 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
     }
   }
 
-  // Handle selecting images/videos from camera or gallery
   Future<void> _handleMediaSelection(ImageSource source) async {
-    if (_isUploadingMedia) return;
+    if (_isUploadingMedia || _isInteracting) return;
     final ImagePicker picker = ImagePicker();
     try {
       final XFile? pickedFile = await picker.pickMedia();
@@ -287,8 +281,6 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
         final mimeType =
             lookupMimeType(pickedFile.path, headerBytes: headerBytes) ??
                 'application/octet-stream';
-
-        // Validation
         bool isImage = mimeType.startsWith('image/');
         bool isVideo = mimeType.startsWith('video/');
         int maxSize =
@@ -307,8 +299,6 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
               "${isImage ? 'Image' : 'Video'} is too large. Max size: ${maxSize ~/ (1024 * 1024)} MB.");
           return;
         }
-
-        // Initiate the send process
         _initiateMediaSend(file, fileName, mimeType);
       } else {
         print("[ChatDetailScreen] Media picking cancelled.");
@@ -319,50 +309,37 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
     }
   }
 
-  // Adds optimistic message and triggers background upload
   Future<void> _initiateMediaSend(
       File file, String fileName, String mimeType) async {
     if (!mounted) return;
     final conversationNotifier =
         ref.read(conversationProvider(widget.matchUserId).notifier);
     final currentUserId = ref.read(currentUserIdProvider);
-
     if (currentUserId == null) {
       _showErrorSnackbar("Cannot send media: User not identified.");
       return;
     }
-
-    // 1. Generate Temporary ID
     final tempId = DateTime.now().millisecondsSinceEpoch.toString();
-
-    // 2. Create Optimistic Message
     final optimisticMessage = ChatMessage(
       tempId: tempId,
-      messageID: 0, // Use 0 or negative for temporary
+      messageID: 0,
       senderUserID: currentUserId,
       recipientUserID: widget.matchUserId,
       messageText: '',
-      mediaUrl: null, // No final URL yet
+      mediaUrl: null,
       mediaType: mimeType,
-      sentAt: DateTime.now(), // Local time for display
+      sentAt: DateTime.now(),
       isRead: false,
-      status: ChatMessageStatus.pending, // Initial status
-      localFilePath: file.path, // Store local path
+      status: ChatMessageStatus.pending,
+      localFilePath: file.path,
       errorMessage: null,
     );
-
-    // 3. Add Optimistic Message to UI IMMEDIATELY
     print(
         "[ChatDetailScreen _initiateMediaSend: ${widget.matchUserId}] Adding optimistic media message TempID: $tempId");
     conversationNotifier.addSentMessage(optimisticMessage);
-
-    // 4. Trigger Background Upload/Send (DO NOT AWAIT here)
-    // Set the global uploading flag
     setState(() => _isUploadingMedia = true);
     _uploadAndSendMediaInBackground(file, fileName, mimeType, tempId).then((_) {
-      // This block executes after the background task finishes
       if (mounted) {
-        // Check if *other* messages are still uploading before re-enabling globally
         final stillUploading = ref
             .read(conversationProvider(widget.matchUserId))
             .messages
@@ -379,21 +356,15 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
         }
       }
     });
-
-    // 5. Scroll is handled by the listener based on the message add
   }
 
-  // Background task to upload, send WebSocket message, and update status
   Future<void> _uploadAndSendMediaInBackground(
       File file, String fileName, String mimeType, String tempId) async {
-    // Use read outside async gap if possible
     final conversationNotifier =
         ref.read(conversationProvider(widget.matchUserId).notifier);
     final mediaRepo = ref.read(mediaRepositoryProvider);
     final chatService = ref.read(chatServiceProvider);
     final bool isImage = mimeType.startsWith('image/');
-
-    // Update status to Uploading (using addPostFrameCallback for safety)
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) {
         print("[ChatBG Task $tempId] Updating status to Uploading");
@@ -401,38 +372,28 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
             tempId, ChatMessageStatus.uploading);
       }
     });
-
-    String? objectUrl; // To store the final URL
-
+    String? objectUrl;
     try {
       print("[ChatBG Task $tempId] Getting chat presigned URL...");
       final urls = await mediaRepo.getChatMediaPresignedUrl(fileName, mimeType);
       final presignedUrl = urls['presigned_url'];
-      objectUrl = urls['object_url']; // Assign final URL
-
+      objectUrl = urls['object_url'];
       if (presignedUrl == null || objectUrl == null) {
         throw ApiException("Failed to get upload URLs from server.");
       }
-
       print("[ChatBG Task $tempId] Uploading to S3...");
       final uploadModel = MediaUploadModel(
-        file: file,
-        fileName: fileName,
-        fileType: mimeType,
-        presignedUrl: presignedUrl,
-      );
+          file: file,
+          fileName: fileName,
+          fileType: mimeType,
+          presignedUrl: presignedUrl);
       bool uploadSuccess = await mediaRepo.retryUpload(uploadModel);
-
       if (!uploadSuccess) {
         throw ApiException("Failed to upload media to storage.");
       }
-
-      // --- Pre-cache the image AFTER successful upload ---
       if (isImage && objectUrl != null) {
-        // Check objectUrl is not null
         print("[ChatBG Task $tempId] Pre-caching image: $objectUrl");
         try {
-          // Use the default cache manager or configure a specific one
           await DefaultCacheManager().downloadFile(objectUrl);
           print(
               "[ChatBG Task $tempId] Image pre-caching completed for $objectUrl");
@@ -441,25 +402,15 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
               "[ChatBG Task $tempId] WARNING: Image pre-caching failed: $cacheErr");
         }
       }
-      // --- End Pre-cache ---
-
       print(
           "[ChatBG Task $tempId] Upload successful. Sending WebSocket message...");
-      chatService.sendMessage(
-        widget.matchUserId,
-        mediaUrl: objectUrl,
-        mediaType: mimeType,
-      );
-
-      // Update status to SENT only AFTER successful upload and WS send attempt
+      chatService.sendMessage(widget.matchUserId,
+          mediaUrl: objectUrl, mediaType: mimeType);
       if (mounted) {
         print(
             "[ChatBG Task $tempId] Updating status to Sent, Final URL: $objectUrl");
-        conversationNotifier.updateMessageStatus(
-          tempId,
-          ChatMessageStatus.sent,
-          finalMediaUrl: objectUrl, // Provide the final URL
-        );
+        conversationNotifier.updateMessageStatus(tempId, ChatMessageStatus.sent,
+            finalMediaUrl: objectUrl);
       }
       print("[ChatBG Task $tempId] Message marked as SENT locally.");
     } on ApiException catch (e) {
@@ -467,10 +418,8 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
       if (mounted) {
         print("[ChatBG Task $tempId] Updating status to Failed (API Error)");
         conversationNotifier.updateMessageStatus(
-          tempId,
-          ChatMessageStatus.failed,
-          errorMessage: e.message,
-        );
+            tempId, ChatMessageStatus.failed,
+            errorMessage: e.message);
       }
     } catch (e) {
       print("[ChatBG Task $tempId] General Error: $e");
@@ -478,45 +427,172 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
         print(
             "[ChatBG Task $tempId] Updating status to Failed (General Error)");
         conversationNotifier.updateMessageStatus(
-          tempId,
-          ChatMessageStatus.failed,
-          errorMessage: "Upload/Send failed: ${e.toString()}",
-        );
+            tempId, ChatMessageStatus.failed,
+            errorMessage: "Upload/Send failed: ${e.toString()}");
       }
     }
-    // finally block removed - input re-enabling is handled in _initiateMediaSend.then()
   }
 
-  // Snackbar helpers
   void _showSnackbar(String message,
       {bool isError = false, Duration duration = const Duration(seconds: 3)}) {
     if (!mounted) return;
     ScaffoldMessenger.of(context).removeCurrentSnackBar();
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
         content: Text(message, style: GoogleFonts.poppins()),
         backgroundColor: isError ? Colors.redAccent : Colors.green,
-        duration: duration,
-      ),
-    );
+        duration: duration));
   }
 
   void _showErrorSnackbar(String message) {
     _showSnackbar(message, isError: true);
   }
+  // --- End Existing Methods ---
+
+  // --- ADDED: _showMoreOptions ---
+  void _showMoreOptions() {
+    if (_isInteracting) return; // Don't show if another action is processing
+    showModalBottomSheet(
+      context: context,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (context) {
+        return SafeArea(
+          child: Wrap(
+            children: <Widget>[
+              ListTile(
+                leading:
+                    const Icon(Icons.block_flipped, color: Colors.redAccent),
+                title: Text('Unmatch',
+                    style: GoogleFonts.poppins(color: Colors.redAccent)),
+                onTap: () {
+                  Navigator.pop(context); // Close bottom sheet
+                  _confirmAndUnmatch();
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.flag_outlined, color: Colors.orange),
+                title: Text('Report',
+                    style: GoogleFonts.poppins(color: Colors.orange)),
+                onTap: () {
+                  Navigator.pop(context); // Close bottom sheet
+                  _reportUser();
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.cancel_outlined, color: Colors.grey),
+                title: Text('Cancel', style: GoogleFonts.poppins()),
+                onTap: () => Navigator.pop(context), // Close bottom sheet
+              ),
+              const SizedBox(height: 10),
+            ],
+          ),
+        );
+      },
+    );
+  }
+  // --- END ADDED ---
+
+  // --- ADDED: _confirmAndUnmatch ---
+  Future<void> _confirmAndUnmatch() async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text("Unmatch User?", style: GoogleFonts.poppins()),
+        content: Text(
+            "Are you sure you want to unmatch ${widget.matchName}? You won't be able to message them again.",
+            style: GoogleFonts.poppins()),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: Text("Cancel",
+                  style: GoogleFonts.poppins(color: Colors.grey))),
+          TextButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: Text("Unmatch",
+                  style: GoogleFonts.poppins(color: Colors.red))),
+        ],
+      ),
+    );
+
+    if (confirm != true) return;
+
+    if (!mounted) return;
+    setState(() => _isInteracting = true);
+    ref.read(errorProvider.notifier).clearError();
+
+    try {
+      final success = await ref
+          .read(likeRepositoryProvider)
+          .unmatchUser(targetUserId: widget.matchUserId);
+
+      if (success && mounted) {
+        _showSnackbar("Unmatched successfully.", isError: false);
+        ref.invalidate(matchesProvider); // Refresh matches list
+        Navigator.of(context).pop(); // Go back from chat screen
+      } else if (!success && mounted) {
+        _showErrorSnackbar("Failed to unmatch user.");
+      }
+    } on ApiException catch (e) {
+      _showErrorSnackbar("Unmatch failed: ${e.message}");
+    } catch (e) {
+      _showErrorSnackbar("An unexpected error occurred during unmatch.");
+    } finally {
+      if (mounted) setState(() => _isInteracting = false);
+    }
+  }
+  // --- END ADDED ---
+
+  // --- ADDED: _reportUser ---
+  Future<void> _reportUser() async {
+    final selectedReason = await showReportReasonDialog(context);
+    if (selectedReason == null) return; // User cancelled
+
+    if (!mounted) return;
+    setState(() => _isInteracting = true);
+    ref.read(errorProvider.notifier).clearError();
+
+    try {
+      final success = await ref.read(likeRepositoryProvider).reportUser(
+            targetUserId: widget.matchUserId,
+            reason: selectedReason,
+          );
+
+      if (success && mounted) {
+        _showSnackbar("Report submitted. Thank you.", isError: false);
+        // Decide if you want to unmatch after reporting from chat
+        // Option 1: Unmatch automatically after report
+        await _confirmAndUnmatch(); // Re-use the unmatch flow (will ask for confirmation again)
+        // Option 2: Don't unmatch, just show success message
+        // _showSnackbar("Report submitted. Thank you.", isError: false);
+      } else if (!success && mounted) {
+        _showErrorSnackbar("Failed to submit report.");
+      }
+    } on ApiException catch (e) {
+      _showErrorSnackbar("Report failed: ${e.message}");
+    } catch (e) {
+      _showErrorSnackbar("An unexpected error occurred during report.");
+    } finally {
+      // Reset interaction flag ONLY IF NOT unmatching automatically
+      // If unmatching, the unmatch finally block will handle it.
+      // if (mounted && !<UNMATCH_AFTER_REPORT_FLAG>) setState(() => _isInteracting = false);
+      if (mounted)
+        setState(() => _isInteracting = false); // Reset if not unmatching here
+    }
+  }
+  // --- END ADDED ---
 
   @override
   Widget build(BuildContext context) {
+    // ... (keep existing build setup) ...
     print(
-        "[ChatDetailScreen Build: ${widget.matchUserId}] Rebuilding Widget... IsUploading: $_isUploadingMedia");
-
+        "[ChatDetailScreen Build: ${widget.matchUserId}] Rebuilding Widget... IsUploading: $_isUploadingMedia, IsInteracting: $_isInteracting");
     final state = ref.watch(conversationProvider(widget.matchUserId));
     final currentUserId = ref.watch(currentUserIdProvider);
     final wsState = ref.watch(webSocketStateProvider);
-
-    // Refined Scroll Listener
     ref.listen<ConversationState>(conversationProvider(widget.matchUserId),
         (prev, next) {
+      // ... (keep existing scroll listener logic) ...
       final prevLength = prev?.messages.length ?? 0;
       final nextLength = next.messages.length;
       final prevFirstTempId = prev?.messages.isNotEmpty ?? false
@@ -533,13 +609,10 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
       }
       print(
           "[ChatDetailScreen Listener: ${widget.matchUserId}] State changed. PrevLen=$prevLength, NextLen=$nextLength. PrevFirstTempId=$prevFirstTempId, NextFirstTempId=$nextFirstTempId, NextFirstStatus=$nextFirstStatus. Next Status Counts: $nextStatusCounts");
-
-      // Scroll only when a NEW PENDING message is ADDED optimistically by the current user
       if (nextLength > prevLength &&
           next.messages.isNotEmpty &&
           next.messages.first.senderUserID == currentUserId &&
           next.messages.first.status == ChatMessageStatus.pending) {
-        // More specific check
         print(
             "[ChatDetailScreen Listener: ${widget.matchUserId}] New PENDING message added by me. Scheduling scroll.");
         WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -588,9 +661,7 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
               child: Text(
                 widget.matchName,
                 style: GoogleFonts.poppins(
-                  fontSize: 17,
-                  fontWeight: FontWeight.w600,
-                ),
+                    fontSize: 17, fontWeight: FontWeight.w600),
                 overflow: TextOverflow.ellipsis,
               ),
             ),
@@ -598,6 +669,15 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
         ),
         titleSpacing: 0,
         actions: [
+          // --- ADDED: More Options Button ---
+          IconButton(
+            icon: Icon(Icons.more_vert_rounded, color: Colors.grey[600]),
+            tooltip: "More Options",
+            onPressed: _showMoreOptions,
+            disabledColor: Colors.grey[300], // Disable if interacting
+          ),
+          // --- END ADDED ---
+          // Existing status indicator (keep as is)
           Padding(
             padding: const EdgeInsets.only(right: 16.0),
             child: Icon(
@@ -620,14 +700,25 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
               child: _buildMessagesList(state, currentUserId),
             ),
           ),
-          _buildMessageInputArea(),
+          // --- ADDED: Interaction Overlay ---
+          if (_isInteracting)
+            Container(
+              padding: const EdgeInsets.symmetric(vertical: 8.0),
+              color: Colors.white.withOpacity(0.8),
+              child: const Center(
+                  child: CircularProgressIndicator(color: Color(0xFF8B5CF6))),
+            )
+          else
+            _buildMessageInputArea(), // Show input only if not interacting
+          // --- END ADDED ---
         ],
       ),
     );
   }
 
-  // Builds the list of messages
+  // --- _buildMessagesList (Keep as is) ---
   Widget _buildMessagesList(ConversationState state, int? currentUserId) {
+    // ... (keep existing implementation) ...
     print(
         "[ChatDetailScreen _buildMessagesList: ${widget.matchUserId}] Building message list. Count: ${state.messages.length}");
     if (state.isLoading && state.messages.isEmpty) {
@@ -636,31 +727,23 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
     }
     if (state.error != null && state.messages.isEmpty) {
       return Center(
-        child: Padding(
-          padding: const EdgeInsets.all(20.0),
-          child: Text(
-            "Error loading messages: ${state.error!.message}",
-            style: GoogleFonts.poppins(color: Colors.red),
-            textAlign: TextAlign.center,
-          ),
-        ),
-      );
+          child: Padding(
+              padding: const EdgeInsets.all(20.0),
+              child: Text("Error loading messages: ${state.error!.message}",
+                  style: GoogleFonts.poppins(color: Colors.red),
+                  textAlign: TextAlign.center)));
     }
     if (!state.isLoading && state.messages.isEmpty) {
       return Center(
-        child: Padding(
-          padding: const EdgeInsets.all(20.0),
-          child: Text(
-            "Start the conversation!",
-            style: GoogleFonts.poppins(color: Colors.grey[600], fontSize: 16),
-            textAlign: TextAlign.center,
-          ),
-        ),
-      );
+          child: Padding(
+              padding: const EdgeInsets.all(20.0),
+              child: Text("Start the conversation!",
+                  style: GoogleFonts.poppins(
+                      color: Colors.grey[600], fontSize: 16),
+                  textAlign: TextAlign.center)));
     }
-
     return ListView.builder(
-      addAutomaticKeepAlives: true, // Keep items alive when scrolled
+      addAutomaticKeepAlives: true,
       controller: _scrollController,
       reverse: true,
       padding: const EdgeInsets.symmetric(vertical: 10.0, horizontal: 8.0),
@@ -678,28 +761,24 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
             }
           }
         }
-
         final keyId = message.tempId ?? message.messageID.toString();
         return Padding(
-          padding: const EdgeInsets.symmetric(vertical: 2.0),
-          child: MessageBubble(
-            // Update Key to include more factors to ensure uniqueness and trigger rebuild only when necessary
-            key: ValueKey(
-                "${keyId}_${message.status}_${message.mediaUrl ?? message.localFilePath}"),
-            message: message,
-            isMe: isMe,
-            showTail: showTail,
-          ),
-        );
+            padding: const EdgeInsets.symmetric(vertical: 2.0),
+            child: MessageBubble(
+                key: ValueKey(
+                    "${keyId}_${message.status}_${message.mediaUrl ?? message.localFilePath}"),
+                message: message,
+                isMe: isMe,
+                showTail: showTail));
       },
     );
   }
 
-  // Builds the input area
+  // --- _buildMessageInputArea (Disable if interacting) ---
   Widget _buildMessageInputArea() {
     final canSendText = ref.watch(messageInputProvider);
-    // Use _isUploadingMedia to disable inputs
-    final bool allowInput = !_isUploadingMedia;
+    final bool allowInput = !_isUploadingMedia &&
+        !_isInteracting; // Disable if uploading OR interacting
 
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12.0, vertical: 8.0),
@@ -707,11 +786,10 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
         color: Colors.white,
         boxShadow: [
           BoxShadow(
-            color: Colors.grey.withOpacity(0.15),
-            spreadRadius: 1,
-            blurRadius: 5,
-            offset: const Offset(0, -2),
-          ),
+              color: Colors.grey.withOpacity(0.15),
+              spreadRadius: 1,
+              blurRadius: 5,
+              offset: const Offset(0, -2))
         ],
       ),
       child: SafeArea(
@@ -719,22 +797,17 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
           crossAxisAlignment: CrossAxisAlignment.center,
           children: [
             IconButton(
-              // Attachment button
               icon: Icon(Icons.add_circle_outline_rounded,
                   color: allowInput ? Colors.grey[600] : Colors.grey[300]),
-              onPressed: allowInput
-                  ? _showAttachmentOptions
-                  : null, // Disable if uploading
+              onPressed: allowInput ? _showAttachmentOptions : null,
               tooltip: "Attach Media",
             ),
             const SizedBox(width: 4.0),
             Expanded(
-              // Text field
               child: Container(
                 decoration: BoxDecoration(
-                  color: Colors.grey[100],
-                  borderRadius: BorderRadius.circular(25.0),
-                ),
+                    color: Colors.grey[100],
+                    borderRadius: BorderRadius.circular(25.0)),
                 child: Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 16.0),
                   child: TextField(
@@ -742,8 +815,11 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
                     controller: _messageController,
                     textCapitalization: TextCapitalization.sentences,
                     decoration: InputDecoration(
-                      hintText:
-                          allowInput ? "Type a message..." : "Uploading...",
+                      hintText: allowInput
+                          ? "Type a message..."
+                          : (_isUploadingMedia
+                              ? "Uploading..."
+                              : "Processing..."),
                       hintStyle: GoogleFonts.poppins(color: Colors.grey[500]),
                       border: InputBorder.none,
                       contentPadding:
@@ -753,26 +829,24 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
                       ref.read(messageInputProvider.notifier).state =
                           text.trim().isNotEmpty;
                     },
-                    onSubmitted: (_) => canSendText && allowInput
-                        ? _sendMessage()
-                        : null, // Send only if allowed and has text
-                    minLines: 1,
-                    maxLines: 5,
+                    onSubmitted: (_) =>
+                        canSendText && allowInput ? _sendMessage() : null,
+                    minLines: 1, maxLines: 5,
                     keyboardType: TextInputType.multiline,
                     style: GoogleFonts.poppins(
                         color: Colors.black87, fontSize: 15),
-                    enabled: allowInput, // Disable text field during upload
+                    enabled: allowInput, // Disable text field
                   ),
                 ),
               ),
             ),
             const SizedBox(width: 8.0),
             IconButton(
-              // Send button
               icon: const Icon(Icons.send_rounded),
               color: const Color(0xFF8B5CF6),
-              // Disable if no text OR if uploading media
-              onPressed: canSendText && allowInput ? _sendMessage : null,
+              onPressed: canSendText && allowInput
+                  ? _sendMessage
+                  : null, // Disable send button
               tooltip: "Send Message",
               disabledColor: Colors.grey[400],
             ),
@@ -783,5 +857,5 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
   }
 }
 
-// Provider to track if text input field has text
+// Provider to track if text input field has text (Keep as is)
 final messageInputProvider = StateProvider<bool>((ref) => false);

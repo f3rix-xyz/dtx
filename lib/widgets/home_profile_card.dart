@@ -1,14 +1,16 @@
 // File: widgets/home_profile_card.dart
-import 'dart:async'; // Import async
+import 'dart:async';
 import 'dart:math';
 import 'package:dtx/models/user_model.dart';
 import 'package:dtx/models/like_models.dart';
 import 'package:dtx/providers/audio_player_provider.dart';
 import 'package:dtx/utils/app_enums.dart';
-import 'package:dtx/providers/user_provider.dart'; // Import user provider
+import 'package:dtx/providers/user_provider.dart';
+import 'package:dtx/widgets/report_reason_dialog.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:cached_network_image/cached_network_image.dart';
 
 // Function Type Definitions
 typedef PerformLikeApiCall = Future<bool> Function({
@@ -17,27 +19,29 @@ typedef PerformLikeApiCall = Future<bool> Function({
   required LikeInteractionType interactionType,
   String? comment,
 });
-
-// --- ADDED: Dislike Callback Type ---
 typedef PerformDislikeApiCall = Future<bool> Function();
-
 typedef InteractionCompleteCallback = void Function();
+typedef PerformReportApiCall = Future<bool> Function(
+    {required ReportReason reason});
+const int maxCommentLength = 140;
 
 class HomeProfileCard extends ConsumerWidget {
   final UserModel profile;
   final PerformLikeApiCall performLikeApiCall;
-  final PerformDislikeApiCall performDislikeApiCall; // <<< ADDED
+  final PerformDislikeApiCall performDislikeApiCall;
+  final PerformReportApiCall performReportApiCall;
   final InteractionCompleteCallback onInteractionComplete;
 
   const HomeProfileCard({
     super.key,
     required this.profile,
     required this.performLikeApiCall,
-    required this.performDislikeApiCall, // <<< ADDED
+    required this.performDislikeApiCall,
+    required this.performReportApiCall,
     required this.onInteractionComplete,
   });
 
-  // _showInteractionDialog(...) remains the same as previous version
+  // --- _showInteractionDialog (Corrected - Not Commented) ---
   Future<void> _showInteractionDialog(
     BuildContext context,
     WidgetRef ref,
@@ -57,7 +61,7 @@ class HomeProfileCard extends ConsumerWidget {
 
     if (isMale) {
       listenerCallback = () {
-        if (context.mounted && commentController.value.text != null) {
+        if (context.mounted && commentController.hasListeners) {
           try {
             sendLikeEnabledNotifier.value =
                 commentController.text.trim().isNotEmpty;
@@ -101,9 +105,10 @@ class HomeProfileCard extends ConsumerWidget {
         );
 
         if (success && context.mounted) {
-          Navigator.of(context, rootNavigator: true).pop();
-          onInteractionComplete();
+          Navigator.of(context, rootNavigator: true).pop(); // Close dialog
+          onInteractionComplete(); // Trigger card removal etc.
         }
+        // Errors shown via SnackBar in HomeScreen's callback
       } finally {
         try {
           if (context.mounted && _isDialogInteractionActive.value) {
@@ -121,6 +126,7 @@ class HomeProfileCard extends ConsumerWidget {
         context: context,
         barrierDismissible: true,
         builder: (BuildContext dialogContext) {
+          // --- START OF DIALOG UI ---
           return AlertDialog(
             contentPadding: const EdgeInsets.all(16),
             shape: RoundedRectangleBorder(
@@ -132,21 +138,30 @@ class HomeProfileCard extends ConsumerWidget {
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
+                    // Image Preview
                     if (previewImageUrl != null)
                       ClipRRect(
                         borderRadius: BorderRadius.circular(12.0),
-                        child: Image.network(
-                          previewImageUrl,
+                        child: CachedNetworkImage(
+                          imageUrl: previewImageUrl,
                           height: 100,
                           width: double.infinity,
                           fit: BoxFit.cover,
-                          errorBuilder: (_, __, ___) => Container(
+                          placeholder: (context, url) => Container(
+                            height: 100,
+                            color: Colors.grey[200],
+                            child: const Center(
+                                child: CircularProgressIndicator(
+                                    strokeWidth: 2, color: Color(0xAA8B5CF6))),
+                          ),
+                          errorWidget: (context, url, error) => Container(
                               height: 100,
                               color: Colors.grey[200],
                               child: Icon(Icons.broken_image,
                                   color: Colors.grey[400])),
                         ),
                       ),
+                    // Audio Prompt Placeholder
                     if (previewImageUrl == null &&
                         contentType == ContentLikeType.audioPrompt)
                       Container(
@@ -160,6 +175,7 @@ class HomeProfileCard extends ConsumerWidget {
                             child: Icon(Icons.multitrack_audio_rounded,
                                 size: 40, color: Colors.grey[500])),
                       ),
+                    // Text Prompt Placeholder
                     if (previewImageUrl == null &&
                         contentType != ContentLikeType.audioPrompt)
                       Container(
@@ -174,6 +190,7 @@ class HomeProfileCard extends ConsumerWidget {
                                 size: 40, color: Colors.grey[500])),
                       ),
                     const SizedBox(height: 16),
+                    // Comment Field
                     TextField(
                       controller: commentController,
                       focusNode: commentFocusNode,
@@ -191,15 +208,17 @@ class HomeProfileCard extends ConsumerWidget {
                         contentPadding: const EdgeInsets.symmetric(
                             horizontal: 12, vertical: 10),
                       ),
-                      maxLength: 150,
+                      maxLength: maxCommentLength, // Use constant
                       maxLines: 3,
                       minLines: 1,
                       textCapitalization: TextCapitalization.sentences,
                     ),
                     const SizedBox(height: 16),
+                    // Action Buttons (Rose/Like)
                     Row(
                       mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                       children: [
+                        // Rose Button
                         ValueListenableBuilder<bool>(
                           valueListenable: sendLikeEnabledNotifier,
                           builder: (context, isCommentValid, child) {
@@ -253,6 +272,7 @@ class HomeProfileCard extends ConsumerWidget {
                             );
                           },
                         ),
+                        // Like Button
                         ValueListenableBuilder<bool>(
                           valueListenable: sendLikeEnabledNotifier,
                           builder: (context, isCommentValid, child) {
@@ -274,11 +294,12 @@ class HomeProfileCard extends ConsumerWidget {
                                   label: Text(
                                     "Send Like",
                                     style: GoogleFonts.poppins(
-                                        fontWeight: FontWeight.w600,
-                                        color: effectiveEnabled
-                                            ? Colors.white
-                                            : Colors.grey.shade500,
-                                        fontSize: 13),
+                                      fontWeight: FontWeight.w600,
+                                      color: effectiveEnabled
+                                          ? Colors.white
+                                          : Colors.grey.shade500,
+                                      fontSize: 13,
+                                    ),
                                     overflow: TextOverflow.ellipsis,
                                   ),
                                   style: ElevatedButton.styleFrom(
@@ -305,32 +326,36 @@ class HomeProfileCard extends ConsumerWidget {
                         ),
                       ],
                     ),
+                    // Cancel Button
                     ValueListenableBuilder<bool>(
-                        valueListenable: _isDialogInteractionActive,
-                        builder: (context, isInteractionActive, child) {
-                          return TextButton(
-                            child: Text("Cancel",
-                                style: GoogleFonts.poppins(
-                                    color: isInteractionActive
-                                        ? Colors.grey.shade400
-                                        : Colors.grey)),
-                            onPressed: isInteractionActive
-                                ? null
-                                : () => Navigator.of(dialogContext).pop(),
-                          );
-                        }),
+                      valueListenable: _isDialogInteractionActive,
+                      builder: (context, isInteractionActive, child) {
+                        return TextButton(
+                          child: Text("Cancel",
+                              style: GoogleFonts.poppins(
+                                  color: isInteractionActive
+                                      ? Colors.grey.shade400
+                                      : Colors.grey)),
+                          onPressed: isInteractionActive
+                              ? null
+                              : () => Navigator.of(dialogContext).pop(),
+                        );
+                      },
+                    ),
                   ],
                 ),
               ),
             ),
           );
+          // --- END OF DIALOG UI ---
         },
       );
     } finally {
+      // Dispose resources safely
       if (listenerCallback != null) {
         try {
           commentController.removeListener(listenerCallback);
-          listenerCallback = null;
+          listenerCallback = null; // Help garbage collection
         } catch (e) {
           print(
               "Error removing commentController listener (already removed?): $e");
@@ -359,21 +384,27 @@ class HomeProfileCard extends ConsumerWidget {
     }
   }
 
+  // --- _handleReport (Keep as is) ---
+  Future<void> _handleReport(BuildContext context) async {
+    final selectedReason = await showReportReasonDialog(context);
+    if (selectedReason != null) {
+      await performReportApiCall(reason: selectedReason);
+    }
+  }
+
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    // Content Block Generation (Keep as is)
     final List<dynamic> contentBlocks = [];
     final mediaUrls = profile.mediaUrls ?? [];
     final prompts = profile.prompts;
-
     contentBlocks.add("header_section");
     if (mediaUrls.isNotEmpty) contentBlocks.add(mediaUrls[0]);
     if (prompts.isNotEmpty) contentBlocks.add(prompts[0]);
     contentBlocks.add("vitals_section");
-
     int mediaIndex = 1;
     int promptIndex = 1;
     int maxRemaining = max(mediaUrls.length, prompts.length);
-
     for (int i = 1; i < maxRemaining; i++) {
       if (mediaIndex < mediaUrls.length) {
         contentBlocks.add(mediaUrls[mediaIndex]);
@@ -391,13 +422,11 @@ class HomeProfileCard extends ConsumerWidget {
     return Container(
       color: Colors.white,
       child: Stack(
-        // <-- Use Stack here
         children: [
-          // --- Main Scrollable Content ---
+          // Main Scrollable Content
           ListView.builder(
             physics: const ClampingScrollPhysics(),
-            padding: const EdgeInsets.only(
-                bottom: 80.0), // <-- Add padding for buttons
+            padding: const EdgeInsets.only(bottom: 80.0), // Space for buttons
             itemCount: contentBlocks.length,
             itemBuilder: (context, index) {
               final item = contentBlocks[index];
@@ -406,7 +435,7 @@ class HomeProfileCard extends ConsumerWidget {
               final double horizontalPadding = 12.0;
               Widget contentWidget;
 
-              // --- BUILD BLOCKS (Keep existing logic) ---
+              // Build Blocks (Calls corrected _buildMediaItem)
               if (item is String && item == "header_section") {
                 contentWidget = _buildHeaderBlock(profile);
               } else if (item is String && item.startsWith('http')) {
@@ -415,7 +444,8 @@ class HomeProfileCard extends ConsumerWidget {
                 if (originalMediaIndex == -1) originalMediaIndex = 0;
                 contentWidget =
                     _buildMediaItem(context, ref, item, originalMediaIndex);
-              } else if (item is Prompt) {
+              } // Passes URL
+              else if (item is Prompt) {
                 contentWidget = _buildPromptItem(context, ref, item);
               } else if (item is AudioPromptModel) {
                 contentWidget = _buildAudioItem(context, ref, item);
@@ -424,7 +454,6 @@ class HomeProfileCard extends ConsumerWidget {
               } else {
                 contentWidget = const SizedBox.shrink();
               }
-              // --- END BUILD BLOCKS ---
 
               return Padding(
                 padding: EdgeInsets.fromLTRB(horizontalPadding, topPadding,
@@ -433,71 +462,133 @@ class HomeProfileCard extends ConsumerWidget {
               );
             },
           ),
-          // --- END Main Scrollable Content ---
-
-          // --- MODIFIED: Only Dislike Button in Overlay ---
+          // Action Buttons Row
           Positioned(
-            bottom: 15, // Adjust vertical position as needed
-            left: 30, // Position it on the left
-            child: _buildActionButton(
-                icon: Icons.close_rounded,
-                color: Colors.redAccent.shade100,
-                onPressed: () async {
-                  // Make async
-                  bool success = await performDislikeApiCall();
-                  if (success) {
-                    onInteractionComplete(); // Remove card if dislike succeeds
-                  }
-                },
-                tooltip: "Dislike",
-                size: 55 // Slightly smaller buttons if desired
-                ),
-          ),
-          // --- END MODIFICATION ---
+              bottom: 15,
+              left: 30,
+              right: 30,
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  _buildActionButton(
+                      // Dislike
+                      icon: Icons.close_rounded,
+                      color: Colors.redAccent.shade100,
+                      onPressed: () async {
+                        bool success = await performDislikeApiCall();
+                        if (success) {
+                          onInteractionComplete();
+                        }
+                      },
+                      tooltip: "Dislike",
+                      size: 55),
+                  _buildActionButton(
+                      // Report
+                      icon: Icons.flag_outlined,
+                      color: Colors.orange.shade600,
+                      onPressed: () => _handleReport(context),
+                      tooltip: "Report",
+                      size: 55),
+                ],
+              )),
         ],
       ),
-      // --- END Stack ---
     );
   }
 
-  // --- Helper methods (_buildHeaderBlock, _buildVitalsBlock, _buildVitalRow, etc.) remain unchanged ---
+  // --- Corrected _buildMediaItem using CachedNetworkImage ---
+  Widget _buildMediaItem(
+      BuildContext context, WidgetRef ref, String url, int index) {
+    bool isVideo = url.toLowerCase().contains('.mp4') ||
+        url.toLowerCase().contains('.mov') ||
+        url.toLowerCase().contains('.avi') ||
+        url.toLowerCase().contains('.webm');
+
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(10),
+      child: AspectRatio(
+        aspectRatio: 4 / 5.5,
+        child: Container(
+          decoration: BoxDecoration(color: Colors.grey[200]),
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              CachedNetworkImage(
+                imageUrl: url,
+                fit: BoxFit.cover,
+                placeholder: (context, url) => const Center(
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2.0,
+                    color: Color(0xAA8B5CF6),
+                  ),
+                ),
+                errorWidget: (context, url, error) => Center(
+                  child: Icon(
+                    Icons.broken_image_outlined,
+                    color: Colors.grey[400],
+                    size: 40,
+                  ),
+                ),
+              ),
+              if (isVideo)
+                Center(
+                  child: Container(
+                    padding: const EdgeInsets.all(10),
+                    decoration: BoxDecoration(
+                      color: Colors.black.withOpacity(0.5),
+                      shape: BoxShape.circle,
+                    ),
+                    child: const Icon(Icons.play_arrow_rounded,
+                        color: Colors.white, size: 30),
+                  ),
+                ),
+              Positioned(
+                bottom: 10,
+                right: 10,
+                child: _buildSmallLikeButton(
+                  () => _showInteractionDialog(
+                    context,
+                    ref,
+                    ContentLikeType.media,
+                    index.toString(),
+                    url,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  // --- Other Helper Methods (_buildHeaderBlock, _buildVitalsBlock, etc.) ---
+  // ... (keep these as they were in the previous correct version) ...
   Widget _buildHeaderBlock(UserModel profile) {
     final age = profile.age;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Row(
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Flexible(
-              child: Text(
-                '${profile.name ?? 'Name'}${age != null ? ', $age' : ''}',
-                style: GoogleFonts.poppins(
-                    fontSize: 26,
-                    fontWeight: FontWeight.bold,
-                    color: Colors.black87),
-              ),
-            ),
-          ],
-        ),
-        if (profile.hometown != null && profile.hometown!.isNotEmpty) ...[
-          const SizedBox(height: 4),
-          Row(
-            children: [
-              Icon(Icons.location_on_outlined,
-                  size: 16, color: Colors.grey[600]),
-              const SizedBox(width: 4),
-              Text(
-                profile.hometown!,
-                style:
-                    GoogleFonts.poppins(fontSize: 14, color: Colors.grey[700]),
-              ),
-            ],
-          ),
-        ]
-      ],
-    );
+                child: Text(
+                    '${profile.name ?? 'Name'}${age != null ? ', $age' : ''}',
+                    style: GoogleFonts.poppins(
+                        fontSize: 26,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.black87)))
+          ]),
+      if (profile.hometown != null && profile.hometown!.isNotEmpty) ...[
+        const SizedBox(height: 4),
+        Row(children: [
+          Icon(Icons.location_on_outlined, size: 16, color: Colors.grey[600]),
+          const SizedBox(width: 4),
+          Text(profile.hometown!,
+              style: GoogleFonts.poppins(fontSize: 14, color: Colors.grey[700]))
+        ])
+      ]
+    ]);
   }
 
   Widget _buildVitalsBlock(UserModel profile) {
@@ -523,9 +614,7 @@ class HomeProfileCard extends ConsumerWidget {
       vitals.add(_buildVitalRow(Icons.smoking_rooms_outlined,
           "Smokes: ${profile.smokingHabit!.label}"));
     }
-
     if (vitals.isEmpty) return const SizedBox.shrink();
-
     return Container(
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
         width: double.infinity,
@@ -534,147 +623,69 @@ class HomeProfileCard extends ConsumerWidget {
             borderRadius: BorderRadius.circular(10),
             boxShadow: [
               BoxShadow(
-                color: Colors.black.withOpacity(0.05),
-                blurRadius: 10,
-                offset: const Offset(0, 3),
-              )
+                  color: Colors.black.withOpacity(0.05),
+                  blurRadius: 10,
+                  offset: const Offset(0, 3))
             ]),
         child: Column(
-          children: List.generate(vitals.length * 2 - 1, (index) {
-            if (index.isEven) {
-              return vitals[index ~/ 2];
-            } else {
-              return Divider(height: 16, thickness: 1, color: Colors.grey[200]);
-            }
-          }),
-        ));
+            children: List.generate(vitals.length * 2 - 1, (index) {
+          if (index.isEven) {
+            return vitals[index ~/ 2];
+          } else {
+            return Divider(height: 16, thickness: 1, color: Colors.grey[200]);
+          }
+        })));
   }
 
   Widget _buildVitalRow(IconData icon, String label) {
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 6.0),
-      child: Row(
-        children: [
+        padding: const EdgeInsets.symmetric(vertical: 6.0),
+        child: Row(children: [
           Icon(icon, size: 20, color: Colors.grey[600]),
           const SizedBox(width: 12),
           Expanded(
               child: Text(label,
                   style: GoogleFonts.poppins(
-                      fontSize: 15, color: Colors.grey[800]))),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildMediaItem(
-      BuildContext context, WidgetRef ref, String url, int index) {
-    bool isVideo = url.toLowerCase().contains('.mp4') ||
-        url.toLowerCase().contains('.mov');
-
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(10), // Consistent rounding
-      child: AspectRatio(
-        aspectRatio: 4 / 5.5, // Or your desired ratio
-        child: Container(
-          decoration: BoxDecoration(color: Colors.grey[200]), // Placeholder bg
-          child: Stack(
-            fit: StackFit.expand,
-            children: [
-              Image.network(url,
-                  fit: BoxFit.cover,
-                  loadingBuilder: (ctx, child, prog) => prog == null
-                      ? child
-                      : Center(
-                          child: CircularProgressIndicator(
-                              value: prog.expectedTotalBytes != null
-                                  ? prog.cumulativeBytesLoaded /
-                                      prog.expectedTotalBytes!
-                                  : null,
-                              color: Colors.grey[400])),
-                  errorBuilder: (ctx, err, st) => Center(
-                      child: Icon(Icons.image_not_supported_outlined,
-                          color: Colors.grey[400], size: 40))),
-              if (isVideo) // Show video indicator
-                Center(
-                  child: Container(
-                    padding: const EdgeInsets.all(10),
-                    decoration: BoxDecoration(
-                      color: Colors.black.withOpacity(0.5),
-                      shape: BoxShape.circle,
-                    ),
-                    child: const Icon(Icons.play_arrow_rounded,
-                        color: Colors.white, size: 30),
-                  ),
-                ),
-              Positioned(
-                  bottom: 10,
-                  right: 10,
-                  child: _buildSmallLikeButton(() => _showInteractionDialog(
-                        context,
-                        ref,
-                        ContentLikeType.media,
-                        index.toString(), // Use index as identifier for media
-                        url,
-                      )))
-            ],
-          ),
-        ),
-      ),
-    );
+                      fontSize: 15, color: Colors.grey[800])))
+        ]));
   }
 
   Widget _buildPromptItem(BuildContext context, WidgetRef ref, Prompt prompt) {
     if (prompt.answer.trim().isEmpty) return const SizedBox.shrink();
-
     return Container(
-      width: double.infinity, // Take full width
-      padding: const EdgeInsets.all(20),
-      decoration: BoxDecoration(
-          color: Colors.white, // White background
-          borderRadius: BorderRadius.circular(10), // Rounded corners
-          boxShadow: [
-            // Subtle shadow
-            BoxShadow(
-                color: Colors.black.withOpacity(0.05),
-                blurRadius: 10,
-                offset: const Offset(0, 3))
-          ]),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start, // Align top
-        children: [
+        width: double.infinity,
+        padding: const EdgeInsets.all(20),
+        decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(10),
+            boxShadow: [
+              BoxShadow(
+                  color: Colors.black.withOpacity(0.05),
+                  blurRadius: 10,
+                  offset: const Offset(0, 3))
+            ]),
+        child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
           Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                // Prompt Question
+              child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
                 Text(prompt.question.label,
                     style: GoogleFonts.poppins(
-                        fontSize: 14, // Slightly smaller question
+                        fontSize: 14,
                         fontWeight: FontWeight.w600,
-                        color: Colors.grey[600])), // Subdued color
+                        color: Colors.grey[600])),
                 const SizedBox(height: 10),
-                // Prompt Answer
                 Text(prompt.answer,
                     style: GoogleFonts.poppins(
-                        fontSize: 20, // Larger answer text
+                        fontSize: 20,
                         color: Colors.black87,
-                        height: 1.4, // Line height
-                        fontWeight: FontWeight.w500)),
-              ],
-            ),
-          ),
-          const SizedBox(width: 12), // Spacing before button
-          // Like Button
-          _buildSmallLikeButton(() => _showInteractionDialog(
-                context,
-                ref,
-                prompt.category.contentType, // Get type from category
-                prompt.question.value, // Use question enum value as identifier
-                null, // No image preview for prompts
-              )),
-        ],
-      ),
-    );
+                        height: 1.4,
+                        fontWeight: FontWeight.w500))
+              ])),
+          const SizedBox(width: 12),
+          _buildSmallLikeButton(() => _showInteractionDialog(context, ref,
+              prompt.category.contentType, prompt.question.value, null))
+        ]));
   }
 
   Widget _buildAudioItem(
@@ -682,73 +693,65 @@ class HomeProfileCard extends ConsumerWidget {
     final audioPlayerState = ref.watch(audioPlayerStateProvider);
     final currentPlayingUrl = ref.watch(currentAudioUrlProvider);
     final playerNotifier = ref.read(audioPlayerControllerProvider.notifier);
-
     final bool isThisPlaying = currentPlayingUrl == audio.audioUrl &&
         audioPlayerState == AudioPlayerState.playing;
     final bool isThisLoading = currentPlayingUrl == audio.audioUrl &&
         audioPlayerState == AudioPlayerState.loading;
     final bool isThisPaused = currentPlayingUrl == audio.audioUrl &&
         audioPlayerState == AudioPlayerState.paused;
-
     return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(16), // More rounded
-          border: Border.all(color: Colors.grey[200]!),
-          boxShadow: [
-            BoxShadow(
-                color: Colors.grey.withOpacity(0.06),
-                blurRadius: 10,
-                offset: const Offset(0, 3))
-          ]),
-      child: Row(
-        children: [
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: Colors.grey[200]!),
+            boxShadow: [
+              BoxShadow(
+                  color: Colors.grey.withOpacity(0.06),
+                  blurRadius: 10,
+                  offset: const Offset(0, 3))
+            ]),
+        child: Row(children: [
           InkWell(
-            onTap: () {
-              if (isThisLoading) return;
-
-              if (isThisPlaying) {
-                playerNotifier.pause();
-              } else if (isThisPaused) {
-                playerNotifier.resume();
-              } else {
-                playerNotifier.play(audio.audioUrl);
-              }
-            },
-            borderRadius: BorderRadius.circular(24),
-            child: Container(
-              width: 48,
-              height: 48,
-              decoration: BoxDecoration(
-                color: const Color(0xFF8B5CF6),
-                borderRadius: BorderRadius.circular(24),
-                boxShadow: [
-                  BoxShadow(
-                      color: const Color(0xFF8B5CF6).withOpacity(0.3),
-                      blurRadius: 8,
-                      offset: const Offset(0, 2))
-                ],
-              ),
-              child: isThisLoading
-                  ? const Padding(
-                      padding: EdgeInsets.all(12.0),
-                      child: CircularProgressIndicator(
-                          strokeWidth: 2, color: Colors.white))
-                  : Icon(
-                      isThisPlaying
-                          ? Icons.pause_rounded
-                          : Icons.play_arrow_rounded,
-                      color: Colors.white,
-                      size: 28,
-                    ),
-            ),
-          ),
+              onTap: () {
+                if (isThisLoading) return;
+                if (isThisPlaying) {
+                  playerNotifier.pause();
+                } else if (isThisPaused) {
+                  playerNotifier.resume();
+                } else {
+                  playerNotifier.play(audio.audioUrl);
+                }
+              },
+              borderRadius: BorderRadius.circular(24),
+              child: Container(
+                  width: 48,
+                  height: 48,
+                  decoration: BoxDecoration(
+                      color: const Color(0xFF8B5CF6),
+                      borderRadius: BorderRadius.circular(24),
+                      boxShadow: [
+                        BoxShadow(
+                            color: const Color(0xFF8B5CF6).withOpacity(0.3),
+                            blurRadius: 8,
+                            offset: const Offset(0, 2))
+                      ]),
+                  child: isThisLoading
+                      ? const Padding(
+                          padding: EdgeInsets.all(12.0),
+                          child: CircularProgressIndicator(
+                              strokeWidth: 2, color: Colors.white))
+                      : Icon(
+                          isThisPlaying
+                              ? Icons.pause_rounded
+                              : Icons.play_arrow_rounded,
+                          color: Colors.white,
+                          size: 28))),
           const SizedBox(width: 16),
           Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
+              child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
                 Text(audio.prompt.label,
                     style: GoogleFonts.poppins(
                         fontSize: 15,
@@ -764,78 +767,56 @@ class HomeProfileCard extends ConsumerWidget {
                                 ? "Paused"
                                 : "Tap to listen",
                     style: GoogleFonts.poppins(
-                        fontSize: 13, color: Colors.grey[600])),
-              ],
-            ),
-          ),
+                        fontSize: 13, color: Colors.grey[600]))
+              ])),
           const SizedBox(width: 16),
           _buildSmallLikeButton(() => _showInteractionDialog(
-                context,
-                ref,
-                ContentLikeType.audioPrompt,
-                "0", // API requires "0" for audio prompts
-                null,
-              )),
-        ],
-      ),
-    );
+              context, ref, ContentLikeType.audioPrompt, "0", null))
+        ]));
   }
 
   Widget _buildSmallLikeButton(VoidCallback onPressed) {
     return Container(
-      width: 40,
-      height: 40,
-      decoration: BoxDecoration(
-          color: Colors.white, // White background
-          shape: BoxShape.circle,
-          boxShadow: [
-            // Subtle shadow
-            BoxShadow(color: Colors.black.withOpacity(0.1), blurRadius: 5)
-          ]),
-      child: IconButton(
-        padding: EdgeInsets.zero, // Remove default padding
-        icon: Icon(Icons.favorite_border_rounded,
-            color: Colors.pink[200], // Soft pink color
-            size: 22), // Icon size
-        tooltip: 'Like this item',
-        onPressed: onPressed,
-      ),
-    );
+        width: 40,
+        height: 40,
+        decoration: BoxDecoration(
+            color: Colors.white,
+            shape: BoxShape.circle,
+            boxShadow: [
+              BoxShadow(color: Colors.black.withOpacity(0.1), blurRadius: 5)
+            ]),
+        child: IconButton(
+            padding: EdgeInsets.zero,
+            icon: Icon(Icons.favorite_border_rounded,
+                color: Colors.pink[200], size: 22),
+            tooltip: 'Like this item',
+            onPressed: onPressed));
   }
 
-  Widget _buildActionButton({
-    required IconData icon,
-    required Color color,
-    required VoidCallback onPressed,
-    required String tooltip,
-    double size = 60.0, // Default size
-    double iconSize = 30.0,
-  }) {
+  Widget _buildActionButton(
+      {required IconData icon,
+      required Color color,
+      required VoidCallback onPressed,
+      required String tooltip,
+      double size = 60.0,
+      double iconSize = 30.0}) {
     return Tooltip(
-      message: tooltip,
-      child: Material(
-        color: Colors.white,
-        shape: const CircleBorder(),
-        elevation: 3.0,
-        shadowColor: Colors.black.withOpacity(0.2),
-        child: InkWell(
-          customBorder: const CircleBorder(),
-          onTap: onPressed,
-          child: Container(
-            width: size,
-            height: size,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              border: Border.all(color: Colors.grey.shade200, width: 1.0),
-            ),
-            child: Icon(
-              icon,
-              color: color,
-              size: iconSize,
-            ),
-          ),
-        ),
-      ),
-    );
+        message: tooltip,
+        child: Material(
+            color: Colors.white,
+            shape: const CircleBorder(),
+            elevation: 3.0,
+            shadowColor: Colors.black.withOpacity(0.2),
+            child: InkWell(
+                customBorder: const CircleBorder(),
+                onTap: onPressed,
+                child: Container(
+                    width: size,
+                    height: size,
+                    decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        border: Border.all(
+                            color: Colors.grey.shade200, width: 1.0)),
+                    child: Icon(icon, color: color, size: iconSize)))));
   }
 } // End of HomeProfileCard

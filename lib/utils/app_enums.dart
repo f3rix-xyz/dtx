@@ -2,6 +2,9 @@
 // Import the correct location of ContentLikeType
 import 'package:dtx/models/like_models.dart' show ContentLikeType;
 
+// --- Existing Enums (Gender, DatingIntention, Religion, etc.) ---
+// ... (keep all existing enums as they are) ...
+
 enum Gender {
   man('man', 'Man'),
   woman('woman', 'Woman');
@@ -64,8 +67,6 @@ enum PromptCategory {
   final String label;
   const PromptCategory(this.value, this.label);
 
-  // --- ADDED: contentType Getter ---
-  // This getter uses the ContentLikeType defined in like_models.dart
   ContentLikeType get contentType {
     switch (this) {
       case PromptCategory.storyTime:
@@ -78,7 +79,6 @@ enum PromptCategory {
         return ContentLikeType.promptDatevibes;
     }
   }
-  // --- END ADDED ---
 
   List<PromptType> getPrompts() {
     switch (this) {
@@ -175,8 +175,7 @@ enum PromptType {
   // Date Vibes
   togetherWeCould('togetherWeCould', 'Together, we could'),
   firstRoundIsOnMeIf('firstRoundIsOnMeIf', 'First round is on me if'),
-  whatIOrderForTheTable('whatIOrderForTheTable',
-      'What I order for the table'), // Corrected enum value and label
+  whatIOrderForTheTable('whatIOrderForTheTable', 'What I order for the table'),
   bestSpotInTown('bestSpotInTown', 'I know the best spot in town for'),
   bestWayToAskMeOut('bestWayToAskMeOut', 'The best way to ask me out is by');
 
@@ -246,3 +245,17 @@ enum AudioPrompt {
   final String label;
   const AudioPrompt(this.value, this.label);
 }
+
+// --- ADDED: ReportReason Enum ---
+enum ReportReason {
+  notInterested('notInterested', 'Not Interested'),
+  fakeProfile('fakeProfile', 'Fake Profile/Scam'),
+  inappropriate('inappropriate', 'Inappropriate Content/Behavior'),
+  minor('minor', 'Underage User'),
+  spam('spam', 'Spam or Solicitation');
+
+  final String value;
+  final String label; // User-friendly label
+  const ReportReason(this.value, this.label);
+}
+// --- END ADDED ---

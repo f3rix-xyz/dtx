@@ -1,16 +1,17 @@
 // File: repositories/like_repository.dart
 import '../models/like_models.dart';
-import '../models/error_model.dart'; // Import AppError if needed by provider
+import '../models/error_model.dart';
 import '../services/api_service.dart';
 import '../utils/token_storage.dart';
-import '../utils/app_enums.dart'; // <<<--- ADDED IMPORT FOR ContentLikeType
+import '../utils/app_enums.dart';
 
 class LikeRepository {
   final ApiService _apiService;
 
   LikeRepository(this._apiService);
 
-  // likeContent(...) method remains the same
+  // --- Existing methods (likeContent, dislikeUser, likeBackUserProfile, etc.) ---
+  // ... (keep existing methods as they are) ...
   Future<bool> likeContent({
     required int likedUserId,
     required ContentLikeType contentType,
@@ -47,15 +48,10 @@ class LikeRepository {
         else if (e.message.toLowerCase().contains('insufficient consumables') ||
             e.message.toLowerCase().contains('rose'))
           throw InsufficientRosesException(e.message);
-      }
-      // --- ADDED CONFLICT HANDLING for Already Liked ---
-      else if (e.statusCode == 409) {
-        // Re-throw specifically or handle as needed
-        // For now, rethrow so the UI can potentially inform the user
+      } else if (e.statusCode == 409) {
         print("[LikeRepository $methodName] Conflict: Already liked/matched?");
         rethrow;
       }
-      // --- END ADDED ---
       rethrow;
     } catch (e) {
       print('[LikeRepository $methodName] Unexpected Error: $e');
@@ -64,7 +60,6 @@ class LikeRepository {
     }
   }
 
-  // dislikeUser(...) method remains the same
   Future<bool> dislikeUser({required int dislikedUserId}) async {
     final String methodName = 'dislikeUser';
     print('[LikeRepository $methodName] Disliking UserID: $dislikedUserId');
@@ -89,21 +84,18 @@ class LikeRepository {
     }
   }
 
-  // --- ADDED: likeBackUserProfile Method ---
   Future<bool> likeBackUserProfile({required int likedUserId}) async {
     final String methodName = 'likeBackUserProfile';
     print('[LikeRepository $methodName] Liking back UserID: $likedUserId');
     try {
-      // Use the existing likeContent method with specific parameters
       return await likeContent(
         likedUserId: likedUserId,
-        contentType: ContentLikeType.profile, // Use the specific type
-        contentIdentifier: ContentLikeType.profile.value, // Match type value
-        interactionType: LikeInteractionType.standard, // Standard like back
-        comment: null, // No comment needed for profile like back
+        contentType: ContentLikeType.profile,
+        contentIdentifier: ContentLikeType.profile.value,
+        interactionType: LikeInteractionType.standard,
+        comment: null,
       );
     } on ApiException catch (e) {
-      // Specific handling or rethrow
       print(
           '[LikeRepository $methodName] API Exception: ${e.message}, Status: ${e.statusCode}');
       if (e.statusCode == 409) {
@@ -111,19 +103,15 @@ class LikeRepository {
       }
       rethrow;
     } catch (e) {
-      // Catch other potential errors from likeContent
       print('[LikeRepository $methodName] Unexpected Error: $e');
       throw ApiException(
           'An unexpected error occurred while liking back user: ${e.toString()}');
     }
   }
-  // --- END ADDED Method ---
 
-  // fetchReceivedLikes(...) method remains the same
   Future<Map<String, List<dynamic>>> fetchReceivedLikes() async {
     final String methodName = 'fetchReceivedLikes';
-    print(
-        '[LikeRepository $methodName] Fetching received likes...'); // Log Start
+    print('[LikeRepository $methodName] Fetching received likes...');
     try {
       final token = await TokenStorage.getToken();
       if (token == null) {
@@ -131,34 +119,29 @@ class LikeRepository {
             '[LikeRepository $methodName] Error: Authentication token missing.');
         throw ApiException('Authentication token missing');
       }
-
       final headers = {'Authorization': 'Bearer $token'};
       print(
-          '[LikeRepository $methodName] Making GET request to /api/likes/received...'); // Log API call
+          '[LikeRepository $methodName] Making GET request to /api/likes/received...');
       final response =
           await _apiService.get('/api/likes/received', headers: headers);
-      print(
-          '[LikeRepository $methodName] API Response received: $response'); // Log Response
+      print('[LikeRepository $methodName] API Response received: $response');
 
       if (response['success'] == true) {
-        print(
-            '[LikeRepository $methodName] Parsing successful response...'); // Log Parsing Start
+        print('[LikeRepository $methodName] Parsing successful response...');
         final List<FullProfileLiker> fullProfiles =
             (response['full_profiles'] as List? ?? [])
                 .map((data) {
                   try {
-                    // Add inner try-catch for parsing individual items
                     return FullProfileLiker.fromJson(
                         data as Map<String, dynamic>);
                   } catch (e) {
                     print(
                         "[LikeRepository $methodName] Error parsing FullProfileLiker: $e, Data: $data");
-                    return null; // Return null for problematic items
+                    return null;
                   }
                 })
-                .whereType<FullProfileLiker>() // Filter out nulls
+                .whereType<FullProfileLiker>()
                 .toList();
-
         final List<BasicProfileLiker> otherLikers =
             (response['other_likers'] as List? ?? [])
                 .map((data) {
@@ -171,9 +154,8 @@ class LikeRepository {
                     return null;
                   }
                 })
-                .whereType<BasicProfileLiker>() // Filter out nulls
+                .whereType<BasicProfileLiker>()
                 .toList();
-
         print(
             '[LikeRepository $methodName] Parsed ${fullProfiles.length} full, ${otherLikers.length} basic profiles.');
         return {'full': fullProfiles, 'other': otherLikers};
@@ -187,18 +169,15 @@ class LikeRepository {
     } on ApiException catch (e) {
       print(
           '[LikeRepository $methodName] API Exception caught: ${e.message}, Status: ${e.statusCode}');
-      rethrow; // Re-throw API exceptions to be handled by the provider
+      rethrow;
     } catch (e, stacktrace) {
-      // Catch other errors and stacktrace
       print('[LikeRepository $methodName] Unexpected Error caught: $e');
-      print(
-          '[LikeRepository $methodName] Stacktrace: $stacktrace'); // Log stacktrace
+      print('[LikeRepository $methodName] Stacktrace: $stacktrace');
       throw ApiException(
           'An unexpected error occurred while fetching likes: ${e.toString()}');
     }
   }
 
-  // fetchLikerProfile(...) method remains the same
   Future<Map<String, dynamic>> fetchLikerProfile(int likerUserId) async {
     final String methodName = 'fetchLikerProfile';
     print(
@@ -206,11 +185,9 @@ class LikeRepository {
     try {
       final token = await TokenStorage.getToken();
       if (token == null) throw ApiException('Authentication token missing');
-
       final headers = {'Authorization': 'Bearer $token'};
       final endpoint = '/api/liker-profile/$likerUserId';
       print('[LikeRepository $methodName] Making GET request to: $endpoint');
-
       final response = await _apiService.get(endpoint, headers: headers);
       print('[LikeRepository $methodName] API Response: $response');
 
@@ -247,4 +224,68 @@ class LikeRepository {
           'An unexpected error occurred while fetching the liker profile: ${e.toString()}');
     }
   }
+  // --- END Existing Methods ---
+
+  // --- ADDED: Unmatch User Method ---
+  Future<bool> unmatchUser({required int targetUserId}) async {
+    final String methodName = 'unmatchUser';
+    print('[LikeRepository $methodName] Unmatching UserID: $targetUserId');
+    try {
+      final token = await TokenStorage.getToken();
+      if (token == null) throw ApiException('Authentication token missing');
+      final headers = {'Authorization': 'Bearer $token'};
+      final body = {
+        'target_user_id': targetUserId
+      }; // Match backend Go struct field name
+      print('[LikeRepository $methodName] Request Body: $body');
+
+      final response = await _apiService.post('/api/unmatch',
+          body: body, headers: headers); // Use POST
+
+      print('[LikeRepository $methodName] API Response: $response');
+      return response['success'] == true;
+    } on ApiException catch (e) {
+      print(
+          '[LikeRepository $methodName] API Exception: ${e.message}, Status: ${e.statusCode}');
+      rethrow; // Let the provider/UI handle specific errors if needed
+    } catch (e) {
+      print('[LikeRepository $methodName] Unexpected Error: $e');
+      throw ApiException(
+          'An unexpected error occurred while unmatching user: ${e.toString()}');
+    }
+  }
+  // --- END ADDED ---
+
+  // --- ADDED: Report User Method ---
+  Future<bool> reportUser(
+      {required int targetUserId, required ReportReason reason}) async {
+    final String methodName = 'reportUser';
+    print(
+        '[LikeRepository $methodName] Reporting UserID: $targetUserId, Reason: ${reason.value}');
+    try {
+      final token = await TokenStorage.getToken();
+      if (token == null) throw ApiException('Authentication token missing');
+      final headers = {'Authorization': 'Bearer $token'};
+      final body = {
+        'reported_user_id': targetUserId, // Match backend Go struct field name
+        'reason': reason.value // Send the enum value string
+      };
+      print('[LikeRepository $methodName] Request Body: $body');
+
+      final response = await _apiService.post('/api/report',
+          body: body, headers: headers); // Use POST
+
+      print('[LikeRepository $methodName] API Response: $response');
+      return response['success'] == true;
+    } on ApiException catch (e) {
+      print(
+          '[LikeRepository $methodName] API Exception: ${e.message}, Status: ${e.statusCode}');
+      rethrow;
+    } catch (e) {
+      print('[LikeRepository $methodName] Unexpected Error: $e');
+      throw ApiException(
+          'An unexpected error occurred while reporting user: ${e.toString()}');
+    }
+  }
+  // --- END ADDED ---
 }
