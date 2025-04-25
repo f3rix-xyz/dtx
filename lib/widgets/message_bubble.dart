@@ -2,11 +2,11 @@
 import 'dart:io';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:dtx/models/chat_message.dart';
-import 'package:dtx/providers/audio_player_provider.dart';
+import 'package:dtx/providers/audio_player_provider.dart'; // Ensure this is correct
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_fonts/google_fonts.dart';
-import 'package:audioplayers/audioplayers.dart';
+import 'package:audioplayers/audioplayers.dart'; // Ensure this is correct
 import 'package:path/path.dart' as p;
 import 'package:url_launcher/url_launcher.dart';
 
@@ -31,11 +31,10 @@ class _MessageBubbleState extends ConsumerState<MessageBubble>
     with AutomaticKeepAliveClientMixin {
   // Add mixin
 
-  // --- Override wantKeepAlive ---
   @override
   bool get wantKeepAlive => true; // Keep the state alive
 
-  // --- Move helpers inside State class ---
+  // --- Helpers (Keep as previously defined) ---
   String getFilenameFromUrl(String? url) {
     if (url == null || url.isEmpty) return "File";
     try {
@@ -87,38 +86,36 @@ class _MessageBubbleState extends ConsumerState<MessageBubble>
   }
 
   Widget _buildMediaLoadingPlaceholder({required bool isMe}) {
-    return Container(
-      color: Colors.grey[isMe ? 700 : 300]?.withOpacity(0.5),
-      child: Center(
-          child: CircularProgressIndicator(
-              color: isMe ? Colors.white70 : Colors.grey[500])),
+    // Simple centered spinner without a surrounding box
+    return const Center(
+      child: Padding(
+        padding: EdgeInsets.symmetric(
+            vertical: 40.0, horizontal: 40.0), // Give spinner some space
+        child:
+            CircularProgressIndicator(strokeWidth: 2, color: Color(0xFF8B5CF6)),
+      ),
     );
   }
 
   Widget _buildMediaErrorPlaceholder({required bool isMe}) {
+    // Keep error placeholder visually distinct
     return Container(
-      color: Colors.red[isMe ? 900 : 100]?.withOpacity(0.5),
+      color: Colors.grey[isMe ? 700 : 200]?.withOpacity(0.3),
       child: Center(
-          child: Icon(Icons.error_outline,
-              color: isMe ? Colors.red.shade200 : Colors.red.shade400,
-              size: 40)),
+          child: Icon(Icons.broken_image_outlined,
+              color: isMe ? Colors.white60 : Colors.grey[500], size: 40)),
     );
   }
   // --- End Helpers ---
 
   @override
   Widget build(BuildContext context) {
-    // --- IMPORTANT: Call super.build(context) ---
     super.build(context);
 
-    // Access widget properties using widget.*
     final message = widget.message;
     final isMe = widget.isMe;
     final showTail = widget.showTail;
-
     final keyId = message.tempId ?? message.messageID.toString();
-    print(
-        "[MessageBubble Build: ${keyId}] Rebuilding. Status: ${message.status}, isMedia: ${message.isMedia}, LocalPath: ${message.localFilePath != null}, MediaUrl: ${message.mediaUrl != null}");
 
     final radius = Radius.circular(18.0);
     final borderRadius = BorderRadius.only(
@@ -130,7 +127,7 @@ class _MessageBubbleState extends ConsumerState<MessageBubble>
     Widget messageContent;
     Widget? statusIcon;
 
-    // --- Status Icon Logic ---
+    // Status Icon Logic (no change)
     if (isMe && message.status != ChatMessageStatus.sent) {
       switch (message.status) {
         case ChatMessageStatus.pending:
@@ -150,10 +147,9 @@ class _MessageBubbleState extends ConsumerState<MessageBubble>
       }
     }
 
-    // --- Content Rendering Logic ---
+    // Content Rendering Logic
     if (message.isMedia) {
       final mediaType = message.mediaType?.toLowerCase() ?? '';
-      // Still prioritize local path if it exists
       final String? displayPath =
           (message.localFilePath != null && message.localFilePath!.isNotEmpty)
               ? message.localFilePath
@@ -161,9 +157,6 @@ class _MessageBubbleState extends ConsumerState<MessageBubble>
       final bool isUsingLocalFile =
           displayPath == message.localFilePath && message.localFilePath != null;
       final bool isMediaSent = message.status == ChatMessageStatus.sent;
-
-      print(
-          "[MessageBubble Build $keyId] Content Logic. isUsingLocalFile: $isUsingLocalFile, displayPath: $displayPath, isMediaSent: $isMediaSent");
 
       if (displayPath == null || displayPath.isEmpty) {
         messageContent = Text(
@@ -173,39 +166,38 @@ class _MessageBubbleState extends ConsumerState<MessageBubble>
       }
       // --- IMAGE ---
       else if (mediaType.startsWith('image/')) {
-        print(
-            "[MessageBubble Build $keyId] Rendering Image. Source: ${isUsingLocalFile ? 'File' : 'Network'}");
         Widget imageToShow;
         if (isUsingLocalFile) {
           imageToShow = Image.file(File(displayPath),
               key: ValueKey(displayPath),
-              fit: BoxFit.cover,
+              // Use contain to respect aspect ratio within available width
+              fit: BoxFit.contain,
               errorBuilder: (_, __, ___) =>
                   _buildMediaErrorPlaceholder(isMe: isMe));
         } else {
-          // Use CachedNetworkImage for network URLs
           imageToShow = CachedNetworkImage(
             key: ValueKey(displayPath),
             imageUrl: displayPath,
-            fit: BoxFit.cover,
+            // Use contain to respect aspect ratio within available width
+            fit: BoxFit.contain,
             placeholder: (context, url) =>
                 _buildMediaLoadingPlaceholder(isMe: isMe),
             errorWidget: (context, url, error) =>
                 _buildMediaErrorPlaceholder(isMe: isMe),
           );
         }
+        // --- *** REMOVE ConstrainedBox *** ---
+        // Wrap directly in ClipRRect if needed for rounding corners *of the image itself*
+        // The outer bubble already clips. You might not need this inner ClipRRect unless
+        // you want different rounding for the image than the bubble.
         messageContent = ClipRRect(
-          borderRadius: BorderRadius.circular(8.0), // Round corners for image
-          child: ConstrainedBox(
-            constraints: BoxConstraints(
-              maxWidth: MediaQuery.of(context).size.width * 0.65,
-              maxHeight: MediaQuery.of(context).size.height * 0.4,
-            ),
-            child: imageToShow,
-          ),
+          borderRadius: BorderRadius.circular(
+              8.0), // Round corners for image content if desired
+          child: imageToShow, // No ConstrainedBox wrapper
         );
+        // --- *** END REMOVAL *** ---
       }
-      // --- VIDEO ---
+      // --- VIDEO (no change needed) ---
       else if (mediaType.startsWith('video/')) {
         messageContent = InkWell(
           onTap: isMediaSent && !isUsingLocalFile
@@ -214,7 +206,8 @@ class _MessageBubbleState extends ConsumerState<MessageBubble>
           child: Container(
             padding: const EdgeInsets.all(10),
             constraints: BoxConstraints(
-                maxWidth: MediaQuery.of(context).size.width * 0.65,
+                maxWidth: MediaQuery.of(context).size.width *
+                    0.65, // Still constrain width
                 minHeight: 100),
             decoration: BoxDecoration(
                 color: Colors.grey[isMe ? 700 : 300],
@@ -247,10 +240,9 @@ class _MessageBubbleState extends ConsumerState<MessageBubble>
           ),
         );
       }
-      // --- AUDIO ---
+      // --- AUDIO (no change needed) ---
       else if (mediaType.startsWith('audio/')) {
-        final audioPlayerState = ref.watch(
-            audioPlayerStateProvider); // Use ref from ConsumerStatefulWidget
+        final audioPlayerState = ref.watch(audioPlayerStateProvider);
         final currentPlayingUrl = ref.watch(currentAudioUrlProvider);
         final playerNotifier = ref.read(audioPlayerControllerProvider.notifier);
         final bool canPlay = isMediaSent && !isUsingLocalFile;
@@ -306,7 +298,7 @@ class _MessageBubbleState extends ConsumerState<MessageBubble>
           ),
         ]);
       }
-      // --- GENERIC FILE ---
+      // --- GENERIC FILE (no change needed) ---
       else {
         messageContent = InkWell(
           onTap: isMediaSent && !isUsingLocalFile
@@ -343,6 +335,7 @@ class _MessageBubbleState extends ConsumerState<MessageBubble>
     return Align(
       alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
       child: Container(
+        // *** This Container provides the main width constraint ***
         constraints: BoxConstraints(
           maxWidth: MediaQuery.of(context).size.width * 0.75,
         ),
@@ -363,31 +356,29 @@ class _MessageBubbleState extends ConsumerState<MessageBubble>
             )
           ],
         ),
+        // --- *** Outer ClipRRect ensures bubble shape *** ---
         child: ClipRRect(
-          // Clip bubble content if it's an image
-          borderRadius: message.isMedia &&
-                  (message.mediaType?.startsWith('image/') ?? false)
-              ? BorderRadius.circular(8.0)
-              : BorderRadius.zero,
+          borderRadius: borderRadius,
           child: Stack(
+            // Stack allows overlaying status icon if needed
             children: [
               Padding(
+                // Padding for non-image content
                 padding: message.isMedia &&
                         (message.mediaType?.startsWith('image/') ?? false)
-                    ? EdgeInsets.zero
+                    ? EdgeInsets
+                        .zero // No padding needed around image widget itself
                     : const EdgeInsets.symmetric(
                         horizontal: 14.0, vertical: 10.0),
-                child: messageContent,
+                child:
+                    messageContent, // The actual content (text, image, video placeholder, etc.)
               ),
               if (statusIcon != null)
                 Positioned(
                   bottom: 4,
                   right: isMe ? 4 : null,
                   left: isMe ? null : 4,
-                  child: Container(
-                    padding: const EdgeInsets.all(2),
-                    child: statusIcon,
-                  ),
+                  child: statusIcon,
                 ),
             ],
           ),
@@ -395,4 +386,4 @@ class _MessageBubbleState extends ConsumerState<MessageBubble>
       ),
     );
   }
-} // End _MessageBubbleState
+}
