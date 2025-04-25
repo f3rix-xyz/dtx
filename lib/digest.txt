@@ -86,7 +86,8 @@ Directory structure:
         ├── full_liker_profile_card.dart
         ├── home_profile_card.dart
         ├── match_list_tile.dart
-        └── message_bubble.dart
+        ├── message_bubble.dart
+        └── report_reason_dialog.dart
 
 ================================================
 File: main.dart
@@ -2570,10 +2571,14 @@ class ConversationNotifier extends StateNotifier<ConversationState> {
 
       final updatedMessage = messageToUpdate.copyWith(
         status: newStatus,
-        mediaUrl: finalMediaUrl,
+        mediaUrl: finalMediaUrl, // Still store the final URL
         errorMessage: errorMessage,
         clearErrorMessage: errorMessage == null,
-        clearLocalFilePath: finalMediaUrl != null,
+        // --- *** THE FIX: Keep localFilePath *** ---
+        // Change this line from `clearLocalFilePath: finalMediaUrl != null,`
+        //                    to `clearLocalFilePath: false,`
+        clearLocalFilePath: false, // Don't clear the local path when sent
+        // --- *** END FIX *** ---
       );
 
       final updatedMessages = List<ChatMessage>.from(currentMessages);
@@ -2588,7 +2593,7 @@ class ConversationNotifier extends StateNotifier<ConversationState> {
       final newListIdentityHashCode =
           identityHashCode(state.messages); // Log new list instance identity
       print(
-          "[Provider UpdateStatus: $_otherUserId] Status updated for TempID $tempId. Final URL: ${updatedMessage.mediaUrl}. Error: ${updatedMessage.errorMessage}. List hashCode changed: ${state.messages.hashCode != oldMessagesHashCode}. List instance changed: ${oldListIdentityHashCode != newListIdentityHashCode}");
+          "[Provider UpdateStatus: $_otherUserId] Status updated for TempID $tempId. Final URL: ${updatedMessage.mediaUrl}. Local Path Kept: ${updatedMessage.localFilePath}. Error: ${updatedMessage.errorMessage}. List hashCode changed: ${state.messages.hashCode != oldMessagesHashCode}. List instance changed: ${oldListIdentityHashCode != newListIdentityHashCode}");
     } else {
       print(
           "[Provider UpdateStatus: $_otherUserId] WARNING: Could not find message with TempID $tempId to update status.");
@@ -4320,17 +4325,18 @@ File: repositories/like_repository.dart
 ================================================
 // File: repositories/like_repository.dart
 import '../models/like_models.dart';
-import '../models/error_model.dart'; // Import AppError if needed by provider
+import '../models/error_model.dart';
 import '../services/api_service.dart';
 import '../utils/token_storage.dart';
-import '../utils/app_enums.dart'; // <<<--- ADDED IMPORT FOR ContentLikeType
+import '../utils/app_enums.dart';
 
 class LikeRepository {
   final ApiService _apiService;
 
   LikeRepository(this._apiService);
 
-  // likeContent(...) method remains the same
+  // --- Existing methods (likeContent, dislikeUser, likeBackUserProfile, etc.) ---
+  // ... (keep existing methods as they are) ...
   Future<bool> likeContent({
     required int likedUserId,
     required ContentLikeType contentType,
@@ -4367,15 +4373,10 @@ class LikeRepository {
         else if (e.message.toLowerCase().contains('insufficient consumables') ||
             e.message.toLowerCase().contains('rose'))
           throw InsufficientRosesException(e.message);
-      }
-      // --- ADDED CONFLICT HANDLING for Already Liked ---
-      else if (e.statusCode == 409) {
-        // Re-throw specifically or handle as needed
-        // For now, rethrow so the UI can potentially inform the user
+      } else if (e.statusCode == 409) {
         print("[LikeRepository $methodName] Conflict: Already liked/matched?");
         rethrow;
       }
-      // --- END ADDED ---
       rethrow;
     } catch (e) {
       print('[LikeRepository $methodName] Unexpected Error: $e');
@@ -4384,7 +4385,6 @@ class LikeRepository {
     }
   }
 
-  // dislikeUser(...) method remains the same
   Future<bool> dislikeUser({required int dislikedUserId}) async {
     final String methodName = 'dislikeUser';
     print('[LikeRepository $methodName] Disliking UserID: $dislikedUserId');
@@ -4409,21 +4409,18 @@ class LikeRepository {
     }
   }
 
-  // --- ADDED: likeBackUserProfile Method ---
   Future<bool> likeBackUserProfile({required int likedUserId}) async {
     final String methodName = 'likeBackUserProfile';
     print('[LikeRepository $methodName] Liking back UserID: $likedUserId');
     try {
-      // Use the existing likeContent method with specific parameters
       return await likeContent(
         likedUserId: likedUserId,
-        contentType: ContentLikeType.profile, // Use the specific type
-        contentIdentifier: ContentLikeType.profile.value, // Match type value
-        interactionType: LikeInteractionType.standard, // Standard like back
-        comment: null, // No comment needed for profile like back
+        contentType: ContentLikeType.profile,
+        contentIdentifier: ContentLikeType.profile.value,
+        interactionType: LikeInteractionType.standard,
+        comment: null,
       );
     } on ApiException catch (e) {
-      // Specific handling or rethrow
       print(
           '[LikeRepository $methodName] API Exception: ${e.message}, Status: ${e.statusCode}');
       if (e.statusCode == 409) {
@@ -4431,19 +4428,15 @@ class LikeRepository {
       }
       rethrow;
     } catch (e) {
-      // Catch other potential errors from likeContent
       print('[LikeRepository $methodName] Unexpected Error: $e');
       throw ApiException(
           'An unexpected error occurred while liking back user: ${e.toString()}');
     }
   }
-  // --- END ADDED Method ---
 
-  // fetchReceivedLikes(...) method remains the same
   Future<Map<String, List<dynamic>>> fetchReceivedLikes() async {
     final String methodName = 'fetchReceivedLikes';
-    print(
-        '[LikeRepository $methodName] Fetching received likes...'); // Log Start
+    print('[LikeRepository $methodName] Fetching received likes...');
     try {
       final token = await TokenStorage.getToken();
       if (token == null) {
@@ -4451,34 +4444,29 @@ class LikeRepository {
             '[LikeRepository $methodName] Error: Authentication token missing.');
         throw ApiException('Authentication token missing');
       }
-
       final headers = {'Authorization': 'Bearer $token'};
       print(
-          '[LikeRepository $methodName] Making GET request to /api/likes/received...'); // Log API call
+          '[LikeRepository $methodName] Making GET request to /api/likes/received...');
       final response =
           await _apiService.get('/api/likes/received', headers: headers);
-      print(
-          '[LikeRepository $methodName] API Response received: $response'); // Log Response
+      print('[LikeRepository $methodName] API Response received: $response');
 
       if (response['success'] == true) {
-        print(
-            '[LikeRepository $methodName] Parsing successful response...'); // Log Parsing Start
+        print('[LikeRepository $methodName] Parsing successful response...');
         final List<FullProfileLiker> fullProfiles =
             (response['full_profiles'] as List? ?? [])
                 .map((data) {
                   try {
-                    // Add inner try-catch for parsing individual items
                     return FullProfileLiker.fromJson(
                         data as Map<String, dynamic>);
                   } catch (e) {
                     print(
                         "[LikeRepository $methodName] Error parsing FullProfileLiker: $e, Data: $data");
-                    return null; // Return null for problematic items
+                    return null;
                   }
                 })
-                .whereType<FullProfileLiker>() // Filter out nulls
+                .whereType<FullProfileLiker>()
                 .toList();
-
         final List<BasicProfileLiker> otherLikers =
             (response['other_likers'] as List? ?? [])
                 .map((data) {
@@ -4491,9 +4479,8 @@ class LikeRepository {
                     return null;
                   }
                 })
-                .whereType<BasicProfileLiker>() // Filter out nulls
+                .whereType<BasicProfileLiker>()
                 .toList();
-
         print(
             '[LikeRepository $methodName] Parsed ${fullProfiles.length} full, ${otherLikers.length} basic profiles.');
         return {'full': fullProfiles, 'other': otherLikers};
@@ -4507,18 +4494,15 @@ class LikeRepository {
     } on ApiException catch (e) {
       print(
           '[LikeRepository $methodName] API Exception caught: ${e.message}, Status: ${e.statusCode}');
-      rethrow; // Re-throw API exceptions to be handled by the provider
+      rethrow;
     } catch (e, stacktrace) {
-      // Catch other errors and stacktrace
       print('[LikeRepository $methodName] Unexpected Error caught: $e');
-      print(
-          '[LikeRepository $methodName] Stacktrace: $stacktrace'); // Log stacktrace
+      print('[LikeRepository $methodName] Stacktrace: $stacktrace');
       throw ApiException(
           'An unexpected error occurred while fetching likes: ${e.toString()}');
     }
   }
 
-  // fetchLikerProfile(...) method remains the same
   Future<Map<String, dynamic>> fetchLikerProfile(int likerUserId) async {
     final String methodName = 'fetchLikerProfile';
     print(
@@ -4526,11 +4510,9 @@ class LikeRepository {
     try {
       final token = await TokenStorage.getToken();
       if (token == null) throw ApiException('Authentication token missing');
-
       final headers = {'Authorization': 'Bearer $token'};
       final endpoint = '/api/liker-profile/$likerUserId';
       print('[LikeRepository $methodName] Making GET request to: $endpoint');
-
       final response = await _apiService.get(endpoint, headers: headers);
       print('[LikeRepository $methodName] API Response: $response');
 
@@ -4567,6 +4549,70 @@ class LikeRepository {
           'An unexpected error occurred while fetching the liker profile: ${e.toString()}');
     }
   }
+  // --- END Existing Methods ---
+
+  // --- ADDED: Unmatch User Method ---
+  Future<bool> unmatchUser({required int targetUserId}) async {
+    final String methodName = 'unmatchUser';
+    print('[LikeRepository $methodName] Unmatching UserID: $targetUserId');
+    try {
+      final token = await TokenStorage.getToken();
+      if (token == null) throw ApiException('Authentication token missing');
+      final headers = {'Authorization': 'Bearer $token'};
+      final body = {
+        'target_user_id': targetUserId
+      }; // Match backend Go struct field name
+      print('[LikeRepository $methodName] Request Body: $body');
+
+      final response = await _apiService.post('/api/unmatch',
+          body: body, headers: headers); // Use POST
+
+      print('[LikeRepository $methodName] API Response: $response');
+      return response['success'] == true;
+    } on ApiException catch (e) {
+      print(
+          '[LikeRepository $methodName] API Exception: ${e.message}, Status: ${e.statusCode}');
+      rethrow; // Let the provider/UI handle specific errors if needed
+    } catch (e) {
+      print('[LikeRepository $methodName] Unexpected Error: $e');
+      throw ApiException(
+          'An unexpected error occurred while unmatching user: ${e.toString()}');
+    }
+  }
+  // --- END ADDED ---
+
+  // --- ADDED: Report User Method ---
+  Future<bool> reportUser(
+      {required int targetUserId, required ReportReason reason}) async {
+    final String methodName = 'reportUser';
+    print(
+        '[LikeRepository $methodName] Reporting UserID: $targetUserId, Reason: ${reason.value}');
+    try {
+      final token = await TokenStorage.getToken();
+      if (token == null) throw ApiException('Authentication token missing');
+      final headers = {'Authorization': 'Bearer $token'};
+      final body = {
+        'reported_user_id': targetUserId, // Match backend Go struct field name
+        'reason': reason.value // Send the enum value string
+      };
+      print('[LikeRepository $methodName] Request Body: $body');
+
+      final response = await _apiService.post('/api/report',
+          body: body, headers: headers); // Use POST
+
+      print('[LikeRepository $methodName] API Response: $response');
+      return response['success'] == true;
+    } on ApiException catch (e) {
+      print(
+          '[LikeRepository $methodName] API Exception: ${e.message}, Status: ${e.statusCode}');
+      rethrow;
+    } catch (e) {
+      print('[LikeRepository $methodName] Unexpected Error: $e');
+      throw ApiException(
+          'An unexpected error occurred while reporting user: ${e.toString()}');
+    }
+  }
+  // --- END ADDED ---
 }
 
 
@@ -5920,6 +5966,9 @@ File: utils/app_enums.dart
 // Import the correct location of ContentLikeType
 import 'package:dtx/models/like_models.dart' show ContentLikeType;
 
+// --- Existing Enums (Gender, DatingIntention, Religion, etc.) ---
+// ... (keep all existing enums as they are) ...
+
 enum Gender {
   man('man', 'Man'),
   woman('woman', 'Woman');
@@ -5982,8 +6031,6 @@ enum PromptCategory {
   final String label;
   const PromptCategory(this.value, this.label);
 
-  // --- ADDED: contentType Getter ---
-  // This getter uses the ContentLikeType defined in like_models.dart
   ContentLikeType get contentType {
     switch (this) {
       case PromptCategory.storyTime:
@@ -5996,7 +6043,6 @@ enum PromptCategory {
         return ContentLikeType.promptDatevibes;
     }
   }
-  // --- END ADDED ---
 
   List<PromptType> getPrompts() {
     switch (this) {
@@ -6093,8 +6139,7 @@ enum PromptType {
   // Date Vibes
   togetherWeCould('togetherWeCould', 'Together, we could'),
   firstRoundIsOnMeIf('firstRoundIsOnMeIf', 'First round is on me if'),
-  whatIOrderForTheTable('whatIOrderForTheTable',
-      'What I order for the table'), // Corrected enum value and label
+  whatIOrderForTheTable('whatIOrderForTheTable', 'What I order for the table'),
   bestSpotInTown('bestSpotInTown', 'I know the best spot in town for'),
   bestWayToAskMeOut('bestWayToAskMeOut', 'The best way to ask me out is by');
 
@@ -6164,6 +6209,20 @@ enum AudioPrompt {
   final String label;
   const AudioPrompt(this.value, this.label);
 }
+
+// --- ADDED: ReportReason Enum ---
+enum ReportReason {
+  notInterested('notInterested', 'Not Interested'),
+  fakeProfile('fakeProfile', 'Fake Profile/Scam'),
+  inappropriate('inappropriate', 'Inappropriate Content/Behavior'),
+  minor('minor', 'Underage User'),
+  spam('spam', 'Spam or Solicitation');
+
+  final String value;
+  final String label; // User-friendly label
+  const ReportReason(this.value, this.label);
+}
+// --- END ADDED ---
 
 
 
@@ -7154,21 +7213,25 @@ File: views/chat_detail_screen.dart
 import 'dart:async';
 import 'dart:io';
 import 'dart:typed_data';
-import 'package:cached_network_image/cached_network_image.dart'; // Added
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:dtx/models/chat_message.dart';
 import 'package:dtx/models/media_upload_model.dart';
 import 'package:dtx/providers/conversation_provider.dart';
 import 'package:dtx/providers/error_provider.dart';
+import 'package:dtx/providers/matches_provider.dart'; // Added
 import 'package:dtx/providers/service_provider.dart';
 import 'package:dtx/providers/user_provider.dart';
+import 'package:dtx/repositories/like_repository.dart'; // Added
 import 'package:dtx/repositories/media_repository.dart';
 import 'package:dtx/services/api_service.dart';
 import 'package:dtx/services/chat_service.dart';
+import 'package:dtx/utils/app_enums.dart'; // Added
 import 'package:dtx/widgets/message_bubble.dart';
+import 'package:dtx/widgets/report_reason_dialog.dart'; // Added
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter_cache_manager/flutter_cache_manager.dart'; // Added
+import 'package:flutter_cache_manager/flutter_cache_manager.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:image_picker/image_picker.dart';
@@ -7195,9 +7258,10 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
   final TextEditingController _messageController = TextEditingController();
   final ScrollController _scrollController = ScrollController();
   final FocusNode _inputFocusNode = FocusNode();
-  bool _isUploadingMedia = false; // Tracks if ANY upload is active
+  bool _isUploadingMedia = false;
+  bool _isInteracting = false; // Added for unmatch/report actions
 
-  // --- Constants ---
+  // --- Constants (Keep as is) ---
   static const int _maxImageSizeBytes = 10 * 1024 * 1024;
   static const int _maxVideoSizeBytes = 50 * 1024 * 1024;
   static const int _maxAudioSizeBytes = 10 * 1024 * 1024;
@@ -7233,10 +7297,10 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
   @override
   void initState() {
     super.initState();
+    // ... (keep existing initState logic) ...
     print("[ChatDetailScreen Init: ${widget.matchUserId}] Initializing...");
     _inputFocusNode.addListener(_handleFocusChange);
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      // Ensure WebSocket is connected
       final chatService = ref.read(chatServiceProvider);
       if (ref.read(webSocketStateProvider) !=
           WebSocketConnectionState.connected) {
@@ -7244,12 +7308,12 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
             "[ChatDetailScreen Init: ${widget.matchUserId}] Connecting WebSocket...");
         chatService.connect();
       }
-      // Initial message fetch is handled by the provider itself now
     });
   }
 
   @override
   void dispose() {
+    // ... (keep existing dispose logic) ...
     print("[ChatDetailScreen Dispose: ${widget.matchUserId}] Disposing...");
     _messageController.dispose();
     _scrollController.dispose();
@@ -7262,7 +7326,8 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
     // Optional: Add logic if needed when focus changes
   }
 
-  // Helper to read header bytes for MIME type detection
+  // --- Existing methods: _readHeaderBytes, _sendMessage, _scrollToBottom, _showAttachmentOptions, _handleFileSelection, _handleMediaSelection, _initiateMediaSend, _uploadAndSendMediaInBackground, _showSnackbar, _showErrorSnackbar ---
+  // ... (Keep these methods as they are) ...
   Future<Uint8List?> _readHeaderBytes(File file, [int length = 1024]) async {
     try {
       final stream = file.openRead(0, length);
@@ -7281,11 +7346,9 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
     }
   }
 
-  // Send TEXT message
   void _sendMessage() {
     final text = _messageController.text.trim();
-    if (text.isEmpty || _isUploadingMedia)
-      return; // Prevent send if empty or uploading
+    if (text.isEmpty || _isUploadingMedia || _isInteracting) return;
 
     final chatService = ref.read(chatServiceProvider);
     final wsState = ref.read(webSocketStateProvider);
@@ -7293,17 +7356,14 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
     if (wsState == WebSocketConnectionState.connected) {
       chatService.sendMessage(widget.matchUserId, text: text);
       _messageController.clear();
-      ref.read(messageInputProvider.notifier).state =
-          false; // Update button state
-      FocusScope.of(context).requestFocus(_inputFocusNode); // Keep focus
-      // Scroll handled by listener
+      ref.read(messageInputProvider.notifier).state = false;
+      FocusScope.of(context).requestFocus(_inputFocusNode);
     } else {
       _showErrorSnackbar("Cannot send message. Not connected.");
-      chatService.connect(); // Attempt to reconnect
+      chatService.connect();
     }
   }
 
-  // Scroll to the newest message (top of the reversed list)
   void _scrollToBottom() {
     if (_scrollController.hasClients) {
       print(
@@ -7319,10 +7379,9 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
     }
   }
 
-  // Show options for attaching media/files
   void _showAttachmentOptions() {
-    if (_isUploadingMedia) return; // Don't show if already uploading
-    FocusScope.of(context).unfocus(); // Hide keyboard
+    if (_isUploadingMedia || _isInteracting) return;
+    FocusScope.of(context).unfocus();
     showModalBottomSheet(
       context: context,
       shape: const RoundedRectangleBorder(
@@ -7368,9 +7427,8 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
     );
   }
 
-  // Handle selecting general files
   Future<void> _handleFileSelection() async {
-    if (_isUploadingMedia) return;
+    if (_isUploadingMedia || _isInteracting) return;
     try {
       FilePickerResult? result =
           await FilePicker.platform.pickFiles(type: FileType.any);
@@ -7383,8 +7441,6 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
         String? mimeType = lookupMimeType(filePath, headerBytes: headerBytes) ??
             lookupMimeType(fileName) ??
             'application/octet-stream';
-
-        // Validation
         bool isValid = false;
         String errorMsg = "Unsupported file type.";
         int maxSize = _maxFileSizeBytes;
@@ -7413,8 +7469,6 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
               "File is too large. Max size: ${maxSize ~/ (1024 * 1024)} MB.");
           return;
         }
-
-        // Initiate the send process
         _initiateMediaSend(file, fileName, mimeType);
       } else {
         print("[ChatDetailScreen] File picking cancelled.");
@@ -7425,9 +7479,8 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
     }
   }
 
-  // Handle selecting images/videos from camera or gallery
   Future<void> _handleMediaSelection(ImageSource source) async {
-    if (_isUploadingMedia) return;
+    if (_isUploadingMedia || _isInteracting) return;
     final ImagePicker picker = ImagePicker();
     try {
       final XFile? pickedFile = await picker.pickMedia();
@@ -7439,8 +7492,6 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
         final mimeType =
             lookupMimeType(pickedFile.path, headerBytes: headerBytes) ??
                 'application/octet-stream';
-
-        // Validation
         bool isImage = mimeType.startsWith('image/');
         bool isVideo = mimeType.startsWith('video/');
         int maxSize =
@@ -7459,8 +7510,6 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
               "${isImage ? 'Image' : 'Video'} is too large. Max size: ${maxSize ~/ (1024 * 1024)} MB.");
           return;
         }
-
-        // Initiate the send process
         _initiateMediaSend(file, fileName, mimeType);
       } else {
         print("[ChatDetailScreen] Media picking cancelled.");
@@ -7471,50 +7520,37 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
     }
   }
 
-  // Adds optimistic message and triggers background upload
   Future<void> _initiateMediaSend(
       File file, String fileName, String mimeType) async {
     if (!mounted) return;
     final conversationNotifier =
         ref.read(conversationProvider(widget.matchUserId).notifier);
     final currentUserId = ref.read(currentUserIdProvider);
-
     if (currentUserId == null) {
       _showErrorSnackbar("Cannot send media: User not identified.");
       return;
     }
-
-    // 1. Generate Temporary ID
     final tempId = DateTime.now().millisecondsSinceEpoch.toString();
-
-    // 2. Create Optimistic Message
     final optimisticMessage = ChatMessage(
       tempId: tempId,
-      messageID: 0, // Use 0 or negative for temporary
+      messageID: 0,
       senderUserID: currentUserId,
       recipientUserID: widget.matchUserId,
       messageText: '',
-      mediaUrl: null, // No final URL yet
+      mediaUrl: null,
       mediaType: mimeType,
-      sentAt: DateTime.now(), // Local time for display
+      sentAt: DateTime.now(),
       isRead: false,
-      status: ChatMessageStatus.pending, // Initial status
-      localFilePath: file.path, // Store local path
+      status: ChatMessageStatus.pending,
+      localFilePath: file.path,
       errorMessage: null,
     );
-
-    // 3. Add Optimistic Message to UI IMMEDIATELY
     print(
         "[ChatDetailScreen _initiateMediaSend: ${widget.matchUserId}] Adding optimistic media message TempID: $tempId");
     conversationNotifier.addSentMessage(optimisticMessage);
-
-    // 4. Trigger Background Upload/Send (DO NOT AWAIT here)
-    // Set the global uploading flag
     setState(() => _isUploadingMedia = true);
     _uploadAndSendMediaInBackground(file, fileName, mimeType, tempId).then((_) {
-      // This block executes after the background task finishes
       if (mounted) {
-        // Check if *other* messages are still uploading before re-enabling globally
         final stillUploading = ref
             .read(conversationProvider(widget.matchUserId))
             .messages
@@ -7531,21 +7567,15 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
         }
       }
     });
-
-    // 5. Scroll is handled by the listener based on the message add
   }
 
-  // Background task to upload, send WebSocket message, and update status
   Future<void> _uploadAndSendMediaInBackground(
       File file, String fileName, String mimeType, String tempId) async {
-    // Use read outside async gap if possible
     final conversationNotifier =
         ref.read(conversationProvider(widget.matchUserId).notifier);
     final mediaRepo = ref.read(mediaRepositoryProvider);
     final chatService = ref.read(chatServiceProvider);
     final bool isImage = mimeType.startsWith('image/');
-
-    // Update status to Uploading (using addPostFrameCallback for safety)
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) {
         print("[ChatBG Task $tempId] Updating status to Uploading");
@@ -7553,38 +7583,28 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
             tempId, ChatMessageStatus.uploading);
       }
     });
-
-    String? objectUrl; // To store the final URL
-
+    String? objectUrl;
     try {
       print("[ChatBG Task $tempId] Getting chat presigned URL...");
       final urls = await mediaRepo.getChatMediaPresignedUrl(fileName, mimeType);
       final presignedUrl = urls['presigned_url'];
-      objectUrl = urls['object_url']; // Assign final URL
-
+      objectUrl = urls['object_url'];
       if (presignedUrl == null || objectUrl == null) {
         throw ApiException("Failed to get upload URLs from server.");
       }
-
       print("[ChatBG Task $tempId] Uploading to S3...");
       final uploadModel = MediaUploadModel(
-        file: file,
-        fileName: fileName,
-        fileType: mimeType,
-        presignedUrl: presignedUrl,
-      );
+          file: file,
+          fileName: fileName,
+          fileType: mimeType,
+          presignedUrl: presignedUrl);
       bool uploadSuccess = await mediaRepo.retryUpload(uploadModel);
-
       if (!uploadSuccess) {
         throw ApiException("Failed to upload media to storage.");
       }
-
-      // --- Pre-cache the image AFTER successful upload ---
       if (isImage && objectUrl != null) {
-        // Check objectUrl is not null
         print("[ChatBG Task $tempId] Pre-caching image: $objectUrl");
         try {
-          // Use the default cache manager or configure a specific one
           await DefaultCacheManager().downloadFile(objectUrl);
           print(
               "[ChatBG Task $tempId] Image pre-caching completed for $objectUrl");
@@ -7593,25 +7613,15 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
               "[ChatBG Task $tempId] WARNING: Image pre-caching failed: $cacheErr");
         }
       }
-      // --- End Pre-cache ---
-
       print(
           "[ChatBG Task $tempId] Upload successful. Sending WebSocket message...");
-      chatService.sendMessage(
-        widget.matchUserId,
-        mediaUrl: objectUrl,
-        mediaType: mimeType,
-      );
-
-      // Update status to SENT only AFTER successful upload and WS send attempt
+      chatService.sendMessage(widget.matchUserId,
+          mediaUrl: objectUrl, mediaType: mimeType);
       if (mounted) {
         print(
             "[ChatBG Task $tempId] Updating status to Sent, Final URL: $objectUrl");
-        conversationNotifier.updateMessageStatus(
-          tempId,
-          ChatMessageStatus.sent,
-          finalMediaUrl: objectUrl, // Provide the final URL
-        );
+        conversationNotifier.updateMessageStatus(tempId, ChatMessageStatus.sent,
+            finalMediaUrl: objectUrl);
       }
       print("[ChatBG Task $tempId] Message marked as SENT locally.");
     } on ApiException catch (e) {
@@ -7619,10 +7629,8 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
       if (mounted) {
         print("[ChatBG Task $tempId] Updating status to Failed (API Error)");
         conversationNotifier.updateMessageStatus(
-          tempId,
-          ChatMessageStatus.failed,
-          errorMessage: e.message,
-        );
+            tempId, ChatMessageStatus.failed,
+            errorMessage: e.message);
       }
     } catch (e) {
       print("[ChatBG Task $tempId] General Error: $e");
@@ -7630,45 +7638,172 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
         print(
             "[ChatBG Task $tempId] Updating status to Failed (General Error)");
         conversationNotifier.updateMessageStatus(
-          tempId,
-          ChatMessageStatus.failed,
-          errorMessage: "Upload/Send failed: ${e.toString()}",
-        );
+            tempId, ChatMessageStatus.failed,
+            errorMessage: "Upload/Send failed: ${e.toString()}");
       }
     }
-    // finally block removed - input re-enabling is handled in _initiateMediaSend.then()
   }
 
-  // Snackbar helpers
   void _showSnackbar(String message,
       {bool isError = false, Duration duration = const Duration(seconds: 3)}) {
     if (!mounted) return;
     ScaffoldMessenger.of(context).removeCurrentSnackBar();
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
         content: Text(message, style: GoogleFonts.poppins()),
         backgroundColor: isError ? Colors.redAccent : Colors.green,
-        duration: duration,
-      ),
-    );
+        duration: duration));
   }
 
   void _showErrorSnackbar(String message) {
     _showSnackbar(message, isError: true);
   }
+  // --- End Existing Methods ---
+
+  // --- ADDED: _showMoreOptions ---
+  void _showMoreOptions() {
+    if (_isInteracting) return; // Don't show if another action is processing
+    showModalBottomSheet(
+      context: context,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (context) {
+        return SafeArea(
+          child: Wrap(
+            children: <Widget>[
+              ListTile(
+                leading:
+                    const Icon(Icons.block_flipped, color: Colors.redAccent),
+                title: Text('Unmatch',
+                    style: GoogleFonts.poppins(color: Colors.redAccent)),
+                onTap: () {
+                  Navigator.pop(context); // Close bottom sheet
+                  _confirmAndUnmatch();
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.flag_outlined, color: Colors.orange),
+                title: Text('Report',
+                    style: GoogleFonts.poppins(color: Colors.orange)),
+                onTap: () {
+                  Navigator.pop(context); // Close bottom sheet
+                  _reportUser();
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.cancel_outlined, color: Colors.grey),
+                title: Text('Cancel', style: GoogleFonts.poppins()),
+                onTap: () => Navigator.pop(context), // Close bottom sheet
+              ),
+              const SizedBox(height: 10),
+            ],
+          ),
+        );
+      },
+    );
+  }
+  // --- END ADDED ---
+
+  // --- ADDED: _confirmAndUnmatch ---
+  Future<void> _confirmAndUnmatch() async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text("Unmatch User?", style: GoogleFonts.poppins()),
+        content: Text(
+            "Are you sure you want to unmatch ${widget.matchName}? You won't be able to message them again.",
+            style: GoogleFonts.poppins()),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: Text("Cancel",
+                  style: GoogleFonts.poppins(color: Colors.grey))),
+          TextButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: Text("Unmatch",
+                  style: GoogleFonts.poppins(color: Colors.red))),
+        ],
+      ),
+    );
+
+    if (confirm != true) return;
+
+    if (!mounted) return;
+    setState(() => _isInteracting = true);
+    ref.read(errorProvider.notifier).clearError();
+
+    try {
+      final success = await ref
+          .read(likeRepositoryProvider)
+          .unmatchUser(targetUserId: widget.matchUserId);
+
+      if (success && mounted) {
+        _showSnackbar("Unmatched successfully.", isError: false);
+        ref.invalidate(matchesProvider); // Refresh matches list
+        Navigator.of(context).pop(); // Go back from chat screen
+      } else if (!success && mounted) {
+        _showErrorSnackbar("Failed to unmatch user.");
+      }
+    } on ApiException catch (e) {
+      _showErrorSnackbar("Unmatch failed: ${e.message}");
+    } catch (e) {
+      _showErrorSnackbar("An unexpected error occurred during unmatch.");
+    } finally {
+      if (mounted) setState(() => _isInteracting = false);
+    }
+  }
+  // --- END ADDED ---
+
+  // --- ADDED: _reportUser ---
+  Future<void> _reportUser() async {
+    final selectedReason = await showReportReasonDialog(context);
+    if (selectedReason == null) return; // User cancelled
+
+    if (!mounted) return;
+    setState(() => _isInteracting = true);
+    ref.read(errorProvider.notifier).clearError();
+
+    try {
+      final success = await ref.read(likeRepositoryProvider).reportUser(
+            targetUserId: widget.matchUserId,
+            reason: selectedReason,
+          );
+
+      if (success && mounted) {
+        _showSnackbar("Report submitted. Thank you.", isError: false);
+        // Decide if you want to unmatch after reporting from chat
+        // Option 1: Unmatch automatically after report
+        await _confirmAndUnmatch(); // Re-use the unmatch flow (will ask for confirmation again)
+        // Option 2: Don't unmatch, just show success message
+        // _showSnackbar("Report submitted. Thank you.", isError: false);
+      } else if (!success && mounted) {
+        _showErrorSnackbar("Failed to submit report.");
+      }
+    } on ApiException catch (e) {
+      _showErrorSnackbar("Report failed: ${e.message}");
+    } catch (e) {
+      _showErrorSnackbar("An unexpected error occurred during report.");
+    } finally {
+      // Reset interaction flag ONLY IF NOT unmatching automatically
+      // If unmatching, the unmatch finally block will handle it.
+      // if (mounted && !<UNMATCH_AFTER_REPORT_FLAG>) setState(() => _isInteracting = false);
+      if (mounted)
+        setState(() => _isInteracting = false); // Reset if not unmatching here
+    }
+  }
+  // --- END ADDED ---
 
   @override
   Widget build(BuildContext context) {
+    // ... (keep existing build setup) ...
     print(
-        "[ChatDetailScreen Build: ${widget.matchUserId}] Rebuilding Widget... IsUploading: $_isUploadingMedia");
-
+        "[ChatDetailScreen Build: ${widget.matchUserId}] Rebuilding Widget... IsUploading: $_isUploadingMedia, IsInteracting: $_isInteracting");
     final state = ref.watch(conversationProvider(widget.matchUserId));
     final currentUserId = ref.watch(currentUserIdProvider);
     final wsState = ref.watch(webSocketStateProvider);
-
-    // Refined Scroll Listener
     ref.listen<ConversationState>(conversationProvider(widget.matchUserId),
         (prev, next) {
+      // ... (keep existing scroll listener logic) ...
       final prevLength = prev?.messages.length ?? 0;
       final nextLength = next.messages.length;
       final prevFirstTempId = prev?.messages.isNotEmpty ?? false
@@ -7685,13 +7820,10 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
       }
       print(
           "[ChatDetailScreen Listener: ${widget.matchUserId}] State changed. PrevLen=$prevLength, NextLen=$nextLength. PrevFirstTempId=$prevFirstTempId, NextFirstTempId=$nextFirstTempId, NextFirstStatus=$nextFirstStatus. Next Status Counts: $nextStatusCounts");
-
-      // Scroll only when a NEW PENDING message is ADDED optimistically by the current user
       if (nextLength > prevLength &&
           next.messages.isNotEmpty &&
           next.messages.first.senderUserID == currentUserId &&
           next.messages.first.status == ChatMessageStatus.pending) {
-        // More specific check
         print(
             "[ChatDetailScreen Listener: ${widget.matchUserId}] New PENDING message added by me. Scheduling scroll.");
         WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -7740,9 +7872,7 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
               child: Text(
                 widget.matchName,
                 style: GoogleFonts.poppins(
-                  fontSize: 17,
-                  fontWeight: FontWeight.w600,
-                ),
+                    fontSize: 17, fontWeight: FontWeight.w600),
                 overflow: TextOverflow.ellipsis,
               ),
             ),
@@ -7750,6 +7880,15 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
         ),
         titleSpacing: 0,
         actions: [
+          // --- ADDED: More Options Button ---
+          IconButton(
+            icon: Icon(Icons.more_vert_rounded, color: Colors.grey[600]),
+            tooltip: "More Options",
+            onPressed: _showMoreOptions,
+            disabledColor: Colors.grey[300], // Disable if interacting
+          ),
+          // --- END ADDED ---
+          // Existing status indicator (keep as is)
           Padding(
             padding: const EdgeInsets.only(right: 16.0),
             child: Icon(
@@ -7772,14 +7911,25 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
               child: _buildMessagesList(state, currentUserId),
             ),
           ),
-          _buildMessageInputArea(),
+          // --- ADDED: Interaction Overlay ---
+          if (_isInteracting)
+            Container(
+              padding: const EdgeInsets.symmetric(vertical: 8.0),
+              color: Colors.white.withOpacity(0.8),
+              child: const Center(
+                  child: CircularProgressIndicator(color: Color(0xFF8B5CF6))),
+            )
+          else
+            _buildMessageInputArea(), // Show input only if not interacting
+          // --- END ADDED ---
         ],
       ),
     );
   }
 
-  // Builds the list of messages
+  // --- _buildMessagesList (Keep as is) ---
   Widget _buildMessagesList(ConversationState state, int? currentUserId) {
+    // ... (keep existing implementation) ...
     print(
         "[ChatDetailScreen _buildMessagesList: ${widget.matchUserId}] Building message list. Count: ${state.messages.length}");
     if (state.isLoading && state.messages.isEmpty) {
@@ -7788,31 +7938,23 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
     }
     if (state.error != null && state.messages.isEmpty) {
       return Center(
-        child: Padding(
-          padding: const EdgeInsets.all(20.0),
-          child: Text(
-            "Error loading messages: ${state.error!.message}",
-            style: GoogleFonts.poppins(color: Colors.red),
-            textAlign: TextAlign.center,
-          ),
-        ),
-      );
+          child: Padding(
+              padding: const EdgeInsets.all(20.0),
+              child: Text("Error loading messages: ${state.error!.message}",
+                  style: GoogleFonts.poppins(color: Colors.red),
+                  textAlign: TextAlign.center)));
     }
     if (!state.isLoading && state.messages.isEmpty) {
       return Center(
-        child: Padding(
-          padding: const EdgeInsets.all(20.0),
-          child: Text(
-            "Start the conversation!",
-            style: GoogleFonts.poppins(color: Colors.grey[600], fontSize: 16),
-            textAlign: TextAlign.center,
-          ),
-        ),
-      );
+          child: Padding(
+              padding: const EdgeInsets.all(20.0),
+              child: Text("Start the conversation!",
+                  style: GoogleFonts.poppins(
+                      color: Colors.grey[600], fontSize: 16),
+                  textAlign: TextAlign.center)));
     }
-
     return ListView.builder(
-      addAutomaticKeepAlives: true, // Keep items alive when scrolled
+      addAutomaticKeepAlives: true,
       controller: _scrollController,
       reverse: true,
       padding: const EdgeInsets.symmetric(vertical: 10.0, horizontal: 8.0),
@@ -7830,28 +7972,24 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
             }
           }
         }
-
         final keyId = message.tempId ?? message.messageID.toString();
         return Padding(
-          padding: const EdgeInsets.symmetric(vertical: 2.0),
-          child: MessageBubble(
-            // Update Key to include more factors to ensure uniqueness and trigger rebuild only when necessary
-            key: ValueKey(
-                "${keyId}_${message.status}_${message.mediaUrl ?? message.localFilePath}"),
-            message: message,
-            isMe: isMe,
-            showTail: showTail,
-          ),
-        );
+            padding: const EdgeInsets.symmetric(vertical: 2.0),
+            child: MessageBubble(
+                key: ValueKey(
+                    "${keyId}_${message.status}_${message.mediaUrl ?? message.localFilePath}"),
+                message: message,
+                isMe: isMe,
+                showTail: showTail));
       },
     );
   }
 
-  // Builds the input area
+  // --- _buildMessageInputArea (Disable if interacting) ---
   Widget _buildMessageInputArea() {
     final canSendText = ref.watch(messageInputProvider);
-    // Use _isUploadingMedia to disable inputs
-    final bool allowInput = !_isUploadingMedia;
+    final bool allowInput = !_isUploadingMedia &&
+        !_isInteracting; // Disable if uploading OR interacting
 
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12.0, vertical: 8.0),
@@ -7859,11 +7997,10 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
         color: Colors.white,
         boxShadow: [
           BoxShadow(
-            color: Colors.grey.withOpacity(0.15),
-            spreadRadius: 1,
-            blurRadius: 5,
-            offset: const Offset(0, -2),
-          ),
+              color: Colors.grey.withOpacity(0.15),
+              spreadRadius: 1,
+              blurRadius: 5,
+              offset: const Offset(0, -2))
         ],
       ),
       child: SafeArea(
@@ -7871,22 +8008,17 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
           crossAxisAlignment: CrossAxisAlignment.center,
           children: [
             IconButton(
-              // Attachment button
               icon: Icon(Icons.add_circle_outline_rounded,
                   color: allowInput ? Colors.grey[600] : Colors.grey[300]),
-              onPressed: allowInput
-                  ? _showAttachmentOptions
-                  : null, // Disable if uploading
+              onPressed: allowInput ? _showAttachmentOptions : null,
               tooltip: "Attach Media",
             ),
             const SizedBox(width: 4.0),
             Expanded(
-              // Text field
               child: Container(
                 decoration: BoxDecoration(
-                  color: Colors.grey[100],
-                  borderRadius: BorderRadius.circular(25.0),
-                ),
+                    color: Colors.grey[100],
+                    borderRadius: BorderRadius.circular(25.0)),
                 child: Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 16.0),
                   child: TextField(
@@ -7894,8 +8026,11 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
                     controller: _messageController,
                     textCapitalization: TextCapitalization.sentences,
                     decoration: InputDecoration(
-                      hintText:
-                          allowInput ? "Type a message..." : "Uploading...",
+                      hintText: allowInput
+                          ? "Type a message..."
+                          : (_isUploadingMedia
+                              ? "Uploading..."
+                              : "Processing..."),
                       hintStyle: GoogleFonts.poppins(color: Colors.grey[500]),
                       border: InputBorder.none,
                       contentPadding:
@@ -7905,26 +8040,24 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
                       ref.read(messageInputProvider.notifier).state =
                           text.trim().isNotEmpty;
                     },
-                    onSubmitted: (_) => canSendText && allowInput
-                        ? _sendMessage()
-                        : null, // Send only if allowed and has text
-                    minLines: 1,
-                    maxLines: 5,
+                    onSubmitted: (_) =>
+                        canSendText && allowInput ? _sendMessage() : null,
+                    minLines: 1, maxLines: 5,
                     keyboardType: TextInputType.multiline,
                     style: GoogleFonts.poppins(
                         color: Colors.black87, fontSize: 15),
-                    enabled: allowInput, // Disable text field during upload
+                    enabled: allowInput, // Disable text field
                   ),
                 ),
               ),
             ),
             const SizedBox(width: 8.0),
             IconButton(
-              // Send button
               icon: const Icon(Icons.send_rounded),
               color: const Color(0xFF8B5CF6),
-              // Disable if no text OR if uploading media
-              onPressed: canSendText && allowInput ? _sendMessage : null,
+              onPressed: canSendText && allowInput
+                  ? _sendMessage
+                  : null, // Disable send button
               tooltip: "Send Message",
               disabledColor: Colors.grey[400],
             ),
@@ -7935,7 +8068,7 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
   }
 }
 
-// Provider to track if text input field has text
+// Provider to track if text input field has text (Keep as is)
 final messageInputProvider = StateProvider<bool>((ref) => false);
 
 
@@ -9954,12 +10087,13 @@ import 'package:dtx/providers/filter_provider.dart';
 import 'package:dtx/providers/service_provider.dart';
 import 'package:dtx/providers/user_provider.dart';
 import 'package:dtx/services/api_service.dart';
-import 'package:dtx/views/filter_settings_dialog.dart'; // Keep for full dialog
+import 'package:dtx/views/filter_settings_dialog.dart';
 import 'package:dtx/views/name.dart';
 import 'package:dtx/models/user_model.dart';
 import 'package:dtx/widgets/home_profile_card.dart';
 import 'package:dtx/models/like_models.dart';
 import 'package:dtx/repositories/like_repository.dart';
+import 'package:dtx/widgets/report_reason_dialog.dart'; // Added
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_fonts/google_fonts.dart';
@@ -9979,8 +10113,8 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
 
   // --- initState, dispose, _fetchFeed, _showCompleteProfileDialog, _removeTopCard ---
   // --- _callLikeRepository, _callDislikeRepository, _showErrorSnackbar ---
-  // --- _openFilterDialog ---
-  // --- Remain the same as in the previous version ---
+  // --- _openFilterDialog, _showMiniFilterEditor, _buildFilterChips, _buildFilterChip ---
+  // --- Remain the same ---
   @override
   void initState() {
     super.initState();
@@ -10018,35 +10152,35 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
   }
 
   void _showCompleteProfileDialog() {
+    /* ... keep existing implementation ... */
     showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (BuildContext dialogContext) {
-        return AlertDialog(
-          title: Text("Complete Your Profile",
-              style: GoogleFonts.poppins(fontWeight: FontWeight.w600)),
-          content: Text(
-              "To interact with profiles, please complete your profile setup.",
-              style: GoogleFonts.poppins()),
-          actions: <Widget>[
-            TextButton(
-              child:
-                  Text("Later", style: GoogleFonts.poppins(color: Colors.grey)),
-              onPressed: () => Navigator.of(dialogContext).pop(),
-            ),
-            TextButton(
-              child: Text("Complete Profile",
-                  style: GoogleFonts.poppins(color: const Color(0xFF8B5CF6))),
-              onPressed: () {
-                Navigator.of(dialogContext).pop();
-                Navigator.push(context,
-                    MaterialPageRoute(builder: (_) => const NameInputScreen()));
-              },
-            ),
-          ],
-        );
-      },
-    );
+        context: context,
+        barrierDismissible: false,
+        builder: (BuildContext dialogContext) {
+          return AlertDialog(
+              title: Text("Complete Your Profile",
+                  style: GoogleFonts.poppins(fontWeight: FontWeight.w600)),
+              content: Text(
+                  "To interact with profiles, please complete your profile setup.",
+                  style: GoogleFonts.poppins()),
+              actions: <Widget>[
+                TextButton(
+                    child: Text("Later",
+                        style: GoogleFonts.poppins(color: Colors.grey)),
+                    onPressed: () => Navigator.of(dialogContext).pop()),
+                TextButton(
+                    child: Text("Complete Profile",
+                        style: GoogleFonts.poppins(
+                            color: const Color(0xFF8B5CF6))),
+                    onPressed: () {
+                      Navigator.of(dialogContext).pop();
+                      Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                              builder: (_) => const NameInputScreen()));
+                    })
+              ]);
+        });
   }
 
   void _removeTopCard() {
@@ -10063,13 +10197,12 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     }
   }
 
-  Future<bool> _callLikeRepository({
-    required int targetUserId,
-    required ContentLikeType contentType,
-    required String contentIdentifier,
-    required LikeInteractionType interactionType,
-    String? comment,
-  }) async {
+  Future<bool> _callLikeRepository(
+      {required int targetUserId,
+      required ContentLikeType contentType,
+      required String contentIdentifier,
+      required LikeInteractionType interactionType,
+      String? comment}) async {
     final authStatus = ref.read(authProvider).authStatus;
     if (authStatus == AuthStatus.onboarding2) {
       _showCompleteProfileDialog();
@@ -10143,112 +10276,94 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     return success;
   }
 
-  void _showErrorSnackbar(String message) {
+  void _showSnackbar(String message, {bool isError = false}) {
+    // Added snackbar helper
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-          content: Text(message, style: GoogleFonts.poppins()),
-          backgroundColor: Colors.redAccent),
-    );
+    ScaffoldMessenger.of(context).removeCurrentSnackBar();
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text(message, style: GoogleFonts.poppins()),
+        backgroundColor: isError ? Colors.redAccent : Colors.green));
   }
+
+  void _showErrorSnackbar(String message) {
+    _showSnackbar(message, isError: true);
+  } // Added error snackbar helper
 
   Future<void> _openFilterDialog() async {
+    /* ... keep existing implementation ... */
     print("[HomeScreen] Opening Full Filter Dialog.");
     await showDialog<bool>(
-      context: context,
-      builder: (context) => const FilterSettingsDialog(),
-    );
+        context: context, builder: (context) => const FilterSettingsDialog());
   }
 
-  // --- *** CORRECTED: _showMiniFilterEditor *** ---
   Future<void> _showMiniFilterEditor(FilterField filterType) async {
+    /* ... keep existing implementation ... */
     final filterNotifier = ref.read(filterProvider.notifier);
     final currentFilters = ref.read(filterProvider);
-    bool changesMade = false; // Track if the user confirms a change
-
+    bool changesMade = false;
     print("[HomeScreen] Opening mini-editor for: $filterType");
-
-    // --- Store initial values for comparison ---
     final initialGender = currentFilters.whoYouWantToSee;
     final initialAgeRange = RangeValues(
-      currentFilters.ageMin?.toDouble() ??
-          FilterSettings.defaultAgeMin.toDouble(),
-      currentFilters.ageMax?.toDouble() ??
-          FilterSettings.defaultAgeMax.toDouble(),
-    );
+        currentFilters.ageMin?.toDouble() ??
+            FilterSettings.defaultAgeMin.toDouble(),
+        currentFilters.ageMax?.toDouble() ??
+            FilterSettings.defaultAgeMax.toDouble());
     final initialRadius = currentFilters.radiusKm?.toDouble() ??
         FilterSettings.defaultRadius.toDouble();
     final initialActive =
         currentFilters.activeToday ?? FilterSettings.defaultActiveToday;
-    // --- End Store initial values ---
-
     await showDialog(
         context: context,
         barrierDismissible: true,
         builder: (dialogContext) {
-          // Use StatefulBuilder to manage local state within the dialog
-          // Declare the temporary state variables *outside* the builder but *inside* showDialog
           FilterGenderPref? tempGender = initialGender;
           RangeValues tempAgeRange = initialAgeRange;
           double tempRadius = initialRadius;
           bool tempActive = initialActive;
-
-          return StatefulBuilder(
-              // The builder receives the correct context and the StateSetter for THIS builder
-              builder: (stfContext, stfSetState) {
+          return StatefulBuilder(builder: (stfContext, stfSetState) {
             Widget editorContent;
-            String title = "Edit Filter"; // Default title
-
-            // Build the specific editor UI based on filterType
+            String title = "Edit Filter";
             switch (filterType) {
               case FilterField.whoYouWantToSee:
                 title = "Show Me";
                 editorContent = Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: FilterGenderPref.values.map((gender) {
-                    return RadioListTile<FilterGenderPref>(
-                      title: Text(
-                          gender.value[0].toUpperCase() +
-                              gender.value.substring(1),
-                          style: GoogleFonts.poppins()),
-                      value: gender,
-                      groupValue:
-                          tempGender, // Bind to temporary state variable
-                      onChanged: (FilterGenderPref? value) {
-                        if (value != null) {
-                          // Use the stfSetState from the builder argument
-                          stfSetState(() {
-                            print(
-                                "[MiniDialog stfSetState] Updating tempGender from $tempGender to $value");
-                            tempGender = value;
-                          });
-                        }
-                      },
-                      activeColor: const Color(0xFF8B5CF6),
-                      contentPadding: EdgeInsets.zero,
-                    );
-                  }).toList(),
-                );
+                    mainAxisSize: MainAxisSize.min,
+                    children: FilterGenderPref.values.map((gender) {
+                      return RadioListTile<FilterGenderPref>(
+                          title: Text(
+                              gender.value[0].toUpperCase() +
+                                  gender.value.substring(1),
+                              style: GoogleFonts.poppins()),
+                          value: gender,
+                          groupValue: tempGender,
+                          onChanged: (FilterGenderPref? value) {
+                            if (value != null) {
+                              stfSetState(() {
+                                print(
+                                    "[MiniDialog stfSetState] Updating tempGender from $tempGender to $value");
+                                tempGender = value;
+                              });
+                            }
+                          },
+                          activeColor: const Color(0xFF8B5CF6),
+                          contentPadding: EdgeInsets.zero);
+                    }).toList());
                 break;
               case FilterField.ageMin:
               case FilterField.ageMax:
                 title = "Age Range";
-                editorContent = Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    RangeSlider(
-                      values: tempAgeRange, // Bind to temporary state variable
+                editorContent =
+                    Column(mainAxisSize: MainAxisSize.min, children: [
+                  RangeSlider(
+                      values: tempAgeRange,
                       min: 18,
                       max: 70,
                       divisions: 52,
-                      labels: RangeLabels(
-                        tempAgeRange.start.round().toString(),
-                        tempAgeRange.end.round().toString(),
-                      ),
+                      labels: RangeLabels(tempAgeRange.start.round().toString(),
+                          tempAgeRange.end.round().toString()),
                       activeColor: const Color(0xFF8B5CF6),
                       inactiveColor: const Color(0xFF8B5CF6).withOpacity(0.3),
                       onChanged: (RangeValues values) {
-                        // Use the stfSetState from the builder argument
                         stfSetState(() {
                           if (values.start <= values.end) {
                             print(
@@ -10256,26 +10371,21 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                             tempAgeRange = values;
                           }
                         });
-                      },
-                    ),
-                    Padding(
+                      }),
+                  Padding(
                       padding: const EdgeInsets.only(top: 8.0),
                       child: Text(
-                        "${tempAgeRange.start.round()} - ${tempAgeRange.end.round()} years",
-                        style: GoogleFonts.poppins(
-                            color: Colors.grey[600], fontSize: 14),
-                      ),
-                    ),
-                  ],
-                );
+                          "${tempAgeRange.start.round()} - ${tempAgeRange.end.round()} years",
+                          style: GoogleFonts.poppins(
+                              color: Colors.grey[600], fontSize: 14)))
+                ]);
                 break;
               case FilterField.radiusKm:
                 title = "Distance Radius";
-                editorContent = Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Slider(
-                      value: tempRadius, // Bind to temporary state variable
+                editorContent =
+                    Column(mainAxisSize: MainAxisSize.min, children: [
+                  Slider(
+                      value: tempRadius,
                       min: 1,
                       max: 500,
                       divisions: 499,
@@ -10283,123 +10393,106 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                       activeColor: const Color(0xFF8B5CF6),
                       inactiveColor: const Color(0xFF8B5CF6).withOpacity(0.3),
                       onChanged: (double value) {
-                        // Use the stfSetState from the builder argument
                         stfSetState(() {
                           print(
                               "[MiniDialog stfSetState] Updating tempRadius from $tempRadius to $value");
                           tempRadius = value;
                         });
-                      },
-                    ),
-                    Padding(
+                      }),
+                  Padding(
                       padding: const EdgeInsets.only(top: 8.0),
-                      child: Text(
-                        "${tempRadius.round()} km",
-                        style: GoogleFonts.poppins(
-                            color: Colors.grey[600], fontSize: 14),
-                      ),
-                    ),
-                  ],
-                );
+                      child: Text("${tempRadius.round()} km",
+                          style: GoogleFonts.poppins(
+                              color: Colors.grey[600], fontSize: 14)))
+                ]);
                 break;
               case FilterField.activeToday:
                 title = "Activity";
                 editorContent = SwitchListTile(
-                  title:
-                      Text("Active Today Only", style: GoogleFonts.poppins()),
-                  value: tempActive, // Bind to temporary state variable
-                  activeColor: const Color(0xFF8B5CF6),
-                  contentPadding: EdgeInsets.zero,
-                  onChanged: (bool value) {
-                    // Use the stfSetState from the builder argument
-                    stfSetState(() {
-                      print(
-                          "[MiniDialog stfSetState] Updating tempActive from $tempActive to $value");
-                      tempActive = value;
+                    title:
+                        Text("Active Today Only", style: GoogleFonts.poppins()),
+                    value: tempActive,
+                    activeColor: const Color(0xFF8B5CF6),
+                    contentPadding: EdgeInsets.zero,
+                    onChanged: (bool value) {
+                      stfSetState(() {
+                        print(
+                            "[MiniDialog stfSetState] Updating tempActive from $tempActive to $value");
+                        tempActive = value;
+                      });
                     });
-                  },
-                );
                 break;
             }
-
-            // Build the AlertDialog using the temporary state variables
             return AlertDialog(
-              title: Text(title,
-                  style: GoogleFonts.poppins(fontWeight: FontWeight.w600)),
-              contentPadding: const EdgeInsets.fromLTRB(20, 20, 20, 0),
-              content: editorContent,
-              actions: <Widget>[
-                TextButton(
-                  child: Text('Cancel',
-                      style: GoogleFonts.poppins(color: Colors.grey)),
-                  onPressed: () => Navigator.of(dialogContext).pop(),
-                ),
-                TextButton(
-                  child: Text('Apply',
-                      style: GoogleFonts.poppins(
-                          color: const Color(0xFF8B5CF6),
-                          fontWeight: FontWeight.w600)),
-                  onPressed: () async {
-                    // Compare final temp values with initial values
-                    bool valueChanged = false;
-                    switch (filterType) {
-                      case FilterField.whoYouWantToSee:
-                        valueChanged = (initialGender != tempGender);
-                        if (valueChanged)
-                          filterNotifier.updateSingleFilter(
-                              tempGender, filterType);
-                        break;
-                      case FilterField.ageMin:
-                      case FilterField.ageMax:
-                        valueChanged = (initialAgeRange.start.round() !=
-                                tempAgeRange.start.round() ||
-                            initialAgeRange.end.round() !=
-                                tempAgeRange.end.round());
-                        if (valueChanged) {
-                          filterNotifier.updateSingleFilter(
-                              tempAgeRange.start.round(), FilterField.ageMin);
-                          filterNotifier.updateSingleFilter(
-                              tempAgeRange.end.round(), FilterField.ageMax);
+                title: Text(title,
+                    style: GoogleFonts.poppins(fontWeight: FontWeight.w600)),
+                contentPadding: const EdgeInsets.fromLTRB(20, 20, 20, 0),
+                content: editorContent,
+                actions: <Widget>[
+                  TextButton(
+                      child: Text('Cancel',
+                          style: GoogleFonts.poppins(color: Colors.grey)),
+                      onPressed: () => Navigator.of(dialogContext).pop()),
+                  TextButton(
+                      child: Text('Apply',
+                          style: GoogleFonts.poppins(
+                              color: const Color(0xFF8B5CF6),
+                              fontWeight: FontWeight.w600)),
+                      onPressed: () async {
+                        bool valueChanged = false;
+                        switch (filterType) {
+                          case FilterField.whoYouWantToSee:
+                            valueChanged = (initialGender != tempGender);
+                            if (valueChanged)
+                              filterNotifier.updateSingleFilter(
+                                  tempGender, filterType);
+                            break;
+                          case FilterField.ageMin:
+                          case FilterField.ageMax:
+                            valueChanged = (initialAgeRange.start.round() !=
+                                    tempAgeRange.start.round() ||
+                                initialAgeRange.end.round() !=
+                                    tempAgeRange.end.round());
+                            if (valueChanged) {
+                              filterNotifier.updateSingleFilter(
+                                  tempAgeRange.start.round(),
+                                  FilterField.ageMin);
+                              filterNotifier.updateSingleFilter(
+                                  tempAgeRange.end.round(), FilterField.ageMax);
+                            }
+                            break;
+                          case FilterField.radiusKm:
+                            valueChanged =
+                                (initialRadius.round() != tempRadius.round());
+                            if (valueChanged)
+                              filterNotifier.updateSingleFilter(
+                                  tempRadius.round(), filterType);
+                            break;
+                          case FilterField.activeToday:
+                            valueChanged = (initialActive != tempActive);
+                            if (valueChanged)
+                              filterNotifier.updateSingleFilter(
+                                  tempActive, filterType);
+                            break;
                         }
-                        break;
-                      case FilterField.radiusKm:
-                        valueChanged =
-                            (initialRadius.round() != tempRadius.round());
-                        if (valueChanged)
-                          filterNotifier.updateSingleFilter(
-                              tempRadius.round(), filterType);
-                        break;
-                      case FilterField.activeToday:
-                        valueChanged = (initialActive != tempActive);
-                        if (valueChanged)
-                          filterNotifier.updateSingleFilter(
-                              tempActive, filterType);
-                        break;
-                    }
-
-                    if (valueChanged) {
-                      changesMade = true;
-                      print(
-                          "[HomeScreen] Mini-editor change confirmed for $filterType.");
-                    } else {
-                      print(
-                          "[HomeScreen] Mini-editor no change detected for $filterType.");
-                    }
-                    Navigator.of(dialogContext).pop(); // Close the dialog
-                  },
-                ),
-              ],
-              actionsPadding:
-                  const EdgeInsets.symmetric(horizontal: 15, vertical: 10),
-            );
-          }); // End StatefulBuilder
-        }); // End showDialog
-
-    // Save and refresh feed *after* the dialog closes if changes were made
+                        if (valueChanged) {
+                          changesMade = true;
+                          print(
+                              "[HomeScreen] Mini-editor change confirmed for $filterType.");
+                        } else {
+                          print(
+                              "[HomeScreen] Mini-editor no change detected for $filterType.");
+                        }
+                        Navigator.of(dialogContext).pop();
+                      })
+                ],
+                actionsPadding:
+                    const EdgeInsets.symmetric(horizontal: 15, vertical: 10));
+          });
+        });
     if (changesMade && mounted) {
       print("[HomeScreen] Mini-filter changed. Saving current state via API.");
-      await Future.delayed(
-          const Duration(milliseconds: 50)); // Small delay optional
+      await Future.delayed(const Duration(milliseconds: 50));
       final bool saveSuccess = await filterNotifier.saveCurrentFilterState();
       if (!saveSuccess && mounted) {
         _showErrorSnackbar("Failed to save filter change.");
@@ -10408,13 +10501,116 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
       print("[HomeScreen] No changes made in mini-filter editor, not saving.");
     }
   }
-  // --- *** END CORRECTED Function *** ---
+
+  List<Widget> _buildFilterChips(FilterSettings filters) {
+    /* ... keep existing implementation ... */
+    List<Widget> chips = [];
+    chips.add(_buildFilterChip(
+        Icons.wc_rounded,
+        filters.whoYouWantToSee?.value.replaceFirst(
+                filters.whoYouWantToSee!.value[0],
+                filters.whoYouWantToSee!.value[0].toUpperCase()) ??
+            FilterSettings.defaultGenderPref.value.replaceFirst(
+                FilterSettings.defaultGenderPref.value[0],
+                FilterSettings.defaultGenderPref.value[0].toUpperCase()),
+        FilterField.whoYouWantToSee,
+        () => _showMiniFilterEditor(FilterField.whoYouWantToSee)));
+    chips.add(_buildFilterChip(
+        Icons.cake_outlined,
+        '${filters.ageMin ?? FilterSettings.defaultAgeMin}-${filters.ageMax ?? FilterSettings.defaultAgeMax}',
+        FilterField.ageMin,
+        () => _showMiniFilterEditor(FilterField.ageMin)));
+    chips.add(_buildFilterChip(
+        Icons.social_distance_outlined,
+        '${filters.radiusKm ?? FilterSettings.defaultRadius} km',
+        FilterField.radiusKm,
+        () => _showMiniFilterEditor(FilterField.radiusKm)));
+    bool activeTodayValue =
+        filters.activeToday ?? FilterSettings.defaultActiveToday;
+    chips.add(_buildFilterChip(
+        activeTodayValue
+            ? Icons.access_time_filled_rounded
+            : Icons.access_time_rounded,
+        activeTodayValue ? 'Active Today' : 'Active: Any',
+        FilterField.activeToday,
+        () => _showMiniFilterEditor(FilterField.activeToday)));
+    return chips;
+  }
+
+  Widget _buildFilterChip(
+      IconData icon, String label, FilterField type, VoidCallback onTap) {
+    /* ... keep existing implementation ... */
+    const Color themeColor = Color(0xFF8B5CF6);
+    const Color themeBgColor = Color(0xFFEDE9FE);
+    const Color themeTextColor = themeColor;
+    return Padding(
+        padding: const EdgeInsets.only(right: 8.0),
+        child: GestureDetector(
+            onTap: onTap,
+            child: Chip(
+                avatar: Icon(icon, size: 16, color: themeColor),
+                label: Text(label),
+                labelStyle: GoogleFonts.poppins(
+                    fontSize: 12,
+                    color: themeTextColor,
+                    fontWeight: FontWeight.w500),
+                backgroundColor: themeBgColor,
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                visualDensity:
+                    const VisualDensity(horizontal: 0.0, vertical: -2),
+                side: BorderSide.none,
+                elevation: 0.5,
+                shadowColor: themeColor.withOpacity(0.2))));
+  }
+
+  // --- ADDED: _callReportRepository ---
+  Future<bool> _callReportRepository(
+      int targetUserId, ReportReason reason) async {
+    // Check if user needs to complete profile first
+    final authStatus = ref.read(authProvider).authStatus;
+    if (authStatus == AuthStatus.onboarding2) {
+      _showCompleteProfileDialog();
+      return false;
+    }
+    // Prevent multiple interactions
+    if (_isInteracting) return false;
+    setState(() => _isInteracting = true);
+    final errorNotifier = ref.read(errorProvider.notifier)..clearError();
+    bool success = false;
+    try {
+      success = await ref.read(likeRepositoryProvider).reportUser(
+            targetUserId: targetUserId,
+            reason: reason,
+          );
+      if (success && mounted) {
+        _showSnackbar("Report submitted successfully.", isError: false);
+        _removeTopCard(); // Remove the card after reporting
+      } else if (!success && mounted && ref.read(errorProvider) == null) {
+        errorNotifier.setError(AppError.server("Failed to submit report."));
+        _showErrorSnackbar("Failed to submit report.");
+      }
+    } on ApiException catch (e) {
+      if (mounted) errorNotifier.setError(AppError.server(e.message));
+      _showErrorSnackbar(e.message);
+    } catch (e) {
+      if (mounted)
+        errorNotifier
+            .setError(AppError.generic("An unexpected error occurred."));
+      _showErrorSnackbar("An unexpected error occurred.");
+    } finally {
+      if (mounted) setState(() => _isInteracting = false);
+    }
+    return success;
+  }
+  // --- END ADDED ---
 
   @override
   Widget build(BuildContext context) {
+    // ... (keep existing build setup) ...
     final feedState = ref.watch(feedProvider);
-    final filters = ref.watch(filterProvider); // Watch filters for chip display
-
+    final filters = ref.watch(filterProvider);
     ref.listen<HomeFeedState>(feedProvider, (_, next) {
       if (mounted && _feedProfiles != next.profiles) {
         setState(() {
@@ -10424,7 +10620,6 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
         });
       }
     });
-
     final error = feedState.error ?? ref.watch(errorProvider);
     final isLoadingFeed = feedState.isLoading && !feedState.hasFetchedOnce;
     final bool hasProfilesToShow = _feedProfiles.isNotEmpty;
@@ -10440,33 +10635,24 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
         automaticallyImplyLeading: false,
         actions: [
           IconButton(
-            icon: const Icon(Icons.tune_rounded, color: Color(0xFF8B5CF6)),
-            tooltip: "Filters",
-            onPressed: _openFilterDialog, // Opens the full dialog
-          ),
+              icon: const Icon(Icons.tune_rounded, color: Color(0xFF8B5CF6)),
+              tooltip: "Filters",
+              onPressed: _openFilterDialog)
         ],
       ),
       body: Column(
         children: [
-          // Filter Chips Row
           Padding(
             padding:
                 const EdgeInsets.symmetric(horizontal: 12.0, vertical: 10.0),
             child: Container(
-              // Keep container for height constraint
-              color: Colors.transparent,
-              height: 34,
-              child: SingleChildScrollView(
-                scrollDirection: Axis.horizontal,
-                physics: const BouncingScrollPhysics(),
-                child: Row(
-                  children: _buildFilterChips(filters), // Call modified builder
-                ),
-              ),
-            ),
+                color: Colors.transparent,
+                height: 34,
+                child: SingleChildScrollView(
+                    scrollDirection: Axis.horizontal,
+                    physics: const BouncingScrollPhysics(),
+                    child: Row(children: _buildFilterChips(filters)))),
           ),
-
-          // Feed Area (Expanded)
           Expanded(
             child: Stack(
               alignment: Alignment.center,
@@ -10481,13 +10667,11 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                   _buildProfileCardAtIndex(0),
                 if (_isInteracting)
                   Positioned.fill(
-                    child: Container(
-                      color: Colors.white.withOpacity(0.5),
-                      child: const Center(
-                          child: CircularProgressIndicator(
-                              color: Color(0xFF8B5CF6))),
-                    ),
-                  ),
+                      child: Container(
+                          color: Colors.white.withOpacity(0.5),
+                          child: const Center(
+                              child: CircularProgressIndicator(
+                                  color: Color(0xFF8B5CF6))))),
               ],
             ),
           ),
@@ -10496,76 +10680,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     );
   }
 
-  // --- _buildFilterChips (Remains the same as previous fix) ---
-  List<Widget> _buildFilterChips(FilterSettings filters) {
-    List<Widget> chips = [];
-    chips.add(_buildFilterChip(
-      Icons.wc_rounded,
-      filters.whoYouWantToSee?.value.replaceFirst(
-              filters.whoYouWantToSee!.value[0],
-              filters.whoYouWantToSee!.value[0].toUpperCase()) ??
-          FilterSettings.defaultGenderPref.value.replaceFirst(
-              FilterSettings.defaultGenderPref.value[0],
-              FilterSettings.defaultGenderPref.value[0].toUpperCase()),
-      FilterField.whoYouWantToSee,
-      () => _showMiniFilterEditor(FilterField.whoYouWantToSee),
-    ));
-    chips.add(_buildFilterChip(
-      Icons.cake_outlined,
-      '${filters.ageMin ?? FilterSettings.defaultAgeMin}-${filters.ageMax ?? FilterSettings.defaultAgeMax}',
-      FilterField.ageMin,
-      () => _showMiniFilterEditor(FilterField.ageMin),
-    ));
-    chips.add(_buildFilterChip(
-      Icons.social_distance_outlined,
-      '${filters.radiusKm ?? FilterSettings.defaultRadius} km',
-      FilterField.radiusKm,
-      () => _showMiniFilterEditor(FilterField.radiusKm),
-    ));
-    bool activeTodayValue =
-        filters.activeToday ?? FilterSettings.defaultActiveToday;
-    chips.add(_buildFilterChip(
-      activeTodayValue
-          ? Icons.access_time_filled_rounded
-          : Icons.access_time_rounded,
-      activeTodayValue ? 'Active Today' : 'Active: Any',
-      FilterField.activeToday,
-      () => _showMiniFilterEditor(FilterField.activeToday),
-    ));
-    return chips;
-  }
-
-  // --- _buildFilterChip (Remains the same as previous fix) ---
-  Widget _buildFilterChip(
-      IconData icon, String label, FilterField type, VoidCallback onTap) {
-    const Color themeColor = Color(0xFF8B5CF6);
-    const Color themeBgColor = Color(0xFFEDE9FE);
-    const Color themeTextColor = themeColor;
-
-    return Padding(
-      padding: const EdgeInsets.only(right: 8.0),
-      child: GestureDetector(
-        // Ensure chip is tappable
-        onTap: onTap,
-        child: Chip(
-          avatar: Icon(icon, size: 16, color: themeColor),
-          label: Text(label),
-          labelStyle: GoogleFonts.poppins(
-              fontSize: 12, color: themeTextColor, fontWeight: FontWeight.w500),
-          backgroundColor: themeBgColor,
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-          materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-          visualDensity: const VisualDensity(horizontal: 0.0, vertical: -2),
-          side: BorderSide.none,
-          elevation: 0.5,
-          shadowColor: themeColor.withOpacity(0.2),
-        ),
-      ),
-    );
-  }
-
-  // --- _buildProfileCardAtIndex, _buildEmptyState, _buildErrorState ---
-  // --- Remain the same as in the previous version ---
+  // --- Modified _buildProfileCardAtIndex ---
   Widget _buildProfileCardAtIndex(int index) {
     if (index >= 0 && index < _feedProfiles.length) {
       final currentProfile = _feedProfiles[index];
@@ -10589,6 +10704,12 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
           if (currentProfile.id == null) return false;
           return await _callDislikeRepository(currentProfile.id!);
         },
+        // --- ADDED: Pass Report Callback ---
+        performReportApiCall: ({required reason}) async {
+          if (currentProfile.id == null) return false;
+          return await _callReportRepository(currentProfile.id!, reason);
+        },
+        // --- END ADDED ---
         onInteractionComplete: _removeTopCard,
       );
     }
@@ -10597,103 +10718,87 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
         child: Text("No more profiles.", style: GoogleFonts.poppins()));
   }
 
+  // --- _buildEmptyState, _buildErrorState (keep as is) ---
   Widget _buildEmptyState() {
+    /* ... keep existing implementation ... */
     return LayoutBuilder(builder: (context, constraints) {
       return SingleChildScrollView(
-        physics: const AlwaysScrollableScrollPhysics(),
-        child: ConstrainedBox(
-          constraints: BoxConstraints(minHeight: constraints.maxHeight),
-          child: Center(
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Icon(Icons.people_outline_rounded,
-                    size: 80, color: Colors.grey[400]),
-                const SizedBox(height: 20),
-                Text(
-                  "That's everyone for now!",
-                  style: GoogleFonts.poppins(
-                      fontSize: 18, color: Colors.grey[600]),
-                ),
-                const SizedBox(height: 10),
-                Text(
-                  "Adjust your filters or check back later.",
-                  textAlign: TextAlign.center,
-                  style: GoogleFonts.poppins(
-                      fontSize: 14, color: Colors.grey[500]),
-                ),
-                const SizedBox(height: 20),
-                ElevatedButton.icon(
-                  icon: const Icon(Icons.refresh_rounded, size: 18),
-                  label: const Text("Refresh Feed"),
-                  style: ElevatedButton.styleFrom(
-                    foregroundColor: Colors.white,
-                    backgroundColor: const Color(0xFF8B5CF6),
-                    shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(20)),
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 20, vertical: 10),
-                  ),
-                  onPressed: () => _fetchFeed(force: true),
-                ),
-              ],
-            ),
-          ),
-        ),
-      );
+          physics: const AlwaysScrollableScrollPhysics(),
+          child: ConstrainedBox(
+              constraints: BoxConstraints(minHeight: constraints.maxHeight),
+              child: Center(
+                  child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                    Icon(Icons.people_outline_rounded,
+                        size: 80, color: Colors.grey[400]),
+                    const SizedBox(height: 20),
+                    Text("That's everyone for now!",
+                        style: GoogleFonts.poppins(
+                            fontSize: 18, color: Colors.grey[600])),
+                    const SizedBox(height: 10),
+                    Text("Adjust your filters or check back later.",
+                        textAlign: TextAlign.center,
+                        style: GoogleFonts.poppins(
+                            fontSize: 14, color: Colors.grey[500])),
+                    const SizedBox(height: 20),
+                    ElevatedButton.icon(
+                        icon: const Icon(Icons.refresh_rounded, size: 18),
+                        label: const Text("Refresh Feed"),
+                        style: ElevatedButton.styleFrom(
+                            foregroundColor: Colors.white,
+                            backgroundColor: const Color(0xFF8B5CF6),
+                            shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(20)),
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 20, vertical: 10)),
+                        onPressed: () => _fetchFeed(force: true))
+                  ]))));
     });
   }
 
   Widget _buildErrorState(AppError error) {
+    /* ... keep existing implementation ... */
     return LayoutBuilder(builder: (context, constraints) {
       return SingleChildScrollView(
-        physics: const AlwaysScrollableScrollPhysics(),
-        child: ConstrainedBox(
-          constraints: BoxConstraints(minHeight: constraints.maxHeight),
-          child: Center(
-            child: Padding(
-              padding: const EdgeInsets.all(20.0),
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Icon(Icons.error_outline_rounded,
-                      size: 60, color: Colors.redAccent[100]),
-                  const SizedBox(height: 20),
-                  Text(
-                    "Oops! Something went wrong",
-                    style: GoogleFonts.poppins(
-                        fontSize: 18,
-                        fontWeight: FontWeight.w600,
-                        color: Colors.grey[700]),
-                    textAlign: TextAlign.center,
-                  ),
-                  const SizedBox(height: 10),
-                  Text(
-                    error.message,
-                    style: GoogleFonts.poppins(
-                        fontSize: 14, color: Colors.grey[600]),
-                    textAlign: TextAlign.center,
-                  ),
-                  const SizedBox(height: 20),
-                  ElevatedButton.icon(
-                    icon: const Icon(Icons.refresh_rounded, size: 18),
-                    label: const Text("Retry"),
-                    style: ElevatedButton.styleFrom(
-                      foregroundColor: Colors.white,
-                      backgroundColor: const Color(0xFF8B5CF6),
-                      shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(20)),
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 30, vertical: 12),
-                    ),
-                    onPressed: () => _fetchFeed(force: true),
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ),
-      );
+          physics: const AlwaysScrollableScrollPhysics(),
+          child: ConstrainedBox(
+              constraints: BoxConstraints(minHeight: constraints.maxHeight),
+              child: Center(
+                  child: Padding(
+                      padding: const EdgeInsets.all(20.0),
+                      child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Icon(Icons.error_outline_rounded,
+                                size: 60, color: Colors.redAccent[100]),
+                            const SizedBox(height: 20),
+                            Text("Oops! Something went wrong",
+                                style: GoogleFonts.poppins(
+                                    fontSize: 18,
+                                    fontWeight: FontWeight.w600,
+                                    color: Colors.grey[700]),
+                                textAlign: TextAlign.center),
+                            const SizedBox(height: 10),
+                            Text(error.message,
+                                style: GoogleFonts.poppins(
+                                    fontSize: 14, color: Colors.grey[600]),
+                                textAlign: TextAlign.center),
+                            const SizedBox(height: 20),
+                            ElevatedButton.icon(
+                                icon:
+                                    const Icon(Icons.refresh_rounded, size: 18),
+                                label: const Text("Retry"),
+                                style: ElevatedButton.styleFrom(
+                                    foregroundColor: Colors.white,
+                                    backgroundColor: const Color(0xFF8B5CF6),
+                                    shape: RoundedRectangleBorder(
+                                        borderRadius:
+                                            BorderRadius.circular(20)),
+                                    padding: const EdgeInsets.symmetric(
+                                        horizontal: 30, vertical: 12)),
+                                onPressed: () => _fetchFeed(force: true))
+                          ])))));
     });
   }
 } // End of _HomeScreenState
@@ -18764,16 +18869,18 @@ class FullLikerProfileCard extends StatelessWidget {
 File: widgets/home_profile_card.dart
 ================================================
 // File: widgets/home_profile_card.dart
-import 'dart:async'; // Import async
+import 'dart:async';
 import 'dart:math';
 import 'package:dtx/models/user_model.dart';
 import 'package:dtx/models/like_models.dart';
 import 'package:dtx/providers/audio_player_provider.dart';
 import 'package:dtx/utils/app_enums.dart';
-import 'package:dtx/providers/user_provider.dart'; // Import user provider
+import 'package:dtx/providers/user_provider.dart';
+import 'package:dtx/widgets/report_reason_dialog.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:cached_network_image/cached_network_image.dart';
 
 // Function Type Definitions
 typedef PerformLikeApiCall = Future<bool> Function({
@@ -18782,27 +18889,29 @@ typedef PerformLikeApiCall = Future<bool> Function({
   required LikeInteractionType interactionType,
   String? comment,
 });
-
-// --- ADDED: Dislike Callback Type ---
 typedef PerformDislikeApiCall = Future<bool> Function();
-
 typedef InteractionCompleteCallback = void Function();
+typedef PerformReportApiCall = Future<bool> Function(
+    {required ReportReason reason});
+const int maxCommentLength = 140;
 
 class HomeProfileCard extends ConsumerWidget {
   final UserModel profile;
   final PerformLikeApiCall performLikeApiCall;
-  final PerformDislikeApiCall performDislikeApiCall; // <<< ADDED
+  final PerformDislikeApiCall performDislikeApiCall;
+  final PerformReportApiCall performReportApiCall;
   final InteractionCompleteCallback onInteractionComplete;
 
   const HomeProfileCard({
     super.key,
     required this.profile,
     required this.performLikeApiCall,
-    required this.performDislikeApiCall, // <<< ADDED
+    required this.performDislikeApiCall,
+    required this.performReportApiCall,
     required this.onInteractionComplete,
   });
 
-  // _showInteractionDialog(...) remains the same as previous version
+  // --- _showInteractionDialog (Corrected - Not Commented) ---
   Future<void> _showInteractionDialog(
     BuildContext context,
     WidgetRef ref,
@@ -18822,7 +18931,7 @@ class HomeProfileCard extends ConsumerWidget {
 
     if (isMale) {
       listenerCallback = () {
-        if (context.mounted && commentController.value.text != null) {
+        if (context.mounted && commentController.hasListeners) {
           try {
             sendLikeEnabledNotifier.value =
                 commentController.text.trim().isNotEmpty;
@@ -18866,9 +18975,10 @@ class HomeProfileCard extends ConsumerWidget {
         );
 
         if (success && context.mounted) {
-          Navigator.of(context, rootNavigator: true).pop();
-          onInteractionComplete();
+          Navigator.of(context, rootNavigator: true).pop(); // Close dialog
+          onInteractionComplete(); // Trigger card removal etc.
         }
+        // Errors shown via SnackBar in HomeScreen's callback
       } finally {
         try {
           if (context.mounted && _isDialogInteractionActive.value) {
@@ -18886,6 +18996,7 @@ class HomeProfileCard extends ConsumerWidget {
         context: context,
         barrierDismissible: true,
         builder: (BuildContext dialogContext) {
+          // --- START OF DIALOG UI ---
           return AlertDialog(
             contentPadding: const EdgeInsets.all(16),
             shape: RoundedRectangleBorder(
@@ -18897,21 +19008,30 @@ class HomeProfileCard extends ConsumerWidget {
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
+                    // Image Preview
                     if (previewImageUrl != null)
                       ClipRRect(
                         borderRadius: BorderRadius.circular(12.0),
-                        child: Image.network(
-                          previewImageUrl,
+                        child: CachedNetworkImage(
+                          imageUrl: previewImageUrl,
                           height: 100,
                           width: double.infinity,
                           fit: BoxFit.cover,
-                          errorBuilder: (_, __, ___) => Container(
+                          placeholder: (context, url) => Container(
+                            height: 100,
+                            color: Colors.grey[200],
+                            child: const Center(
+                                child: CircularProgressIndicator(
+                                    strokeWidth: 2, color: Color(0xAA8B5CF6))),
+                          ),
+                          errorWidget: (context, url, error) => Container(
                               height: 100,
                               color: Colors.grey[200],
                               child: Icon(Icons.broken_image,
                                   color: Colors.grey[400])),
                         ),
                       ),
+                    // Audio Prompt Placeholder
                     if (previewImageUrl == null &&
                         contentType == ContentLikeType.audioPrompt)
                       Container(
@@ -18925,6 +19045,7 @@ class HomeProfileCard extends ConsumerWidget {
                             child: Icon(Icons.multitrack_audio_rounded,
                                 size: 40, color: Colors.grey[500])),
                       ),
+                    // Text Prompt Placeholder
                     if (previewImageUrl == null &&
                         contentType != ContentLikeType.audioPrompt)
                       Container(
@@ -18939,6 +19060,7 @@ class HomeProfileCard extends ConsumerWidget {
                                 size: 40, color: Colors.grey[500])),
                       ),
                     const SizedBox(height: 16),
+                    // Comment Field
                     TextField(
                       controller: commentController,
                       focusNode: commentFocusNode,
@@ -18956,15 +19078,17 @@ class HomeProfileCard extends ConsumerWidget {
                         contentPadding: const EdgeInsets.symmetric(
                             horizontal: 12, vertical: 10),
                       ),
-                      maxLength: 150,
+                      maxLength: maxCommentLength, // Use constant
                       maxLines: 3,
                       minLines: 1,
                       textCapitalization: TextCapitalization.sentences,
                     ),
                     const SizedBox(height: 16),
+                    // Action Buttons (Rose/Like)
                     Row(
                       mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                       children: [
+                        // Rose Button
                         ValueListenableBuilder<bool>(
                           valueListenable: sendLikeEnabledNotifier,
                           builder: (context, isCommentValid, child) {
@@ -19018,6 +19142,7 @@ class HomeProfileCard extends ConsumerWidget {
                             );
                           },
                         ),
+                        // Like Button
                         ValueListenableBuilder<bool>(
                           valueListenable: sendLikeEnabledNotifier,
                           builder: (context, isCommentValid, child) {
@@ -19039,11 +19164,12 @@ class HomeProfileCard extends ConsumerWidget {
                                   label: Text(
                                     "Send Like",
                                     style: GoogleFonts.poppins(
-                                        fontWeight: FontWeight.w600,
-                                        color: effectiveEnabled
-                                            ? Colors.white
-                                            : Colors.grey.shade500,
-                                        fontSize: 13),
+                                      fontWeight: FontWeight.w600,
+                                      color: effectiveEnabled
+                                          ? Colors.white
+                                          : Colors.grey.shade500,
+                                      fontSize: 13,
+                                    ),
                                     overflow: TextOverflow.ellipsis,
                                   ),
                                   style: ElevatedButton.styleFrom(
@@ -19070,32 +19196,36 @@ class HomeProfileCard extends ConsumerWidget {
                         ),
                       ],
                     ),
+                    // Cancel Button
                     ValueListenableBuilder<bool>(
-                        valueListenable: _isDialogInteractionActive,
-                        builder: (context, isInteractionActive, child) {
-                          return TextButton(
-                            child: Text("Cancel",
-                                style: GoogleFonts.poppins(
-                                    color: isInteractionActive
-                                        ? Colors.grey.shade400
-                                        : Colors.grey)),
-                            onPressed: isInteractionActive
-                                ? null
-                                : () => Navigator.of(dialogContext).pop(),
-                          );
-                        }),
+                      valueListenable: _isDialogInteractionActive,
+                      builder: (context, isInteractionActive, child) {
+                        return TextButton(
+                          child: Text("Cancel",
+                              style: GoogleFonts.poppins(
+                                  color: isInteractionActive
+                                      ? Colors.grey.shade400
+                                      : Colors.grey)),
+                          onPressed: isInteractionActive
+                              ? null
+                              : () => Navigator.of(dialogContext).pop(),
+                        );
+                      },
+                    ),
                   ],
                 ),
               ),
             ),
           );
+          // --- END OF DIALOG UI ---
         },
       );
     } finally {
+      // Dispose resources safely
       if (listenerCallback != null) {
         try {
           commentController.removeListener(listenerCallback);
-          listenerCallback = null;
+          listenerCallback = null; // Help garbage collection
         } catch (e) {
           print(
               "Error removing commentController listener (already removed?): $e");
@@ -19124,21 +19254,27 @@ class HomeProfileCard extends ConsumerWidget {
     }
   }
 
+  // --- _handleReport (Keep as is) ---
+  Future<void> _handleReport(BuildContext context) async {
+    final selectedReason = await showReportReasonDialog(context);
+    if (selectedReason != null) {
+      await performReportApiCall(reason: selectedReason);
+    }
+  }
+
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    // Content Block Generation (Keep as is)
     final List<dynamic> contentBlocks = [];
     final mediaUrls = profile.mediaUrls ?? [];
     final prompts = profile.prompts;
-
     contentBlocks.add("header_section");
     if (mediaUrls.isNotEmpty) contentBlocks.add(mediaUrls[0]);
     if (prompts.isNotEmpty) contentBlocks.add(prompts[0]);
     contentBlocks.add("vitals_section");
-
     int mediaIndex = 1;
     int promptIndex = 1;
     int maxRemaining = max(mediaUrls.length, prompts.length);
-
     for (int i = 1; i < maxRemaining; i++) {
       if (mediaIndex < mediaUrls.length) {
         contentBlocks.add(mediaUrls[mediaIndex]);
@@ -19156,13 +19292,11 @@ class HomeProfileCard extends ConsumerWidget {
     return Container(
       color: Colors.white,
       child: Stack(
-        // <-- Use Stack here
         children: [
-          // --- Main Scrollable Content ---
+          // Main Scrollable Content
           ListView.builder(
             physics: const ClampingScrollPhysics(),
-            padding: const EdgeInsets.only(
-                bottom: 80.0), // <-- Add padding for buttons
+            padding: const EdgeInsets.only(bottom: 80.0), // Space for buttons
             itemCount: contentBlocks.length,
             itemBuilder: (context, index) {
               final item = contentBlocks[index];
@@ -19171,7 +19305,7 @@ class HomeProfileCard extends ConsumerWidget {
               final double horizontalPadding = 12.0;
               Widget contentWidget;
 
-              // --- BUILD BLOCKS (Keep existing logic) ---
+              // Build Blocks (Calls corrected _buildMediaItem)
               if (item is String && item == "header_section") {
                 contentWidget = _buildHeaderBlock(profile);
               } else if (item is String && item.startsWith('http')) {
@@ -19180,7 +19314,8 @@ class HomeProfileCard extends ConsumerWidget {
                 if (originalMediaIndex == -1) originalMediaIndex = 0;
                 contentWidget =
                     _buildMediaItem(context, ref, item, originalMediaIndex);
-              } else if (item is Prompt) {
+              } // Passes URL
+              else if (item is Prompt) {
                 contentWidget = _buildPromptItem(context, ref, item);
               } else if (item is AudioPromptModel) {
                 contentWidget = _buildAudioItem(context, ref, item);
@@ -19189,7 +19324,6 @@ class HomeProfileCard extends ConsumerWidget {
               } else {
                 contentWidget = const SizedBox.shrink();
               }
-              // --- END BUILD BLOCKS ---
 
               return Padding(
                 padding: EdgeInsets.fromLTRB(horizontalPadding, topPadding,
@@ -19198,71 +19332,133 @@ class HomeProfileCard extends ConsumerWidget {
               );
             },
           ),
-          // --- END Main Scrollable Content ---
-
-          // --- MODIFIED: Only Dislike Button in Overlay ---
+          // Action Buttons Row
           Positioned(
-            bottom: 15, // Adjust vertical position as needed
-            left: 30, // Position it on the left
-            child: _buildActionButton(
-                icon: Icons.close_rounded,
-                color: Colors.redAccent.shade100,
-                onPressed: () async {
-                  // Make async
-                  bool success = await performDislikeApiCall();
-                  if (success) {
-                    onInteractionComplete(); // Remove card if dislike succeeds
-                  }
-                },
-                tooltip: "Dislike",
-                size: 55 // Slightly smaller buttons if desired
-                ),
-          ),
-          // --- END MODIFICATION ---
+              bottom: 15,
+              left: 30,
+              right: 30,
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  _buildActionButton(
+                      // Dislike
+                      icon: Icons.close_rounded,
+                      color: Colors.redAccent.shade100,
+                      onPressed: () async {
+                        bool success = await performDislikeApiCall();
+                        if (success) {
+                          onInteractionComplete();
+                        }
+                      },
+                      tooltip: "Dislike",
+                      size: 55),
+                  _buildActionButton(
+                      // Report
+                      icon: Icons.flag_outlined,
+                      color: Colors.orange.shade600,
+                      onPressed: () => _handleReport(context),
+                      tooltip: "Report",
+                      size: 55),
+                ],
+              )),
         ],
       ),
-      // --- END Stack ---
     );
   }
 
-  // --- Helper methods (_buildHeaderBlock, _buildVitalsBlock, _buildVitalRow, etc.) remain unchanged ---
+  // --- Corrected _buildMediaItem using CachedNetworkImage ---
+  Widget _buildMediaItem(
+      BuildContext context, WidgetRef ref, String url, int index) {
+    bool isVideo = url.toLowerCase().contains('.mp4') ||
+        url.toLowerCase().contains('.mov') ||
+        url.toLowerCase().contains('.avi') ||
+        url.toLowerCase().contains('.webm');
+
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(10),
+      child: AspectRatio(
+        aspectRatio: 4 / 5.5,
+        child: Container(
+          decoration: BoxDecoration(color: Colors.grey[200]),
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              CachedNetworkImage(
+                imageUrl: url,
+                fit: BoxFit.cover,
+                placeholder: (context, url) => const Center(
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2.0,
+                    color: Color(0xAA8B5CF6),
+                  ),
+                ),
+                errorWidget: (context, url, error) => Center(
+                  child: Icon(
+                    Icons.broken_image_outlined,
+                    color: Colors.grey[400],
+                    size: 40,
+                  ),
+                ),
+              ),
+              if (isVideo)
+                Center(
+                  child: Container(
+                    padding: const EdgeInsets.all(10),
+                    decoration: BoxDecoration(
+                      color: Colors.black.withOpacity(0.5),
+                      shape: BoxShape.circle,
+                    ),
+                    child: const Icon(Icons.play_arrow_rounded,
+                        color: Colors.white, size: 30),
+                  ),
+                ),
+              Positioned(
+                bottom: 10,
+                right: 10,
+                child: _buildSmallLikeButton(
+                  () => _showInteractionDialog(
+                    context,
+                    ref,
+                    ContentLikeType.media,
+                    index.toString(),
+                    url,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  // --- Other Helper Methods (_buildHeaderBlock, _buildVitalsBlock, etc.) ---
+  // ... (keep these as they were in the previous correct version) ...
   Widget _buildHeaderBlock(UserModel profile) {
     final age = profile.age;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Row(
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Flexible(
-              child: Text(
-                '${profile.name ?? 'Name'}${age != null ? ', $age' : ''}',
-                style: GoogleFonts.poppins(
-                    fontSize: 26,
-                    fontWeight: FontWeight.bold,
-                    color: Colors.black87),
-              ),
-            ),
-          ],
-        ),
-        if (profile.hometown != null && profile.hometown!.isNotEmpty) ...[
-          const SizedBox(height: 4),
-          Row(
-            children: [
-              Icon(Icons.location_on_outlined,
-                  size: 16, color: Colors.grey[600]),
-              const SizedBox(width: 4),
-              Text(
-                profile.hometown!,
-                style:
-                    GoogleFonts.poppins(fontSize: 14, color: Colors.grey[700]),
-              ),
-            ],
-          ),
-        ]
-      ],
-    );
+                child: Text(
+                    '${profile.name ?? 'Name'}${age != null ? ', $age' : ''}',
+                    style: GoogleFonts.poppins(
+                        fontSize: 26,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.black87)))
+          ]),
+      if (profile.hometown != null && profile.hometown!.isNotEmpty) ...[
+        const SizedBox(height: 4),
+        Row(children: [
+          Icon(Icons.location_on_outlined, size: 16, color: Colors.grey[600]),
+          const SizedBox(width: 4),
+          Text(profile.hometown!,
+              style: GoogleFonts.poppins(fontSize: 14, color: Colors.grey[700]))
+        ])
+      ]
+    ]);
   }
 
   Widget _buildVitalsBlock(UserModel profile) {
@@ -19288,9 +19484,7 @@ class HomeProfileCard extends ConsumerWidget {
       vitals.add(_buildVitalRow(Icons.smoking_rooms_outlined,
           "Smokes: ${profile.smokingHabit!.label}"));
     }
-
     if (vitals.isEmpty) return const SizedBox.shrink();
-
     return Container(
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
         width: double.infinity,
@@ -19299,147 +19493,69 @@ class HomeProfileCard extends ConsumerWidget {
             borderRadius: BorderRadius.circular(10),
             boxShadow: [
               BoxShadow(
-                color: Colors.black.withOpacity(0.05),
-                blurRadius: 10,
-                offset: const Offset(0, 3),
-              )
+                  color: Colors.black.withOpacity(0.05),
+                  blurRadius: 10,
+                  offset: const Offset(0, 3))
             ]),
         child: Column(
-          children: List.generate(vitals.length * 2 - 1, (index) {
-            if (index.isEven) {
-              return vitals[index ~/ 2];
-            } else {
-              return Divider(height: 16, thickness: 1, color: Colors.grey[200]);
-            }
-          }),
-        ));
+            children: List.generate(vitals.length * 2 - 1, (index) {
+          if (index.isEven) {
+            return vitals[index ~/ 2];
+          } else {
+            return Divider(height: 16, thickness: 1, color: Colors.grey[200]);
+          }
+        })));
   }
 
   Widget _buildVitalRow(IconData icon, String label) {
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 6.0),
-      child: Row(
-        children: [
+        padding: const EdgeInsets.symmetric(vertical: 6.0),
+        child: Row(children: [
           Icon(icon, size: 20, color: Colors.grey[600]),
           const SizedBox(width: 12),
           Expanded(
               child: Text(label,
                   style: GoogleFonts.poppins(
-                      fontSize: 15, color: Colors.grey[800]))),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildMediaItem(
-      BuildContext context, WidgetRef ref, String url, int index) {
-    bool isVideo = url.toLowerCase().contains('.mp4') ||
-        url.toLowerCase().contains('.mov');
-
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(10), // Consistent rounding
-      child: AspectRatio(
-        aspectRatio: 4 / 5.5, // Or your desired ratio
-        child: Container(
-          decoration: BoxDecoration(color: Colors.grey[200]), // Placeholder bg
-          child: Stack(
-            fit: StackFit.expand,
-            children: [
-              Image.network(url,
-                  fit: BoxFit.cover,
-                  loadingBuilder: (ctx, child, prog) => prog == null
-                      ? child
-                      : Center(
-                          child: CircularProgressIndicator(
-                              value: prog.expectedTotalBytes != null
-                                  ? prog.cumulativeBytesLoaded /
-                                      prog.expectedTotalBytes!
-                                  : null,
-                              color: Colors.grey[400])),
-                  errorBuilder: (ctx, err, st) => Center(
-                      child: Icon(Icons.image_not_supported_outlined,
-                          color: Colors.grey[400], size: 40))),
-              if (isVideo) // Show video indicator
-                Center(
-                  child: Container(
-                    padding: const EdgeInsets.all(10),
-                    decoration: BoxDecoration(
-                      color: Colors.black.withOpacity(0.5),
-                      shape: BoxShape.circle,
-                    ),
-                    child: const Icon(Icons.play_arrow_rounded,
-                        color: Colors.white, size: 30),
-                  ),
-                ),
-              Positioned(
-                  bottom: 10,
-                  right: 10,
-                  child: _buildSmallLikeButton(() => _showInteractionDialog(
-                        context,
-                        ref,
-                        ContentLikeType.media,
-                        index.toString(), // Use index as identifier for media
-                        url,
-                      )))
-            ],
-          ),
-        ),
-      ),
-    );
+                      fontSize: 15, color: Colors.grey[800])))
+        ]));
   }
 
   Widget _buildPromptItem(BuildContext context, WidgetRef ref, Prompt prompt) {
     if (prompt.answer.trim().isEmpty) return const SizedBox.shrink();
-
     return Container(
-      width: double.infinity, // Take full width
-      padding: const EdgeInsets.all(20),
-      decoration: BoxDecoration(
-          color: Colors.white, // White background
-          borderRadius: BorderRadius.circular(10), // Rounded corners
-          boxShadow: [
-            // Subtle shadow
-            BoxShadow(
-                color: Colors.black.withOpacity(0.05),
-                blurRadius: 10,
-                offset: const Offset(0, 3))
-          ]),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start, // Align top
-        children: [
+        width: double.infinity,
+        padding: const EdgeInsets.all(20),
+        decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(10),
+            boxShadow: [
+              BoxShadow(
+                  color: Colors.black.withOpacity(0.05),
+                  blurRadius: 10,
+                  offset: const Offset(0, 3))
+            ]),
+        child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
           Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                // Prompt Question
+              child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
                 Text(prompt.question.label,
                     style: GoogleFonts.poppins(
-                        fontSize: 14, // Slightly smaller question
+                        fontSize: 14,
                         fontWeight: FontWeight.w600,
-                        color: Colors.grey[600])), // Subdued color
+                        color: Colors.grey[600])),
                 const SizedBox(height: 10),
-                // Prompt Answer
                 Text(prompt.answer,
                     style: GoogleFonts.poppins(
-                        fontSize: 20, // Larger answer text
+                        fontSize: 20,
                         color: Colors.black87,
-                        height: 1.4, // Line height
-                        fontWeight: FontWeight.w500)),
-              ],
-            ),
-          ),
-          const SizedBox(width: 12), // Spacing before button
-          // Like Button
-          _buildSmallLikeButton(() => _showInteractionDialog(
-                context,
-                ref,
-                prompt.category.contentType, // Get type from category
-                prompt.question.value, // Use question enum value as identifier
-                null, // No image preview for prompts
-              )),
-        ],
-      ),
-    );
+                        height: 1.4,
+                        fontWeight: FontWeight.w500))
+              ])),
+          const SizedBox(width: 12),
+          _buildSmallLikeButton(() => _showInteractionDialog(context, ref,
+              prompt.category.contentType, prompt.question.value, null))
+        ]));
   }
 
   Widget _buildAudioItem(
@@ -19447,73 +19563,65 @@ class HomeProfileCard extends ConsumerWidget {
     final audioPlayerState = ref.watch(audioPlayerStateProvider);
     final currentPlayingUrl = ref.watch(currentAudioUrlProvider);
     final playerNotifier = ref.read(audioPlayerControllerProvider.notifier);
-
     final bool isThisPlaying = currentPlayingUrl == audio.audioUrl &&
         audioPlayerState == AudioPlayerState.playing;
     final bool isThisLoading = currentPlayingUrl == audio.audioUrl &&
         audioPlayerState == AudioPlayerState.loading;
     final bool isThisPaused = currentPlayingUrl == audio.audioUrl &&
         audioPlayerState == AudioPlayerState.paused;
-
     return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(16), // More rounded
-          border: Border.all(color: Colors.grey[200]!),
-          boxShadow: [
-            BoxShadow(
-                color: Colors.grey.withOpacity(0.06),
-                blurRadius: 10,
-                offset: const Offset(0, 3))
-          ]),
-      child: Row(
-        children: [
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: Colors.grey[200]!),
+            boxShadow: [
+              BoxShadow(
+                  color: Colors.grey.withOpacity(0.06),
+                  blurRadius: 10,
+                  offset: const Offset(0, 3))
+            ]),
+        child: Row(children: [
           InkWell(
-            onTap: () {
-              if (isThisLoading) return;
-
-              if (isThisPlaying) {
-                playerNotifier.pause();
-              } else if (isThisPaused) {
-                playerNotifier.resume();
-              } else {
-                playerNotifier.play(audio.audioUrl);
-              }
-            },
-            borderRadius: BorderRadius.circular(24),
-            child: Container(
-              width: 48,
-              height: 48,
-              decoration: BoxDecoration(
-                color: const Color(0xFF8B5CF6),
-                borderRadius: BorderRadius.circular(24),
-                boxShadow: [
-                  BoxShadow(
-                      color: const Color(0xFF8B5CF6).withOpacity(0.3),
-                      blurRadius: 8,
-                      offset: const Offset(0, 2))
-                ],
-              ),
-              child: isThisLoading
-                  ? const Padding(
-                      padding: EdgeInsets.all(12.0),
-                      child: CircularProgressIndicator(
-                          strokeWidth: 2, color: Colors.white))
-                  : Icon(
-                      isThisPlaying
-                          ? Icons.pause_rounded
-                          : Icons.play_arrow_rounded,
-                      color: Colors.white,
-                      size: 28,
-                    ),
-            ),
-          ),
+              onTap: () {
+                if (isThisLoading) return;
+                if (isThisPlaying) {
+                  playerNotifier.pause();
+                } else if (isThisPaused) {
+                  playerNotifier.resume();
+                } else {
+                  playerNotifier.play(audio.audioUrl);
+                }
+              },
+              borderRadius: BorderRadius.circular(24),
+              child: Container(
+                  width: 48,
+                  height: 48,
+                  decoration: BoxDecoration(
+                      color: const Color(0xFF8B5CF6),
+                      borderRadius: BorderRadius.circular(24),
+                      boxShadow: [
+                        BoxShadow(
+                            color: const Color(0xFF8B5CF6).withOpacity(0.3),
+                            blurRadius: 8,
+                            offset: const Offset(0, 2))
+                      ]),
+                  child: isThisLoading
+                      ? const Padding(
+                          padding: EdgeInsets.all(12.0),
+                          child: CircularProgressIndicator(
+                              strokeWidth: 2, color: Colors.white))
+                      : Icon(
+                          isThisPlaying
+                              ? Icons.pause_rounded
+                              : Icons.play_arrow_rounded,
+                          color: Colors.white,
+                          size: 28))),
           const SizedBox(width: 16),
           Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
+              child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
                 Text(audio.prompt.label,
                     style: GoogleFonts.poppins(
                         fontSize: 15,
@@ -19529,79 +19637,57 @@ class HomeProfileCard extends ConsumerWidget {
                                 ? "Paused"
                                 : "Tap to listen",
                     style: GoogleFonts.poppins(
-                        fontSize: 13, color: Colors.grey[600])),
-              ],
-            ),
-          ),
+                        fontSize: 13, color: Colors.grey[600]))
+              ])),
           const SizedBox(width: 16),
           _buildSmallLikeButton(() => _showInteractionDialog(
-                context,
-                ref,
-                ContentLikeType.audioPrompt,
-                "0", // API requires "0" for audio prompts
-                null,
-              )),
-        ],
-      ),
-    );
+              context, ref, ContentLikeType.audioPrompt, "0", null))
+        ]));
   }
 
   Widget _buildSmallLikeButton(VoidCallback onPressed) {
     return Container(
-      width: 40,
-      height: 40,
-      decoration: BoxDecoration(
-          color: Colors.white, // White background
-          shape: BoxShape.circle,
-          boxShadow: [
-            // Subtle shadow
-            BoxShadow(color: Colors.black.withOpacity(0.1), blurRadius: 5)
-          ]),
-      child: IconButton(
-        padding: EdgeInsets.zero, // Remove default padding
-        icon: Icon(Icons.favorite_border_rounded,
-            color: Colors.pink[200], // Soft pink color
-            size: 22), // Icon size
-        tooltip: 'Like this item',
-        onPressed: onPressed,
-      ),
-    );
+        width: 40,
+        height: 40,
+        decoration: BoxDecoration(
+            color: Colors.white,
+            shape: BoxShape.circle,
+            boxShadow: [
+              BoxShadow(color: Colors.black.withOpacity(0.1), blurRadius: 5)
+            ]),
+        child: IconButton(
+            padding: EdgeInsets.zero,
+            icon: Icon(Icons.favorite_border_rounded,
+                color: Colors.pink[200], size: 22),
+            tooltip: 'Like this item',
+            onPressed: onPressed));
   }
 
-  Widget _buildActionButton({
-    required IconData icon,
-    required Color color,
-    required VoidCallback onPressed,
-    required String tooltip,
-    double size = 60.0, // Default size
-    double iconSize = 30.0,
-  }) {
+  Widget _buildActionButton(
+      {required IconData icon,
+      required Color color,
+      required VoidCallback onPressed,
+      required String tooltip,
+      double size = 60.0,
+      double iconSize = 30.0}) {
     return Tooltip(
-      message: tooltip,
-      child: Material(
-        color: Colors.white,
-        shape: const CircleBorder(),
-        elevation: 3.0,
-        shadowColor: Colors.black.withOpacity(0.2),
-        child: InkWell(
-          customBorder: const CircleBorder(),
-          onTap: onPressed,
-          child: Container(
-            width: size,
-            height: size,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              border: Border.all(color: Colors.grey.shade200, width: 1.0),
-            ),
-            child: Icon(
-              icon,
-              color: color,
-              size: iconSize,
-            ),
-          ),
-        ),
-      ),
-    );
+        message: tooltip,
+        child: Material(
+            color: Colors.white,
+            shape: const CircleBorder(),
+            elevation: 3.0,
+            shadowColor: Colors.black.withOpacity(0.2),
+            child: InkWell(
+                customBorder: const CircleBorder(),
+                onTap: onPressed,
+                child: Container(
+                    width: size,
+                    height: size,
+                    decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        border: Border.all(
+                            color: Colors.grey.shade200, width: 1.0)),
+                    child: Icon(icon, color: color, size: iconSize)))));
   }
 } // End of HomeProfileCard
 
@@ -19673,11 +19759,11 @@ File: widgets/message_bubble.dart
 import 'dart:io';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:dtx/models/chat_message.dart';
-import 'package:dtx/providers/audio_player_provider.dart';
+import 'package:dtx/providers/audio_player_provider.dart'; // Ensure this is correct
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_fonts/google_fonts.dart';
-import 'package:audioplayers/audioplayers.dart';
+import 'package:audioplayers/audioplayers.dart'; // Ensure this is correct
 import 'package:path/path.dart' as p;
 import 'package:url_launcher/url_launcher.dart';
 
@@ -19702,11 +19788,10 @@ class _MessageBubbleState extends ConsumerState<MessageBubble>
     with AutomaticKeepAliveClientMixin {
   // Add mixin
 
-  // --- Override wantKeepAlive ---
   @override
   bool get wantKeepAlive => true; // Keep the state alive
 
-  // --- Move helpers inside State class ---
+  // --- Helpers (Keep as previously defined) ---
   String getFilenameFromUrl(String? url) {
     if (url == null || url.isEmpty) return "File";
     try {
@@ -19758,38 +19843,36 @@ class _MessageBubbleState extends ConsumerState<MessageBubble>
   }
 
   Widget _buildMediaLoadingPlaceholder({required bool isMe}) {
-    return Container(
-      color: Colors.grey[isMe ? 700 : 300]?.withOpacity(0.5),
-      child: Center(
-          child: CircularProgressIndicator(
-              color: isMe ? Colors.white70 : Colors.grey[500])),
+    // Simple centered spinner without a surrounding box
+    return const Center(
+      child: Padding(
+        padding: EdgeInsets.symmetric(
+            vertical: 40.0, horizontal: 40.0), // Give spinner some space
+        child:
+            CircularProgressIndicator(strokeWidth: 2, color: Color(0xFF8B5CF6)),
+      ),
     );
   }
 
   Widget _buildMediaErrorPlaceholder({required bool isMe}) {
+    // Keep error placeholder visually distinct
     return Container(
-      color: Colors.red[isMe ? 900 : 100]?.withOpacity(0.5),
+      color: Colors.grey[isMe ? 700 : 200]?.withOpacity(0.3),
       child: Center(
-          child: Icon(Icons.error_outline,
-              color: isMe ? Colors.red.shade200 : Colors.red.shade400,
-              size: 40)),
+          child: Icon(Icons.broken_image_outlined,
+              color: isMe ? Colors.white60 : Colors.grey[500], size: 40)),
     );
   }
   // --- End Helpers ---
 
   @override
   Widget build(BuildContext context) {
-    // --- IMPORTANT: Call super.build(context) ---
     super.build(context);
 
-    // Access widget properties using widget.*
     final message = widget.message;
     final isMe = widget.isMe;
     final showTail = widget.showTail;
-
     final keyId = message.tempId ?? message.messageID.toString();
-    print(
-        "[MessageBubble Build: ${keyId}] Rebuilding. Status: ${message.status}, isMedia: ${message.isMedia}, LocalPath: ${message.localFilePath != null}, MediaUrl: ${message.mediaUrl != null}");
 
     final radius = Radius.circular(18.0);
     final borderRadius = BorderRadius.only(
@@ -19801,7 +19884,7 @@ class _MessageBubbleState extends ConsumerState<MessageBubble>
     Widget messageContent;
     Widget? statusIcon;
 
-    // --- Status Icon Logic ---
+    // Status Icon Logic (no change)
     if (isMe && message.status != ChatMessageStatus.sent) {
       switch (message.status) {
         case ChatMessageStatus.pending:
@@ -19821,10 +19904,9 @@ class _MessageBubbleState extends ConsumerState<MessageBubble>
       }
     }
 
-    // --- Content Rendering Logic ---
+    // Content Rendering Logic
     if (message.isMedia) {
       final mediaType = message.mediaType?.toLowerCase() ?? '';
-      // Still prioritize local path if it exists
       final String? displayPath =
           (message.localFilePath != null && message.localFilePath!.isNotEmpty)
               ? message.localFilePath
@@ -19832,9 +19914,6 @@ class _MessageBubbleState extends ConsumerState<MessageBubble>
       final bool isUsingLocalFile =
           displayPath == message.localFilePath && message.localFilePath != null;
       final bool isMediaSent = message.status == ChatMessageStatus.sent;
-
-      print(
-          "[MessageBubble Build $keyId] Content Logic. isUsingLocalFile: $isUsingLocalFile, displayPath: $displayPath, isMediaSent: $isMediaSent");
 
       if (displayPath == null || displayPath.isEmpty) {
         messageContent = Text(
@@ -19844,39 +19923,38 @@ class _MessageBubbleState extends ConsumerState<MessageBubble>
       }
       // --- IMAGE ---
       else if (mediaType.startsWith('image/')) {
-        print(
-            "[MessageBubble Build $keyId] Rendering Image. Source: ${isUsingLocalFile ? 'File' : 'Network'}");
         Widget imageToShow;
         if (isUsingLocalFile) {
           imageToShow = Image.file(File(displayPath),
               key: ValueKey(displayPath),
-              fit: BoxFit.cover,
+              // Use contain to respect aspect ratio within available width
+              fit: BoxFit.contain,
               errorBuilder: (_, __, ___) =>
                   _buildMediaErrorPlaceholder(isMe: isMe));
         } else {
-          // Use CachedNetworkImage for network URLs
           imageToShow = CachedNetworkImage(
             key: ValueKey(displayPath),
             imageUrl: displayPath,
-            fit: BoxFit.cover,
+            // Use contain to respect aspect ratio within available width
+            fit: BoxFit.contain,
             placeholder: (context, url) =>
                 _buildMediaLoadingPlaceholder(isMe: isMe),
             errorWidget: (context, url, error) =>
                 _buildMediaErrorPlaceholder(isMe: isMe),
           );
         }
+        // --- *** REMOVE ConstrainedBox *** ---
+        // Wrap directly in ClipRRect if needed for rounding corners *of the image itself*
+        // The outer bubble already clips. You might not need this inner ClipRRect unless
+        // you want different rounding for the image than the bubble.
         messageContent = ClipRRect(
-          borderRadius: BorderRadius.circular(8.0), // Round corners for image
-          child: ConstrainedBox(
-            constraints: BoxConstraints(
-              maxWidth: MediaQuery.of(context).size.width * 0.65,
-              maxHeight: MediaQuery.of(context).size.height * 0.4,
-            ),
-            child: imageToShow,
-          ),
+          borderRadius: BorderRadius.circular(
+              8.0), // Round corners for image content if desired
+          child: imageToShow, // No ConstrainedBox wrapper
         );
+        // --- *** END REMOVAL *** ---
       }
-      // --- VIDEO ---
+      // --- VIDEO (no change needed) ---
       else if (mediaType.startsWith('video/')) {
         messageContent = InkWell(
           onTap: isMediaSent && !isUsingLocalFile
@@ -19885,7 +19963,8 @@ class _MessageBubbleState extends ConsumerState<MessageBubble>
           child: Container(
             padding: const EdgeInsets.all(10),
             constraints: BoxConstraints(
-                maxWidth: MediaQuery.of(context).size.width * 0.65,
+                maxWidth: MediaQuery.of(context).size.width *
+                    0.65, // Still constrain width
                 minHeight: 100),
             decoration: BoxDecoration(
                 color: Colors.grey[isMe ? 700 : 300],
@@ -19918,10 +19997,9 @@ class _MessageBubbleState extends ConsumerState<MessageBubble>
           ),
         );
       }
-      // --- AUDIO ---
+      // --- AUDIO (no change needed) ---
       else if (mediaType.startsWith('audio/')) {
-        final audioPlayerState = ref.watch(
-            audioPlayerStateProvider); // Use ref from ConsumerStatefulWidget
+        final audioPlayerState = ref.watch(audioPlayerStateProvider);
         final currentPlayingUrl = ref.watch(currentAudioUrlProvider);
         final playerNotifier = ref.read(audioPlayerControllerProvider.notifier);
         final bool canPlay = isMediaSent && !isUsingLocalFile;
@@ -19977,7 +20055,7 @@ class _MessageBubbleState extends ConsumerState<MessageBubble>
           ),
         ]);
       }
-      // --- GENERIC FILE ---
+      // --- GENERIC FILE (no change needed) ---
       else {
         messageContent = InkWell(
           onTap: isMediaSent && !isUsingLocalFile
@@ -20014,6 +20092,7 @@ class _MessageBubbleState extends ConsumerState<MessageBubble>
     return Align(
       alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
       child: Container(
+        // *** This Container provides the main width constraint ***
         constraints: BoxConstraints(
           maxWidth: MediaQuery.of(context).size.width * 0.75,
         ),
@@ -20034,31 +20113,29 @@ class _MessageBubbleState extends ConsumerState<MessageBubble>
             )
           ],
         ),
+        // --- *** Outer ClipRRect ensures bubble shape *** ---
         child: ClipRRect(
-          // Clip bubble content if it's an image
-          borderRadius: message.isMedia &&
-                  (message.mediaType?.startsWith('image/') ?? false)
-              ? BorderRadius.circular(8.0)
-              : BorderRadius.zero,
+          borderRadius: borderRadius,
           child: Stack(
+            // Stack allows overlaying status icon if needed
             children: [
               Padding(
+                // Padding for non-image content
                 padding: message.isMedia &&
                         (message.mediaType?.startsWith('image/') ?? false)
-                    ? EdgeInsets.zero
+                    ? EdgeInsets
+                        .zero // No padding needed around image widget itself
                     : const EdgeInsets.symmetric(
                         horizontal: 14.0, vertical: 10.0),
-                child: messageContent,
+                child:
+                    messageContent, // The actual content (text, image, video placeholder, etc.)
               ),
               if (statusIcon != null)
                 Positioned(
                   bottom: 4,
                   right: isMe ? 4 : null,
                   left: isMe ? null : 4,
-                  child: Container(
-                    padding: const EdgeInsets.all(2),
-                    child: statusIcon,
-                  ),
+                  child: statusIcon,
                 ),
             ],
           ),
@@ -20066,6 +20143,72 @@ class _MessageBubbleState extends ConsumerState<MessageBubble>
       ),
     );
   }
-} // End _MessageBubbleState
+}
+
+
+
+================================================
+File: widgets/report_reason_dialog.dart
+================================================
+// File: lib/widgets/report_reason_dialog.dart
+import 'package:dtx/utils/app_enums.dart';
+import 'package:flutter/material.dart';
+import 'package:google_fonts/google_fonts.dart';
+
+Future<ReportReason?> showReportReasonDialog(BuildContext context) async {
+  return await showDialog<ReportReason>(
+    context: context,
+    builder: (BuildContext dialogContext) {
+      ReportReason? selectedReason; // Local state for the dialog
+      return StatefulBuilder(
+        // Use StatefulBuilder for local state update
+        builder: (context, setState) {
+          return AlertDialog(
+            title: Text("Report User",
+                style: GoogleFonts.poppins(fontWeight: FontWeight.w600)),
+            contentPadding:
+                const EdgeInsets.fromLTRB(24, 20, 24, 0), // Adjust padding
+            content: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: ReportReason.values.map((reason) {
+                  return RadioListTile<ReportReason>(
+                    title: Text(reason.label, style: GoogleFonts.poppins()),
+                    value: reason,
+                    groupValue: selectedReason,
+                    onChanged: (ReportReason? value) {
+                      setState(() {
+                        // Use the setState from StatefulBuilder
+                        selectedReason = value;
+                      });
+                    },
+                    activeColor: const Color(0xFF8B5CF6),
+                    contentPadding: EdgeInsets.zero,
+                  );
+                }).toList(),
+              ),
+            ),
+            actions: <Widget>[
+              TextButton(
+                child: Text('Cancel',
+                    style: GoogleFonts.poppins(color: Colors.grey)),
+                onPressed: () => Navigator.of(dialogContext)
+                    .pop(null), // Return null on cancel
+              ),
+              TextButton(
+                child: Text('Submit Report',
+                    style: GoogleFonts.poppins(color: Colors.redAccent)),
+                // Enable button only if a reason is selected
+                onPressed: selectedReason == null
+                    ? null
+                    : () => Navigator.of(dialogContext).pop(selectedReason),
+              ),
+            ],
+          );
+        },
+      );
+    },
+  );
+}
 
 

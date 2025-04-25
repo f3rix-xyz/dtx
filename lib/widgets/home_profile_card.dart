@@ -5,7 +5,7 @@ import 'package:dtx/models/user_model.dart';
 import 'package:dtx/models/like_models.dart';
 import 'package:dtx/providers/audio_player_provider.dart';
 import 'package:dtx/utils/app_enums.dart';
-import 'package:dtx/providers/user_provider.dart';
+import 'package:dtx/providers/user_provider.dart'; // Needed for currentUserGender check in dialog
 import 'package:dtx/widgets/report_reason_dialog.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -23,6 +23,7 @@ typedef PerformDislikeApiCall = Future<bool> Function();
 typedef InteractionCompleteCallback = void Function();
 typedef PerformReportApiCall = Future<bool> Function(
     {required ReportReason reason});
+
 const int maxCommentLength = 140;
 
 class HomeProfileCard extends ConsumerWidget {
@@ -41,7 +42,7 @@ class HomeProfileCard extends ConsumerWidget {
     required this.onInteractionComplete,
   });
 
-  // --- _showInteractionDialog (Corrected - Not Commented) ---
+  // --- Interaction Dialog (Like/Rose/Comment) ---
   Future<void> _showInteractionDialog(
     BuildContext context,
     WidgetRef ref,
@@ -53,19 +54,24 @@ class HomeProfileCard extends ConsumerWidget {
     final isMale = currentUserGender == Gender.man;
     final FocusNode commentFocusNode = FocusNode();
     final TextEditingController commentController = TextEditingController();
+    // Notifier tracks if the comment field allows sending (non-empty for males)
     final ValueNotifier<bool> sendLikeEnabledNotifier =
         ValueNotifier<bool>(!isMale);
+    // Notifier tracks if an API call (like/rose) is in progress within the dialog
     final ValueNotifier<bool> _isDialogInteractionActive =
         ValueNotifier<bool>(false);
-    VoidCallback? listenerCallback;
+    VoidCallback? listenerCallback; // To hold the listener function reference
 
+    // Add listener only if the user is male to enable/disable based on comment
     if (isMale) {
       listenerCallback = () {
+        // Check if the widget is still mounted and the notifier hasn't been disposed
         if (context.mounted && commentController.hasListeners) {
           try {
             sendLikeEnabledNotifier.value =
                 commentController.text.trim().isNotEmpty;
           } catch (e) {
+            // Handle cases where the notifier might be disposed prematurely
             print(
                 "Error accessing sendLikeEnabledNotifier in listener (might be disposed): $e");
           }
@@ -74,29 +80,37 @@ class HomeProfileCard extends ConsumerWidget {
       commentController.addListener(listenerCallback);
     }
 
+    // --- Handle Like/Rose Submission ---
     Future<void> _handleInteraction(LikeInteractionType interactionType) async {
+      // Prevent multiple simultaneous submissions
       if (_isDialogInteractionActive.value) return;
 
+      // Safely get comment text
       String comment = "";
       try {
         comment = commentController.text.trim();
       } catch (e) {
-        print("Error reading commentController text: $e");
-        return;
+        print("Error reading commentController text (already disposed?): $e");
+        return; // Cannot proceed if controller is disposed
       }
 
+      // Unfocus text field
       commentFocusNode.unfocus();
+      // Short delay allows keyboard to retract smoothly before showing loading
       await Future.delayed(const Duration(milliseconds: 100));
 
+      // Set interaction active state safely
       try {
         _isDialogInteractionActive.value = true;
       } catch (e) {
-        print("Error setting _isDialogInteractionActive to true: $e");
-        return;
+        print(
+            "Error setting _isDialogInteractionActive to true (notifier disposed?): $e");
+        return; // Cannot proceed if notifier is disposed
       }
 
       bool success = false;
       try {
+        // Perform the API call passed from the HomeScreen
         success = await performLikeApiCall(
           contentType: contentType,
           contentIdentifier: contentIdentifier,
@@ -104,13 +118,16 @@ class HomeProfileCard extends ConsumerWidget {
           comment: comment.isNotEmpty ? comment : null,
         );
 
+        // Close dialog and trigger card removal ONLY on success
         if (success && context.mounted) {
           Navigator.of(context, rootNavigator: true).pop(); // Close dialog
-          onInteractionComplete(); // Trigger card removal etc.
+          onInteractionComplete(); // Trigger card removal etc. in HomeScreen
         }
-        // Errors shown via SnackBar in HomeScreen's callback
+        // Error snackbars/handling is managed within performLikeApiCall (in HomeScreen)
       } finally {
+        // Reset interaction state safely, even if API call failed
         try {
+          // Check context AND if the value is actually true before setting false
           if (context.mounted && _isDialogInteractionActive.value) {
             _isDialogInteractionActive.value = false;
           }
@@ -120,25 +137,28 @@ class HomeProfileCard extends ConsumerWidget {
         }
       }
     }
+    // --- End Handle Like/Rose Submission ---
 
     try {
+      // --- Show Dialog ---
       await showDialog<void>(
         context: context,
-        barrierDismissible: true,
+        barrierDismissible: true, // Allow dismissing by tapping outside
         builder: (BuildContext dialogContext) {
-          // --- START OF DIALOG UI ---
           return AlertDialog(
             contentPadding: const EdgeInsets.all(16),
             shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(20.0),
             ),
             content: SizedBox(
-              width: MediaQuery.of(dialogContext).size.width * 0.8,
+              width: MediaQuery.of(dialogContext).size.width *
+                  0.8, // Constrain width
               child: SingleChildScrollView(
+                // Allow scrolling if content overflows
                 child: Column(
-                  mainAxisSize: MainAxisSize.min,
+                  mainAxisSize: MainAxisSize.min, // Fit content vertically
                   children: [
-                    // Image Preview
+                    // Image Preview (if applicable)
                     if (previewImageUrl != null)
                       ClipRRect(
                         borderRadius: BorderRadius.circular(12.0),
@@ -161,7 +181,7 @@ class HomeProfileCard extends ConsumerWidget {
                                   color: Colors.grey[400])),
                         ),
                       ),
-                    // Audio Prompt Placeholder
+                    // Audio Prompt Placeholder (if applicable)
                     if (previewImageUrl == null &&
                         contentType == ContentLikeType.audioPrompt)
                       Container(
@@ -175,7 +195,7 @@ class HomeProfileCard extends ConsumerWidget {
                             child: Icon(Icons.multitrack_audio_rounded,
                                 size: 40, color: Colors.grey[500])),
                       ),
-                    // Text Prompt Placeholder
+                    // Text Prompt Placeholder (if applicable)
                     if (previewImageUrl == null &&
                         contentType != ContentLikeType.audioPrompt)
                       Container(
@@ -189,8 +209,10 @@ class HomeProfileCard extends ConsumerWidget {
                             child: Icon(Icons.article_outlined,
                                 size: 40, color: Colors.grey[500])),
                       ),
+
                     const SizedBox(height: 16),
-                    // Comment Field
+
+                    // Comment TextField
                     TextField(
                       controller: commentController,
                       focusNode: commentFocusNode,
@@ -207,13 +229,16 @@ class HomeProfileCard extends ConsumerWidget {
                         ),
                         contentPadding: const EdgeInsets.symmetric(
                             horizontal: 12, vertical: 10),
+                        counterText: "", // Hide default counter
                       ),
                       maxLength: maxCommentLength, // Use constant
                       maxLines: 3,
                       minLines: 1,
                       textCapitalization: TextCapitalization.sentences,
                     ),
+
                     const SizedBox(height: 16),
+
                     // Action Buttons (Rose/Like)
                     Row(
                       mainAxisAlignment: MainAxisAlignment.spaceEvenly,
@@ -326,6 +351,7 @@ class HomeProfileCard extends ConsumerWidget {
                         ),
                       ],
                     ),
+
                     // Cancel Button
                     ValueListenableBuilder<bool>(
                       valueListenable: _isDialogInteractionActive,
@@ -337,7 +363,7 @@ class HomeProfileCard extends ConsumerWidget {
                                       ? Colors.grey.shade400
                                       : Colors.grey)),
                           onPressed: isInteractionActive
-                              ? null
+                              ? null // Disable cancel if interaction is active
                               : () => Navigator.of(dialogContext).pop(),
                         );
                       },
@@ -347,15 +373,15 @@ class HomeProfileCard extends ConsumerWidget {
               ),
             ),
           );
-          // --- END OF DIALOG UI ---
         },
       );
+      // --- End Show Dialog ---
     } finally {
-      // Dispose resources safely
+      // Safely clean up listeners and controllers
       if (listenerCallback != null) {
         try {
           commentController.removeListener(listenerCallback);
-          listenerCallback = null; // Help garbage collection
+          listenerCallback = null; // Help GC
         } catch (e) {
           print(
               "Error removing commentController listener (already removed?): $e");
@@ -384,22 +410,27 @@ class HomeProfileCard extends ConsumerWidget {
     }
   }
 
-  // --- _handleReport (Keep as is) ---
+  // --- Handle Report Action (Shows Reason Dialog) ---
   Future<void> _handleReport(BuildContext context) async {
+    // Show the dialog to get the reason
     final selectedReason = await showReportReasonDialog(context);
     if (selectedReason != null) {
+      // Call the report API function passed from HomeScreen
+      // API call result/error handling is done in HomeScreen
       await performReportApiCall(reason: selectedReason);
+      // Card removal is handled by the callback in HomeScreen if report succeeds
     }
   }
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    // Content Block Generation (Keep as is)
+    // --- Content Block Generation (No Change) ---
     final List<dynamic> contentBlocks = [];
     final mediaUrls = profile.mediaUrls ?? [];
     final prompts = profile.prompts;
     contentBlocks.add("header_section");
-    if (mediaUrls.isNotEmpty) contentBlocks.add(mediaUrls[0]);
+    if (mediaUrls.isNotEmpty)
+      contentBlocks.add({"type": "media", "value": mediaUrls[0], "index": 0});
     if (prompts.isNotEmpty) contentBlocks.add(prompts[0]);
     contentBlocks.add("vitals_section");
     int mediaIndex = 1;
@@ -407,7 +438,8 @@ class HomeProfileCard extends ConsumerWidget {
     int maxRemaining = max(mediaUrls.length, prompts.length);
     for (int i = 1; i < maxRemaining; i++) {
       if (mediaIndex < mediaUrls.length) {
-        contentBlocks.add(mediaUrls[mediaIndex]);
+        contentBlocks
+            .add({"type": "media", "value": mediaUrls[mediaIndex], "index": i});
         mediaIndex++;
       }
       if (promptIndex < prompts.length) {
@@ -415,17 +447,17 @@ class HomeProfileCard extends ConsumerWidget {
         promptIndex++;
       }
     }
-    if (profile.audioPrompt != null) {
-      contentBlocks.add(profile.audioPrompt!);
-    }
+    if (profile.audioPrompt != null) contentBlocks.add(profile.audioPrompt!);
+    // --- End Content Block Generation ---
 
     return Container(
-      color: Colors.white,
+      color: Colors.white, // Background for the entire card area
       child: Stack(
+        // Use Stack to overlay buttons
         children: [
           // Main Scrollable Content
           ListView.builder(
-            physics: const ClampingScrollPhysics(),
+            physics: const ClampingScrollPhysics(), // Prevents overscroll glow
             padding: const EdgeInsets.only(bottom: 80.0), // Space for buttons
             itemCount: contentBlocks.length,
             itemBuilder: (context, index) {
@@ -435,17 +467,13 @@ class HomeProfileCard extends ConsumerWidget {
               final double horizontalPadding = 12.0;
               Widget contentWidget;
 
-              // Build Blocks (Calls corrected _buildMediaItem)
+              // Build content blocks based on type
               if (item is String && item == "header_section") {
-                contentWidget = _buildHeaderBlock(profile);
-              } else if (item is String && item.startsWith('http')) {
-                int originalMediaIndex =
-                    (profile.mediaUrls ?? []).indexOf(item);
-                if (originalMediaIndex == -1) originalMediaIndex = 0;
-                contentWidget =
-                    _buildMediaItem(context, ref, item, originalMediaIndex);
-              } // Passes URL
-              else if (item is Prompt) {
+                contentWidget = _buildHeaderBlock(context, profile);
+              } else if (item is Map && item["type"] == "media") {
+                contentWidget = _buildMediaItem(
+                    context, ref, item["value"] as String, item["index"]);
+              } else if (item is Prompt) {
                 contentWidget = _buildPromptItem(context, ref, item);
               } else if (item is AudioPromptModel) {
                 contentWidget = _buildAudioItem(context, ref, item);
@@ -455,6 +483,7 @@ class HomeProfileCard extends ConsumerWidget {
                 contentWidget = const SizedBox.shrink();
               }
 
+              // Add padding around each block
               return Padding(
                 padding: EdgeInsets.fromLTRB(horizontalPadding, topPadding,
                     horizontalPadding, bottomPadding),
@@ -462,135 +491,119 @@ class HomeProfileCard extends ConsumerWidget {
               );
             },
           ),
-          // Action Buttons Row
+
+          // Action Buttons Row (Dislike Only Now)
           Positioned(
-              bottom: 15,
-              left: 30,
-              right: 30,
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  _buildActionButton(
-                      // Dislike
-                      icon: Icons.close_rounded,
-                      color: Colors.redAccent.shade100,
-                      onPressed: () async {
-                        bool success = await performDislikeApiCall();
-                        if (success) {
-                          onInteractionComplete();
-                        }
-                      },
-                      tooltip: "Dislike",
-                      size: 55),
-                  _buildActionButton(
-                      // Report
-                      icon: Icons.flag_outlined,
-                      color: Colors.orange.shade600,
-                      onPressed: () => _handleReport(context),
-                      tooltip: "Report",
-                      size: 55),
-                ],
-              )),
+            bottom: 15, // Adjust position as needed
+            left: 30,
+            right: 30, // Ensure it takes full width for spaceBetween
+            child: Row(
+              // *** MODIFIED: Use spaceBetween and added Dislike Button back ***
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              // *** END MODIFICATION ***
+              children: [
+                // Dislike Button (Restored)
+                _buildActionButton(
+                  icon: Icons.close_rounded,
+                  color: Colors.redAccent.shade100,
+                  onPressed: () async {
+                    // Call the dislike API function passed from HomeScreen
+                    bool success = await performDislikeApiCall();
+                    if (success) {
+                      onInteractionComplete(); // Trigger card removal in HomeScreen
+                    }
+                  },
+                  tooltip: "Dislike",
+                  size: 55, // Smaller action buttons
+                ),
+                // Add other buttons here if needed in the future, using spaceBetween
+              ],
+            ),
+          ),
         ],
       ),
     );
   }
 
-  // --- Corrected _buildMediaItem using CachedNetworkImage ---
-  Widget _buildMediaItem(
-      BuildContext context, WidgetRef ref, String url, int index) {
-    bool isVideo = url.toLowerCase().contains('.mp4') ||
-        url.toLowerCase().contains('.mov') ||
-        url.toLowerCase().contains('.avi') ||
-        url.toLowerCase().contains('.webm');
-
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(10),
-      child: AspectRatio(
-        aspectRatio: 4 / 5.5,
-        child: Container(
-          decoration: BoxDecoration(color: Colors.grey[200]),
-          child: Stack(
-            fit: StackFit.expand,
-            children: [
-              CachedNetworkImage(
-                imageUrl: url,
-                fit: BoxFit.cover,
-                placeholder: (context, url) => const Center(
-                  child: CircularProgressIndicator(
-                    strokeWidth: 2.0,
-                    color: Color(0xAA8B5CF6),
-                  ),
+  // --- Header Block Builder ---
+  Widget _buildHeaderBlock(BuildContext context, UserModel profile) {
+    final age = profile.age;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Name and Age (Takes available space)
+            Flexible(
+              child: Text(
+                '${profile.name ?? 'Name'}${age != null ? ', $age' : ''}',
+                style: GoogleFonts.poppins(
+                  fontSize: 26,
+                  fontWeight: FontWeight.bold,
+                  color: Colors.black87,
                 ),
-                errorWidget: (context, url, error) => Center(
-                  child: Icon(
-                    Icons.broken_image_outlined,
-                    color: Colors.grey[400],
-                    size: 40,
-                  ),
-                ),
+                softWrap: true,
               ),
-              if (isVideo)
-                Center(
-                  child: Container(
-                    padding: const EdgeInsets.all(10),
-                    decoration: BoxDecoration(
-                      color: Colors.black.withOpacity(0.5),
-                      shape: BoxShape.circle,
-                    ),
-                    child: const Icon(Icons.play_arrow_rounded,
-                        color: Colors.white, size: 30),
-                  ),
-                ),
-              Positioned(
-                bottom: 10,
-                right: 10,
-                child: _buildSmallLikeButton(
-                  () => _showInteractionDialog(
-                    context,
-                    ref,
-                    ContentLikeType.media,
-                    index.toString(),
-                    url,
-                  ),
-                ),
+            ),
+            // More Options Menu Button
+            _buildHeaderMenuButton(context), // Use the helper
+          ],
+        ),
+        // Location (remains below the Name/Age/Menu row)
+        if (profile.hometown != null && profile.hometown!.isNotEmpty) ...[
+          const SizedBox(height: 4),
+          Row(
+            children: [
+              Icon(Icons.location_on_outlined,
+                  size: 16, color: Colors.grey[600]),
+              const SizedBox(width: 4),
+              Text(
+                profile.hometown!,
+                style:
+                    GoogleFonts.poppins(fontSize: 14, color: Colors.grey[700]),
               ),
             ],
           ),
+        ],
+      ],
+    );
+  }
+
+  // --- Header Menu Button Helper ---
+  Widget _buildHeaderMenuButton(BuildContext context) {
+    return PopupMenuButton<String>(
+      tooltip: "More options",
+      icon: Icon(Icons.more_vert_rounded, color: Colors.grey.shade600),
+      padding: EdgeInsets.zero,
+      constraints: const BoxConstraints(),
+      onSelected: (String result) {
+        if (result == 'report') {
+          _handleReport(context);
+        }
+      },
+      itemBuilder: (BuildContext context) => <PopupMenuEntry<String>>[
+        PopupMenuItem<String>(
+          value: 'report',
+          child: ListTile(
+            leading: Icon(Icons.flag_outlined, color: Colors.redAccent),
+            // *** MODIFIED: Simplified Text ***
+            title: Text('Report',
+                style: GoogleFonts.poppins(color: Colors.redAccent)),
+            // *** END MODIFICATION ***
+            dense: true,
+            contentPadding: EdgeInsets.symmetric(horizontal: 8.0),
+          ),
         ),
+      ],
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(10.0),
       ),
     );
   }
 
-  // --- Other Helper Methods (_buildHeaderBlock, _buildVitalsBlock, etc.) ---
-  // ... (keep these as they were in the previous correct version) ...
-  Widget _buildHeaderBlock(UserModel profile) {
-    final age = profile.age;
-    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Flexible(
-                child: Text(
-                    '${profile.name ?? 'Name'}${age != null ? ', $age' : ''}',
-                    style: GoogleFonts.poppins(
-                        fontSize: 26,
-                        fontWeight: FontWeight.bold,
-                        color: Colors.black87)))
-          ]),
-      if (profile.hometown != null && profile.hometown!.isNotEmpty) ...[
-        const SizedBox(height: 4),
-        Row(children: [
-          Icon(Icons.location_on_outlined, size: 16, color: Colors.grey[600]),
-          const SizedBox(width: 4),
-          Text(profile.hometown!,
-              style: GoogleFonts.poppins(fontSize: 14, color: Colors.grey[700]))
-        ])
-      ]
-    ]);
-  }
-
+  // --- Other Helper Methods (_buildVitalsBlock, etc. remain unchanged) ---
   Widget _buildVitalsBlock(UserModel profile) {
     final List<Widget> vitals = [];
     if (profile.height != null && profile.height!.isNotEmpty) {
@@ -646,8 +659,52 @@ class HomeProfileCard extends ConsumerWidget {
           Expanded(
               child: Text(label,
                   style: GoogleFonts.poppins(
-                      fontSize: 15, color: Colors.grey[800])))
+                      fontSize: 15, color: Colors.grey[800]),
+                  overflow: TextOverflow.ellipsis))
         ]));
+  }
+
+  Widget _buildMediaItem(
+      BuildContext context, WidgetRef ref, String url, int index) {
+    bool isVideo = url.toLowerCase().contains('.mp4') ||
+        url.toLowerCase().contains('.mov') ||
+        url.toLowerCase().contains('.avi') ||
+        url.toLowerCase().contains('.webm');
+    return ClipRRect(
+        borderRadius: BorderRadius.circular(10),
+        child: AspectRatio(
+            aspectRatio: 4 / 5.5,
+            child: Container(
+                decoration: BoxDecoration(color: Colors.grey[200]),
+                child: Stack(fit: StackFit.expand, children: [
+                  CachedNetworkImage(
+                      imageUrl: url,
+                      fit: BoxFit.cover,
+                      placeholder: (context, url) => const Center(
+                          child: CircularProgressIndicator(
+                              strokeWidth: 2.0, color: Color(0xAA8B5CF6))),
+                      errorWidget: (context, url, error) => Center(
+                          child: Icon(Icons.broken_image_outlined,
+                              color: Colors.grey[400], size: 40))),
+                  if (isVideo)
+                    Center(
+                        child: Container(
+                            padding: const EdgeInsets.all(10),
+                            decoration: BoxDecoration(
+                                color: Colors.black.withOpacity(0.5),
+                                shape: BoxShape.circle),
+                            child: const Icon(Icons.play_arrow_rounded,
+                                color: Colors.white, size: 30))),
+                  Positioned(
+                      bottom: 10,
+                      right: 10,
+                      child: _buildSmallLikeButton(() => _showInteractionDialog(
+                          context,
+                          ref,
+                          ContentLikeType.media,
+                          index.toString(),
+                          url)))
+                ]))));
   }
 
   Widget _buildPromptItem(BuildContext context, WidgetRef ref, Prompt prompt) {
