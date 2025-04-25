@@ -100,3 +100,25 @@ app.*.map.json
 
 # Mason specific
 .mason/
+# Android NDK/Build artifacts
+**/android/.gradle/
+**/android/app/.cxx/
+
+# Flutter build artifacts (if not already covered)
+**/build/
+**/android/build/
+**/ios/Flutter/build/
+**/macos/Flutter/ephemeral/
+# Crashlytics or Firebase related (if used)
+crashlytics-build.properties
+
+# Local generated metadata
+*.lock
+pubspec.lock
+
+# IDE-specific
+*.idea/
+*.classpath
+*.project
+*.settings/
+
