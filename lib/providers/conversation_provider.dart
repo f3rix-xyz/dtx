@@ -119,10 +119,14 @@ class ConversationNotifier extends StateNotifier<ConversationState> {
 
       final updatedMessage = messageToUpdate.copyWith(
         status: newStatus,
-        mediaUrl: finalMediaUrl,
+        mediaUrl: finalMediaUrl, // Still store the final URL
         errorMessage: errorMessage,
         clearErrorMessage: errorMessage == null,
-        clearLocalFilePath: finalMediaUrl != null,
+        // --- *** THE FIX: Keep localFilePath *** ---
+        // Change this line from `clearLocalFilePath: finalMediaUrl != null,`
+        //                    to `clearLocalFilePath: false,`
+        clearLocalFilePath: false, // Don't clear the local path when sent
+        // --- *** END FIX *** ---
       );
 
       final updatedMessages = List<ChatMessage>.from(currentMessages);
@@ -137,7 +141,7 @@ class ConversationNotifier extends StateNotifier<ConversationState> {
       final newListIdentityHashCode =
           identityHashCode(state.messages); // Log new list instance identity
       print(
-          "[Provider UpdateStatus: $_otherUserId] Status updated for TempID $tempId. Final URL: ${updatedMessage.mediaUrl}. Error: ${updatedMessage.errorMessage}. List hashCode changed: ${state.messages.hashCode != oldMessagesHashCode}. List instance changed: ${oldListIdentityHashCode != newListIdentityHashCode}");
+          "[Provider UpdateStatus: $_otherUserId] Status updated for TempID $tempId. Final URL: ${updatedMessage.mediaUrl}. Local Path Kept: ${updatedMessage.localFilePath}. Error: ${updatedMessage.errorMessage}. List hashCode changed: ${state.messages.hashCode != oldMessagesHashCode}. List instance changed: ${oldListIdentityHashCode != newListIdentityHashCode}");
     } else {
       print(
           "[Provider UpdateStatus: $_otherUserId] WARNING: Could not find message with TempID $tempId to update status.");
