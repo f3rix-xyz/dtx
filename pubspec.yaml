@@ -61,6 +61,7 @@ dependencies:
   web_socket_channel: 
   url_launcher:
   file_picker:
+  cached_network_image:
 
 
 

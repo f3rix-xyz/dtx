@@ -202,57 +202,90 @@ File: models/chat_message.dart
 // lib/models/chat_message.dart
 import 'package:intl/intl.dart';
 
+// --- NEW: Enum for message status ---
+enum ChatMessageStatus {
+  pending, // Added to local list, upload not started/failed immediately
+  uploading, // Upload in progress
+  sent, // Confirmed sent (or received)
+  failed, // Upload or send failed
+}
+// --- END NEW ---
+
 class ChatMessage {
-  final int messageID;
+  // Use String for tempId for flexibility (e.g., timestamp-based)
+  final String? tempId; // Unique temporary ID for optimistic messages
+  final int messageID; // Real ID from backend (0 or negative for optimistic)
   final int senderUserID;
   final int recipientUserID;
   final String messageText;
-  final DateTime sentAt;
-  final bool isRead;
-  final DateTime? readAt; // Nullable DateTime
+  final String? mediaUrl; // Final URL after upload
+  final String? mediaType; // Nullable type (e.g., "image/jpeg", "video/mp4")
+  final DateTime sentAt; // Timestamp when *sent* or added optimistically
+  final bool isRead; // Read status from recipient perspective
+  final DateTime? readAt;
+
+  // --- NEW: Fields for optimistic UI ---
+  final ChatMessageStatus status; // Tracks sending state
+  final String?
+      localFilePath; // Path to the local file being uploaded (TEMPORARY, cleared after sent)
+  final String?
+      initialLocalPath; // NEW: Always store the first path if it was local
+  final String? errorMessage; // Store failure reason
+  // --- END NEW ---
 
   ChatMessage({
+    this.tempId, // Add tempId
     required this.messageID,
     required this.senderUserID,
     required this.recipientUserID,
     required this.messageText,
+    this.mediaUrl,
+    this.mediaType,
     required this.sentAt,
-    required this.isRead,
+    this.isRead = false,
     this.readAt,
+    // --- NEW: Add status and local path to constructor ---
+    this.status =
+        ChatMessageStatus.sent, // Default to sent for received/fetched messages
+    this.localFilePath,
+    this.initialLocalPath, // Add initialLocalPath
+    this.errorMessage,
+    // --- END NEW ---
   });
 
-  // Helper to check if the message was sent by the currently authenticated user
   bool isMe(int currentUserId) => senderUserID == currentUserId;
 
+  // Updated: Check either final URL or temporary local path
+  bool get isMedia =>
+      (mediaUrl != null && mediaUrl!.isNotEmpty) ||
+      (localFilePath != null && localFilePath!.isNotEmpty);
+
   String get formattedTimestamp {
-    // Example formatting, adjust as needed
     final now = DateTime.now();
     final today = DateTime(now.year, now.month, now.day);
     final messageDay = DateTime(sentAt.year, sentAt.month, sentAt.day);
 
     if (messageDay == today) {
-      return DateFormat.jm().format(sentAt.toLocal()); // e.g., 10:30 AM
+      return DateFormat.jm().format(sentAt.toLocal());
     } else if (today.difference(messageDay).inDays == 1) {
       return 'Yesterday';
     } else {
-      return DateFormat.yMd().format(sentAt.toLocal()); // e.g., 10/25/2023
+      return DateFormat.yMd().format(sentAt.toLocal());
     }
   }
 
   factory ChatMessage.fromJson(Map<String, dynamic> json) {
-    // Helper to parse timestamp safely
+    // --- Helper functions remain the same ---
     DateTime parseTimestamp(dynamic tsField) {
       if (tsField is String) {
         try {
-          // Handle potential 'Z' for UTC time from Go
           return DateTime.parse(tsField).toLocal();
         } catch (e) {
           print("Error parsing timestamp '$tsField': $e");
-          return DateTime.now(); // Fallback
+          return DateTime.now().toUtc();
         }
       }
-      // Add more checks if backend sends different formats (e.g., Unix timestamp)
-      return DateTime.now(); // Fallback
+      return DateTime.now().toUtc();
     }
 
     DateTime? parseNullableTimestamp(dynamic tsField) {
@@ -260,31 +293,75 @@ class ChatMessage {
         try {
           return DateTime.parse(tsField).toLocal();
         } catch (_) {
-          return null; // Return null if parsing fails
+          return null;
         }
       }
       return null;
     }
 
+    // --- Updated Factory ---
     return ChatMessage(
-      // Use keys matching the JSON response from GetConversationMessages
-      messageID: json['MessageID'] as int? ?? 0,
-      senderUserID: json['SenderUserID'] as int? ?? 0,
-      recipientUserID: json['RecipientUserID'] as int? ?? 0,
-      messageText: json['MessageText'] as String? ?? '',
-      sentAt: parseTimestamp(json['SentAt']),
-      isRead: json['IsRead'] as bool? ?? false,
-      readAt: parseNullableTimestamp(json['ReadAt']),
+      // No tempId, localFilePath, initialLocalPath, errorMessage from JSON
+      messageID: json['MessageID'] as int? ?? json['message_id'] as int? ?? 0,
+      senderUserID:
+          json['SenderUserID'] as int? ?? json['sender_user_id'] as int? ?? 0,
+      recipientUserID: json['RecipientUserID'] as int? ??
+          json['recipient_user_id'] as int? ??
+          0,
+      messageText:
+          json['MessageText'] as String? ?? json['text'] as String? ?? '',
+      mediaUrl: json['MediaUrl'] as String? ?? json['media_url'] as String?,
+      mediaType: json['MediaType'] as String? ?? json['media_type'] as String?,
+      sentAt: parseTimestamp(json['SentAt'] ?? json['sent_at']),
+      isRead: json['IsRead'] as bool? ?? json['is_read'] as bool? ?? false,
+      readAt: parseNullableTimestamp(json['ReadAt'] ?? json['read_at']),
+      status:
+          ChatMessageStatus.sent, // Messages from API/WS are considered 'sent'
     );
+    // --- END Updated Factory ---
   }
 
-  // Method to convert to the JSON format expected by the WebSocket server
-  Map<String, dynamic> toJsonForSend(int recipientId) {
-    return {
-      'recipient_user_id': recipientId,
-      'text': messageText,
-    };
+  // --- Updated copyWith method ---
+  ChatMessage copyWith({
+    String? tempId,
+    int? messageID,
+    int? senderUserID,
+    int? recipientUserID,
+    String? messageText,
+    String? mediaUrl,
+    String? mediaType,
+    DateTime? sentAt,
+    bool? isRead,
+    DateTime? readAt,
+    ChatMessageStatus? status,
+    String? localFilePath,
+    bool clearLocalFilePath = false, // Flag to explicitly clear temporary path
+    String? initialLocalPath, // Usually don't update this via copyWith
+    String? errorMessage,
+    bool clearErrorMessage = false,
+  }) {
+    return ChatMessage(
+      tempId: tempId ?? this.tempId,
+      messageID: messageID ?? this.messageID,
+      senderUserID: senderUserID ?? this.senderUserID,
+      recipientUserID: recipientUserID ?? this.recipientUserID,
+      messageText: messageText ?? this.messageText,
+      mediaUrl: mediaUrl ?? this.mediaUrl,
+      mediaType: mediaType ?? this.mediaType,
+      sentAt: sentAt ?? this.sentAt,
+      isRead: isRead ?? this.isRead,
+      readAt: readAt ?? this.readAt,
+      status: status ?? this.status,
+      // Clear localFilePath if flag is set OR use new value OR keep old
+      localFilePath:
+          clearLocalFilePath ? null : (localFilePath ?? this.localFilePath),
+      initialLocalPath:
+          initialLocalPath ?? this.initialLocalPath, // Preserve original path
+      errorMessage:
+          clearErrorMessage ? null : (errorMessage ?? this.errorMessage),
+    );
   }
+  // --- END Updated copyWith method ---
 }
 
 
@@ -2374,13 +2451,13 @@ File: providers/conversation_provider.dart
 ================================================
 // lib/providers/conversation_provider.dart
 import 'dart:async';
-
 import 'package:dtx/models/chat_message.dart';
 import 'package:dtx/models/error_model.dart';
 import 'package:dtx/providers/service_provider.dart';
 import 'package:dtx/repositories/chat_repository.dart';
 import 'package:dtx/services/api_service.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter/foundation.dart'; // Import foundation for list identity check
 
 // ConversationState definition remains the same...
 class ConversationState {
@@ -2413,41 +2490,41 @@ class ConversationNotifier extends StateNotifier<ConversationState> {
 
   ConversationNotifier(this._chatRepository, this._otherUserId)
       : super(const ConversationState()) {
+    print("[Provider Init: $_otherUserId] Fetching initial messages...");
     fetchMessages();
   }
 
   Future<void> fetchMessages() async {
+    // ... (fetchMessages remains the same) ...
     if (state.isLoading) return;
-    print("[ConversationNotifier-$_otherUserId] Fetching ALL messages...");
+    print("[Provider Fetch: $_otherUserId] Fetching ALL messages...");
     state = state.copyWith(isLoading: true, error: () => null);
 
     try {
-      // Fetch messages (currently oldest first from repo)
       final messagesFromRepo = await _chatRepository.fetchConversation(
         otherUserId: _otherUserId,
       );
 
       if (mounted) {
-        // *** REVERSE the list HERE before setting state ***
         final reversedMessages = messagesFromRepo.reversed.toList();
-        // *** END REVERSAL ***
-
+        final oldMessagesHashCode = state.messages.hashCode; // Log hashCode
         state = state.copyWith(
           isLoading: false,
-          messages: reversedMessages, // Store newest message at index 0
+          messages: reversedMessages,
         );
         print(
-            "[ConversationNotifier-$_otherUserId] Fetched and reversed ${reversedMessages.length} total messages.");
+            "[Provider Fetch: $_otherUserId] Fetched and reversed ${reversedMessages.length} messages. List hashCode changed: ${state.messages.hashCode != oldMessagesHashCode}");
       }
     } on ApiException catch (e) {
-      print("[ConversationNotifier-$_otherUserId] API Exception: ${e.message}");
+      print(
+          "[Provider Fetch Error: $_otherUserId] API Exception: ${e.message}");
       if (mounted) {
         state = state.copyWith(
             isLoading: false, error: () => AppError.server(e.message));
       }
     } catch (e) {
       print(
-          "[ConversationNotifier-$_otherUserId] Unexpected Error: ${e.toString()}");
+          "[Provider Fetch Error: $_otherUserId] Unexpected Error: ${e.toString()}");
       if (mounted) {
         state = state.copyWith(
             isLoading: false,
@@ -2456,22 +2533,66 @@ class ConversationNotifier extends StateNotifier<ConversationState> {
     }
   }
 
-  // addSentMessage and addReceivedMessage correctly prepend (add to index 0)
-  // so they DO NOT need to be changed.
   void addSentMessage(ChatMessage message) {
     if (!mounted) return;
     print(
-        "[ConversationNotifier-$_otherUserId] Adding sent message: ${message.messageText}");
-    // Prepending means the newest is always at index 0
+        "[Provider AddSent: $_otherUserId] Adding message: TempID=${message.tempId}, RealID=${message.messageID}, Status=${message.status}, Type=${message.isMedia ? message.mediaType : 'text'}");
+    final oldMessagesHashCode = state.messages.hashCode;
     state = state.copyWith(messages: [message, ...state.messages]);
+    print(
+        "[Provider AddSent: $_otherUserId] Message added. List hashCode changed: ${state.messages.hashCode != oldMessagesHashCode}. New count: ${state.messages.length}");
   }
 
   void addReceivedMessage(ChatMessage message) {
     if (!mounted) return;
     print(
-        "[ConversationNotifier-$_otherUserId] Adding received message: ${message.messageText}");
-    // Prepending means the newest is always at index 0
+        "[Provider AddRcvd: $_otherUserId] Adding received message: RealID=${message.messageID}, Type=${message.isMedia ? message.mediaType : 'text'}");
+    final oldMessagesHashCode = state.messages.hashCode;
     state = state.copyWith(messages: [message, ...state.messages]);
+    print(
+        "[Provider AddRcvd: $_otherUserId] Message added. List hashCode changed: ${state.messages.hashCode != oldMessagesHashCode}. New count: ${state.messages.length}");
+  }
+
+  void updateMessageStatus(String tempId, ChatMessageStatus newStatus,
+      {String? finalMediaUrl, String? errorMessage}) {
+    if (!mounted) return;
+    print(
+        "[Provider UpdateStatus: $_otherUserId] Attempting update: TempID=$tempId, NewStatus=$newStatus, FinalURL=${finalMediaUrl != null}, Error=${errorMessage != null}");
+
+    final currentMessages = state.messages;
+    final messageIndex =
+        currentMessages.indexWhere((msg) => msg.tempId == tempId);
+
+    if (messageIndex != -1) {
+      final messageToUpdate = currentMessages[messageIndex];
+      print(
+          "[Provider UpdateStatus: $_otherUserId] Found message at index $messageIndex. Current Status=${messageToUpdate.status}");
+
+      final updatedMessage = messageToUpdate.copyWith(
+        status: newStatus,
+        mediaUrl: finalMediaUrl,
+        errorMessage: errorMessage,
+        clearErrorMessage: errorMessage == null,
+        clearLocalFilePath: finalMediaUrl != null,
+      );
+
+      final updatedMessages = List<ChatMessage>.from(currentMessages);
+      updatedMessages[messageIndex] = updatedMessage;
+
+      final oldMessagesHashCode = state.messages.hashCode;
+      final oldListIdentityHashCode =
+          identityHashCode(state.messages); // Log list instance identity
+
+      state = state.copyWith(messages: updatedMessages);
+
+      final newListIdentityHashCode =
+          identityHashCode(state.messages); // Log new list instance identity
+      print(
+          "[Provider UpdateStatus: $_otherUserId] Status updated for TempID $tempId. Final URL: ${updatedMessage.mediaUrl}. Error: ${updatedMessage.errorMessage}. List hashCode changed: ${state.messages.hashCode != oldMessagesHashCode}. List instance changed: ${oldListIdentityHashCode != newListIdentityHashCode}");
+    } else {
+      print(
+          "[Provider UpdateStatus: $_otherUserId] WARNING: Could not find message with TempID $tempId to update status.");
+    }
   }
 }
 
@@ -4588,13 +4709,13 @@ File: repositories/media_repository.dart
 // File: repositories/media_repository.dart
 import 'dart:convert';
 import 'dart:io';
-import 'package:dio/dio.dart'; // Keep if used elsewhere, not needed for HttpClient PUT
+import 'package:dio/dio.dart';
 import 'package:dtx/providers/auth_provider.dart';
 import 'package:dtx/utils/app_enums.dart';
 import 'package:dtx/utils/token_storage.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:http_parser/http_parser.dart'; // Keep if used elsewhere
-// Removed path import as not directly used here
+// Removed unused http_parser import
+// Removed unused path import
 
 import '../models/media_upload_model.dart';
 import '../services/api_service.dart';
@@ -4605,7 +4726,74 @@ class MediaRepository {
 
   MediaRepository(this._apiService, [this.ref]);
 
-  // --- NEW Method for Edit Presigned URLs ---
+  // --- Helper to get token (avoids repetition) ---
+  Future<String?> _getAuthToken() async {
+    String? token;
+    if (ref != null) {
+      try {
+        final authState = ref!.read(authProvider);
+        token = authState.jwtToken;
+      } catch (e) {
+        print(
+            "[MediaRepository _getAuthToken] Error reading auth provider: $e");
+      }
+    }
+    if (token == null || token.isEmpty) {
+      token = await TokenStorage.getToken();
+    }
+    return token;
+  }
+  // --- END Helper ---
+
+  // --- Method for CHAT Media Presigned URL ---
+  Future<Map<String, String>> getChatMediaPresignedUrl(
+      String filename, String fileType) async {
+    final String methodName = 'getChatMediaPresignedUrl';
+    print(
+        '[MediaRepository $methodName] Getting chat media presigned URL for $filename ($fileType)...');
+    try {
+      String? token = await _getAuthToken();
+      if (token == null) {
+        throw ApiException('Authentication token is missing');
+      }
+      final headers = {'Authorization': 'Bearer $token'};
+      final body = {'filename': filename, 'type': fileType};
+      print('[MediaRepository $methodName] Request Body: $body');
+
+      final response = await _apiService.post(
+        '/api/chat/upload', // Use the CHAT media endpoint
+        body: body,
+        headers: headers,
+      );
+
+      print('[MediaRepository $methodName] API Response: $response');
+      if (response['success'] == true &&
+          response['presigned_url'] != null &&
+          response['object_url'] != null) {
+        print('[MediaRepository $methodName] URLs received successfully.');
+        return {
+          'presigned_url': response['presigned_url'].toString(),
+          'object_url': response['object_url'].toString(),
+        };
+      } else {
+        final message = response['message']?.toString() ??
+            'Failed to get chat media presigned URL.';
+        print('[MediaRepository $methodName] Failed: $message');
+        throw ApiException(message);
+      }
+    } on ApiException catch (e) {
+      print(
+          '[MediaRepository $methodName] API Exception: ${e.message} (Status: ${e.statusCode})');
+      rethrow;
+    } catch (e) {
+      print('[MediaRepository $methodName] Unexpected Error: $e');
+      throw ApiException('Error getting chat presigned URL: ${e.toString()}');
+    }
+  }
+  // --- END CHAT Media Method ---
+
+  // --- Existing methods (getEditPresignedUrls, getPresignedUrls, getAudioPresignedUrl, getVerificationPresignedUrl) ---
+  // ... keep the existing code for these methods ...
   Future<List<Map<String, dynamic>>> getEditPresignedUrls(
       List<Map<String, String>> fileDetails) async {
     final String methodName = 'getEditPresignedUrls';
@@ -4655,33 +4843,7 @@ class MediaRepository {
       throw ApiException('Error getting edit presigned URLs: ${e.toString()}');
     }
   }
-  // --- END NEW Method ---
 
-  // --- Helper to get token (avoids repetition) ---
-  Future<String?> _getAuthToken() async {
-    String? token;
-    if (ref != null) {
-      // Try reading from auth provider state first
-      try {
-        final authState = ref!.read(authProvider);
-        token = authState.jwtToken;
-        // print("[MediaRepository _getAuthToken] Token from Provider: $token"); // Debug
-      } catch (e) {
-        print(
-            "[MediaRepository _getAuthToken] Error reading auth provider: $e");
-        // Fallback below
-      }
-    }
-    if (token == null || token.isEmpty) {
-      // Fallback to token storage
-      token = await TokenStorage.getToken();
-      // print("[MediaRepository _getAuthToken] Token from Storage: $token"); // Debug
-    }
-    return token;
-  }
-  // --- END Helper ---
-
-  // --- Existing methods (keep as they are for onboarding/audio/verification) ---
   Future<List<Map<String, dynamic>>> getPresignedUrls(
       List<Map<String, String>> fileDetails) async {
     // (Used for initial onboarding media upload)
@@ -4791,8 +4953,9 @@ class MediaRepository {
           'Error getting verification presigned URL: ${e.toString()}');
     }
   }
+  // --- End Existing Methods ---
 
-  // Upload a file to S3 using presigned URL (No changes needed)
+  // --- Upload a file to S3 using presigned URL (No changes needed) ---
   Future<bool> uploadFileToS3(MediaUploadModel mediaUpload) async {
     if (mediaUpload.presignedUrl == null) {
       throw ApiException('Missing presigned URL for upload');
@@ -4813,12 +4976,8 @@ class MediaRepository {
       final request = await client.putUrl(Uri.parse(mediaUpload.presignedUrl!));
 
       request.headers.set(HttpHeaders.contentTypeHeader, contentType);
-      request.contentLength = await file.length();
-
-      // print('📨 Request headers:');
-      // request.headers.forEach((name, values) {
-      //   print('   $name: ${values.join(', ')}');
-      // });
+      request.headers.set(HttpHeaders.contentLengthHeader,
+          (await file.length()).toString()); // Ensure length header
 
       final fileStream = file.openRead();
       await request.addStream(fileStream);
@@ -4829,7 +4988,8 @@ class MediaRepository {
 
       print('📩 Upload response: Status=$statusCode, Body=$responseBody');
 
-      if (statusCode != HttpStatus.ok) {
+      if (statusCode != HttpStatus.ok && statusCode != HttpStatus.created) {
+        // Allow 201 Created as well
         print('❌ Upload failed with status $statusCode');
         return false;
       }
@@ -4842,8 +5002,9 @@ class MediaRepository {
       return false; // Indicate failure
     }
   }
+  // --- End S3 Upload ---
 
-  // Retry failed uploads with exponential backoff (No changes needed)
+  // --- Retry failed uploads with exponential backoff (No changes needed) ---
   Future<bool> retryUpload(MediaUploadModel mediaUpload,
       {int maxRetries = 3}) async {
     int retryCount = 0;
@@ -4871,6 +5032,7 @@ class MediaRepository {
         '❌ Upload failed after $maxRetries retries for: ${mediaUpload.fileName}');
     return false;
   }
+  // --- End Retry Upload ---
 }
 
 
@@ -5223,23 +5385,16 @@ File: services/chat_service.dart
 // lib/services/chat_service.dart
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io'; // For WebSocketException
-// *** ADDED: math import (optional if using bit-shift) ***
-// import 'dart:math';
-
-// *** ADDED: web_socket_channel imports ***
+import 'dart:io';
 import 'package:web_socket_channel/io.dart';
 import 'package:web_socket_channel/status.dart' as WebSocketStatus;
 import 'package:web_socket_channel/web_socket_channel.dart';
-// *** END ADDED ***
 
 import 'package:dtx/models/chat_message.dart';
-import 'package:dtx/providers/auth_provider.dart'; // To get token
-import 'package:dtx/providers/conversation_provider.dart'; // To add received messages
-// *** ADDED: userProvider import ***
+import 'package:dtx/providers/auth_provider.dart';
+import 'package:dtx/providers/conversation_provider.dart';
 import 'package:dtx/providers/user_provider.dart';
-// *** END ADDED ***
-import 'package:dtx/utils/token_storage.dart'; // Fallback for token
+import 'package:dtx/utils/token_storage.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 enum WebSocketConnectionState { disconnected, connecting, connected, error }
@@ -5260,11 +5415,10 @@ class ChatService {
 
   ChatService(this._ref, this._wsUrl) {
     print("[ChatService] Initialized with URL: $_wsUrl");
-    // Optional: Auto-connect if a token exists? Or connect on demand?
-    // Let's connect on demand for now.
   }
 
   Future<void> connect() async {
+    // ... (connect logic remains the same) ...
     _isManualDisconnect = false; // Reset flag on connect attempt
     if (_channel != null &&
         _ref.read(webSocketStateProvider) ==
@@ -5291,12 +5445,10 @@ class ChatService {
     }
 
     try {
-      // Include the token in the connection headers
       final headers = {'Authorization': 'Bearer $token'};
       _channel = IOWebSocketChannel.connect(
         Uri.parse(_wsUrl),
         headers: headers,
-        // Optional: Add ping interval
         pingInterval: const Duration(seconds: 15),
       );
 
@@ -5306,17 +5458,15 @@ class ChatService {
         _onMessageReceived,
         onDone: _handleDisconnect,
         onError: _handleError,
-        cancelOnError: false, // Keep listening after errors if possible
+        cancelOnError: false,
       );
 
-      // If connection seems successful immediately (no error thrown by connect)
       _updateState(WebSocketConnectionState.connected);
-      _reconnectAttempts =
-          0; // Reset reconnect attempts on successful connection
+      _reconnectAttempts = 0;
       print("[ChatService] Connection established successfully.");
     } catch (e) {
       print("[ChatService] Connection failed: $e");
-      _handleError(e); // Treat connection error as a disconnect/error
+      _handleError(e);
     }
   }
 
@@ -5324,106 +5474,162 @@ class ChatService {
     print("[ChatService] Message received: $message");
     try {
       final Map<String, dynamic> decodedMessage = jsonDecode(message);
-
-      // --- Message Handling Logic ---
       final type = decodedMessage['type'] as String?;
-      final content = decodedMessage['content'] as String?; // For info/error
-      final senderId =
-          decodedMessage['sender_user_id'] as int?; // For actual messages
-      final currentUserId =
-          _ref.read(currentUserIdProvider); // Get current user ID
+      final senderId = decodedMessage['sender_user_id'] as int?;
+      final currentUserId = _ref.read(currentUserIdProvider);
 
       if (currentUserId == null) {
         print("[ChatService] Cannot process message: Current User ID is null.");
         return;
       }
 
-      if (type == 'message' && senderId != null) {
-        final chatMessage = ChatMessage.fromJson({
-          // Adapt to ChatMessage structure
-          // We don't get full ChatMessage JSON from WS, create it
-          'MessageID': 0, // Not provided by WS, set to 0 or fetch later?
-          'SenderUserID': senderId,
-          'RecipientUserID': currentUserId, // The current user is recipient
-          'MessageText': decodedMessage['text'] as String? ?? '',
-          'SentAt':
-              DateTime.now().toUtc().toIso8601String(), // Use current time
-          'IsRead': false, // Assume unread initially
-          'ReadAt': null,
-        });
-        // Add message to the correct conversation provider
-        // Need the sender's ID to access the correct provider instance
-        _ref
-            .read(conversationProvider(senderId).notifier)
-            .addReceivedMessage(chatMessage);
-        print(
-            "[ChatService] Added received message to conversation with $senderId");
+      // --- MODIFIED: Handle different message types ---
+      ChatMessage chatMessage;
+      if (type == 'text' && senderId != null) {
+        chatMessage = ChatMessage(
+          messageID: 0, // Not provided by WS
+          senderUserID: senderId,
+          recipientUserID: currentUserId,
+          messageText: decodedMessage['text'] as String? ?? '',
+          sentAt: DateTime.now().toUtc(), // Use UTC time from WS
+          isRead: false,
+          readAt: null,
+          // Media fields will be null for text
+          mediaUrl: null,
+          mediaType: null,
+        );
+      } else if (['image', 'video', 'audio', 'file'].contains(type) &&
+          senderId != null) {
+        chatMessage = ChatMessage(
+          messageID: 0, // Not provided by WS
+          senderUserID: senderId,
+          recipientUserID: currentUserId,
+          messageText: '', // Text is empty for media
+          sentAt: DateTime.now().toUtc(),
+          isRead: false,
+          readAt: null,
+          // Populate media fields
+          mediaUrl: decodedMessage['media_url'] as String?,
+          mediaType: decodedMessage['media_type'] as String?,
+        );
       } else if (type == 'error') {
-        print("[ChatService] Received error message: $content");
-        // Optionally show error to user via a global snackbar provider?
+        print(
+            "[ChatService] Received error message: ${decodedMessage['content']}");
+        // Optionally show error to user
+        return; // Don't add error messages to conversation
       } else if (type == 'info') {
-        print("[ChatService] Received info message: $content");
-        // Optionally show info to user?
+        print(
+            "[ChatService] Received info message: ${decodedMessage['content']}");
+        // Optionally show info to user
+        return; // Don't add info messages to conversation
       } else {
         print(
             "[ChatService] Received unknown message structure: $decodedMessage");
+        return; // Ignore unknown types
       }
+
+      // Add the parsed message to the correct conversation provider
+      _ref
+          .read(conversationProvider(senderId!)
+              .notifier) // Use senderId! as it's checked above
+          .addReceivedMessage(chatMessage);
+      print(
+          "[ChatService] Added received message (type: $type) to conversation with $senderId");
+      // --- END MODIFICATION ---
     } catch (e) {
       print("[ChatService] Error processing received message: $e");
     }
   }
 
-  void sendMessage(int recipientUserId, String text) {
+  // --- MODIFIED: sendMessage signature and payload ---
+  void sendMessage(
+    int recipientUserId, {
+    String? text,
+    String? mediaUrl,
+    String? mediaType,
+  }) {
     if (_channel == null ||
         _ref.read(webSocketStateProvider) !=
             WebSocketConnectionState.connected) {
       print("[ChatService] Cannot send message: Not connected.");
-      // Optionally try to reconnect here?
-      // connect(); // Be careful with potential loops
       return;
     }
 
-    // *** FIX: Use currentUserIdProvider ***
     final currentUserId = _ref.read(currentUserIdProvider);
     if (currentUserId == null) {
       print("[ChatService] Cannot send message: Current User ID is null.");
-      return; // Or handle appropriately
+      return;
     }
 
-    final messageJson = jsonEncode({
+    // Determine message type and build payload
+    Map<String, dynamic> payload = {
       'recipient_user_id': recipientUserId,
-      'text': text,
-    });
+    };
+    String messageType = "text"; // Default
 
-    print("[ChatService] Sending message: $messageJson");
+    if (mediaUrl != null && mediaType != null) {
+      // Basic check for media type validity
+      if (mediaType.startsWith('image/')) {
+        messageType = "image";
+      } else if (mediaType.startsWith('video/')) {
+        messageType = "video";
+      } else if (mediaType.startsWith('audio/')) {
+        messageType = "audio";
+      } else {
+        messageType = "file"; // Generic file type
+      }
+      payload['type'] = messageType;
+      payload['media_url'] = mediaUrl;
+      payload['media_type'] = mediaType;
+      payload['text'] = null; // Explicitly null for media
+    } else if (text != null && text.trim().isNotEmpty) {
+      messageType = "text";
+      payload['type'] = messageType;
+      payload['text'] = text.trim();
+      payload['media_url'] = null;
+      payload['media_type'] = null;
+    } else {
+      print("[ChatService] Cannot send: Message must have text or media.");
+      return; // Nothing to send
+    }
+
+    final messageJson = jsonEncode(payload);
+    print("[ChatService] Sending message (Type: $messageType): $messageJson");
+
     try {
       _channel!.sink.add(messageJson);
 
-      // --- Optimistic UI Update ---
-      // Create a temporary message object to display immediately
-      final sentMessage = ChatMessage(
-        messageID: 0, // Temporary ID
-        senderUserID: currentUserId, // Current user is sender
-        recipientUserID: recipientUserId,
-        messageText: text,
-        sentAt: DateTime.now(), // Use local time for immediate display
-        isRead: false,
-        readAt: null,
-      );
-      // Add it to the conversation provider
-      _ref
-          .read(conversationProvider(recipientUserId).notifier)
-          .addSentMessage(sentMessage);
-      print(
-          "[ChatService] Added sent message optimistically to conversation with $recipientUserId");
-      // --- End Optimistic Update ---
+      // Optimistic UI Update (only for text messages for now)
+      if (messageType == "text") {
+        final sentMessage = ChatMessage(
+          messageID: 0, // Temporary ID
+          senderUserID: currentUserId,
+          recipientUserID: recipientUserId,
+          messageText: text!, // Use the original text
+          sentAt: DateTime.now(),
+          isRead: false,
+          readAt: null,
+          mediaUrl: null,
+          mediaType: null,
+        );
+        _ref
+            .read(conversationProvider(recipientUserId).notifier)
+            .addSentMessage(sentMessage);
+        print(
+            "[ChatService] Added sent TEXT message optimistically to conversation with $recipientUserId");
+      } else {
+        // Optional: Add optimistic UI for media upload/sent status later
+        print(
+            "[ChatService] Media message sent to WebSocket. Optimistic UI not implemented yet.");
+      }
     } catch (e) {
       print("[ChatService] Error sending message: $e");
-      // Handle potential sink errors (e.g., connection closed)
       _handleError(e);
     }
   }
+  // --- END MODIFICATION ---
 
+  // ... (_handleDisconnect, _handleError, _scheduleReconnect, disconnect, _updateState remain the same) ...
   void _handleDisconnect() {
     print("[ChatService] WebSocket disconnected.");
     _channel = null;
@@ -5463,9 +5669,6 @@ class ChatService {
     final delayMilliseconds =
         _initialReconnectDelay.inMilliseconds * (1 << (_reconnectAttempts - 1));
     final delay = Duration(milliseconds: delayMilliseconds);
-    // Or use math.pow:
-    // final delaySeconds = _initialReconnectDelay.inSeconds * pow(2, _reconnectAttempts - 1);
-    // final delay = Duration(seconds: delaySeconds.toInt());
 
     print(
         "[ChatService] Scheduling reconnect attempt $_reconnectAttempts/$_maxReconnectAttempts in $delay...");
@@ -5498,12 +5701,9 @@ class ChatService {
   }
 }
 
-// Helper to get current user ID - needed often
+// Helper to get current user ID (remains the same)
 final currentUserIdProvider = Provider<int?>((ref) {
-  // Assuming you have user data in userProvider or authProvider
-  // Adjust based on where your user ID is stored
   return ref.watch(userProvider.select((user) => user.id));
-  // Or: return ref.watch(authProvider).userId; // Ensure authProvider state has userId if using this
 });
 
 
@@ -6952,17 +7152,28 @@ File: views/chat_detail_screen.dart
 ================================================
 // lib/views/chat_detail_screen.dart
 import 'dart:async';
-
+import 'dart:io';
+import 'dart:typed_data';
+import 'package:cached_network_image/cached_network_image.dart'; // Added
 import 'package:dtx/models/chat_message.dart';
+import 'package:dtx/models/media_upload_model.dart';
 import 'package:dtx/providers/conversation_provider.dart';
 import 'package:dtx/providers/error_provider.dart';
-import 'package:dtx/providers/service_provider.dart'; // For ChatService
-import 'package:dtx/providers/user_provider.dart'; // For current user ID
-import 'package:dtx/services/chat_service.dart'; // For WebSocketState
+import 'package:dtx/providers/service_provider.dart';
+import 'package:dtx/providers/user_provider.dart';
+import 'package:dtx/repositories/media_repository.dart';
+import 'package:dtx/services/api_service.dart';
+import 'package:dtx/services/chat_service.dart';
 import 'package:dtx/widgets/message_bubble.dart';
+import 'package:file_picker/file_picker.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_cache_manager/flutter_cache_manager.dart'; // Added
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:image_picker/image_picker.dart';
+import 'package:mime/mime.dart';
+import 'package:path/path.dart' as p;
 
 class ChatDetailScreen extends ConsumerStatefulWidget {
   final int matchUserId;
@@ -6983,93 +7194,520 @@ class ChatDetailScreen extends ConsumerStatefulWidget {
 class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
   final TextEditingController _messageController = TextEditingController();
   final ScrollController _scrollController = ScrollController();
-  final FocusNode _inputFocusNode = FocusNode(); // Explicit FocusNode
+  final FocusNode _inputFocusNode = FocusNode();
+  bool _isUploadingMedia = false; // Tracks if ANY upload is active
+
+  // --- Constants ---
+  static const int _maxImageSizeBytes = 10 * 1024 * 1024;
+  static const int _maxVideoSizeBytes = 50 * 1024 * 1024;
+  static const int _maxAudioSizeBytes = 10 * 1024 * 1024;
+  static const int _maxFileSizeBytes = 25 * 1024 * 1024;
+  static final Set<String> _allowedMimeTypes = {
+    'image/jpeg',
+    'image/png',
+    'image/gif',
+    'image/webp',
+    'video/mp4',
+    'video/quicktime',
+    'video/webm',
+    'video/x-msvideo',
+    'video/mpeg',
+    'audio/mpeg',
+    'audio/ogg',
+    'audio/wav',
+    'audio/aac',
+    'audio/opus',
+    'audio/webm',
+    'audio/mp4',
+    'audio/x-m4a',
+    'application/pdf',
+    'application/msword',
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    'application/vnd.ms-excel',
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    'application/vnd.ms-powerpoint',
+    'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+    'text/plain',
+  };
 
   @override
   void initState() {
     super.initState();
-    // Add listener for focus debugging
+    print("[ChatDetailScreen Init: ${widget.matchUserId}] Initializing...");
     _inputFocusNode.addListener(_handleFocusChange);
     WidgetsBinding.instance.addPostFrameCallback((_) {
+      // Ensure WebSocket is connected
       final chatService = ref.read(chatServiceProvider);
       if (ref.read(webSocketStateProvider) !=
           WebSocketConnectionState.connected) {
-        print("[ChatDetailScreen] Connecting WebSocket...");
+        print(
+            "[ChatDetailScreen Init: ${widget.matchUserId}] Connecting WebSocket...");
         chatService.connect();
       }
-      // Fetch initial messages (or ensure provider does this)
-      // The provider now fetches automatically on initialization
-      // ref.read(conversationProvider(widget.matchUserId).notifier).fetchMessages();
+      // Initial message fetch is handled by the provider itself now
     });
-  }
-
-  void _handleFocusChange() {
-    print(
-        "[ChatDetailScreen] Input Field Focus Changed: ${_inputFocusNode.hasFocus}");
-    // No need to call setState unless UI depends on focus state
   }
 
   @override
   void dispose() {
+    print("[ChatDetailScreen Dispose: ${widget.matchUserId}] Disposing...");
     _messageController.dispose();
     _scrollController.dispose();
-    _inputFocusNode.removeListener(_handleFocusChange); // Remove listener
-    _inputFocusNode.dispose(); // Dispose FocusNode
+    _inputFocusNode.removeListener(_handleFocusChange);
+    _inputFocusNode.dispose();
     super.dispose();
   }
 
+  void _handleFocusChange() {
+    // Optional: Add logic if needed when focus changes
+  }
+
+  // Helper to read header bytes for MIME type detection
+  Future<Uint8List?> _readHeaderBytes(File file, [int length = 1024]) async {
+    try {
+      final stream = file.openRead(0, length);
+      final completer = Completer<Uint8List>();
+      final bytesBuilder = BytesBuilder();
+      stream.listen(
+        (chunk) => bytesBuilder.add(chunk),
+        onDone: () => completer.complete(bytesBuilder.toBytes()),
+        onError: (error) => completer.completeError(error),
+        cancelOnError: true,
+      );
+      return await completer.future;
+    } catch (e) {
+      print("Error reading header bytes: $e");
+      return null;
+    }
+  }
+
+  // Send TEXT message
   void _sendMessage() {
     final text = _messageController.text.trim();
-    if (text.isEmpty) return;
+    if (text.isEmpty || _isUploadingMedia)
+      return; // Prevent send if empty or uploading
 
     final chatService = ref.read(chatServiceProvider);
     final wsState = ref.read(webSocketStateProvider);
 
     if (wsState == WebSocketConnectionState.connected) {
-      chatService.sendMessage(widget.matchUserId, text);
+      chatService.sendMessage(widget.matchUserId, text: text);
       _messageController.clear();
-      // Manually update the send button state after clearing
-      ref.read(messageInputProvider.notifier).state = false;
-      // Request focus back after sending? Sometimes helpful.
-      FocusScope.of(context).requestFocus(_inputFocusNode);
-      // Scroll to bottom after sending (with slight delay for UI update)
-      Timer(const Duration(milliseconds: 100), _scrollToBottom);
+      ref.read(messageInputProvider.notifier).state =
+          false; // Update button state
+      FocusScope.of(context).requestFocus(_inputFocusNode); // Keep focus
+      // Scroll handled by listener
     } else {
-      print(
-          "[ChatDetailScreen] Cannot send, WebSocket not connected. State: $wsState");
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text("Cannot send message. Not connected.",
-              style: GoogleFonts.poppins()),
-          backgroundColor: Colors.orange,
-        ),
-      );
-      chatService.connect();
+      _showErrorSnackbar("Cannot send message. Not connected.");
+      chatService.connect(); // Attempt to reconnect
     }
   }
 
+  // Scroll to the newest message (top of the reversed list)
   void _scrollToBottom() {
     if (_scrollController.hasClients) {
+      print(
+          "[ChatDetailScreen Scroll: ${widget.matchUserId}] Animating scroll to top (0.0)");
       _scrollController.animateTo(
         0.0,
         duration: const Duration(milliseconds: 300),
         curve: Curves.easeOut,
       );
+    } else {
+      print(
+          "[ChatDetailScreen Scroll: ${widget.matchUserId}] Cannot scroll, no clients.");
     }
+  }
+
+  // Show options for attaching media/files
+  void _showAttachmentOptions() {
+    if (_isUploadingMedia) return; // Don't show if already uploading
+    FocusScope.of(context).unfocus(); // Hide keyboard
+    showModalBottomSheet(
+      context: context,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (context) {
+        return SafeArea(
+          child: Wrap(
+            children: <Widget>[
+              ListTile(
+                leading: const Icon(Icons.photo_camera_outlined,
+                    color: Color(0xFF8B5CF6)),
+                title: Text('Take Photo/Video', style: GoogleFonts.poppins()),
+                onTap: () {
+                  Navigator.pop(context);
+                  _handleMediaSelection(ImageSource.camera);
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.photo_library_outlined,
+                    color: Color(0xFF8B5CF6)),
+                title:
+                    Text('Choose from Gallery', style: GoogleFonts.poppins()),
+                onTap: () {
+                  Navigator.pop(context);
+                  _handleMediaSelection(ImageSource.gallery);
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.attach_file_rounded,
+                    color: Color(0xFF8B5CF6)),
+                title: Text('Choose File', style: GoogleFonts.poppins()),
+                onTap: () {
+                  Navigator.pop(context);
+                  _handleFileSelection();
+                },
+              ),
+              const SizedBox(height: 10),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  // Handle selecting general files
+  Future<void> _handleFileSelection() async {
+    if (_isUploadingMedia) return;
+    try {
+      FilePickerResult? result =
+          await FilePicker.platform.pickFiles(type: FileType.any);
+      if (result != null && result.files.single.path != null) {
+        final filePath = result.files.single.path!;
+        final file = File(filePath);
+        final fileName = result.files.single.name;
+        final fileSize = await file.length();
+        final headerBytes = await _readHeaderBytes(file);
+        String? mimeType = lookupMimeType(filePath, headerBytes: headerBytes) ??
+            lookupMimeType(fileName) ??
+            'application/octet-stream';
+
+        // Validation
+        bool isValid = false;
+        String errorMsg = "Unsupported file type.";
+        int maxSize = _maxFileSizeBytes;
+        if (mimeType.startsWith('image/')) {
+          maxSize = _maxImageSizeBytes;
+          isValid = _allowedMimeTypes.contains(mimeType);
+          errorMsg = "Unsupported image type.";
+        } else if (mimeType.startsWith('video/')) {
+          maxSize = _maxVideoSizeBytes;
+          isValid = _allowedMimeTypes.contains(mimeType);
+          errorMsg = "Unsupported video type.";
+        } else if (mimeType.startsWith('audio/')) {
+          maxSize = _maxAudioSizeBytes;
+          isValid = _allowedMimeTypes.contains(mimeType);
+          errorMsg = "Unsupported audio type.";
+        } else if (_allowedMimeTypes.contains(mimeType)) {
+          maxSize = _maxFileSizeBytes;
+          isValid = true;
+        }
+        if (!isValid) {
+          _showErrorSnackbar(errorMsg);
+          return;
+        }
+        if (fileSize > maxSize) {
+          _showErrorSnackbar(
+              "File is too large. Max size: ${maxSize ~/ (1024 * 1024)} MB.");
+          return;
+        }
+
+        // Initiate the send process
+        _initiateMediaSend(file, fileName, mimeType);
+      } else {
+        print("[ChatDetailScreen] File picking cancelled.");
+      }
+    } catch (e) {
+      print("[ChatDetailScreen] Error picking file: $e");
+      _showErrorSnackbar("Error selecting file: ${e.toString()}");
+    }
+  }
+
+  // Handle selecting images/videos from camera or gallery
+  Future<void> _handleMediaSelection(ImageSource source) async {
+    if (_isUploadingMedia) return;
+    final ImagePicker picker = ImagePicker();
+    try {
+      final XFile? pickedFile = await picker.pickMedia();
+      if (pickedFile != null) {
+        final file = File(pickedFile.path);
+        final fileName = p.basename(pickedFile.path);
+        final fileSize = await file.length();
+        final headerBytes = await _readHeaderBytes(file);
+        final mimeType =
+            lookupMimeType(pickedFile.path, headerBytes: headerBytes) ??
+                'application/octet-stream';
+
+        // Validation
+        bool isImage = mimeType.startsWith('image/');
+        bool isVideo = mimeType.startsWith('video/');
+        int maxSize =
+            isImage ? _maxImageSizeBytes : (isVideo ? _maxVideoSizeBytes : 0);
+        if (!isImage && !isVideo) {
+          _showErrorSnackbar("Unsupported file type selected.");
+          return;
+        }
+        if (!_allowedMimeTypes.contains(mimeType)) {
+          _showErrorSnackbar(
+              "Unsupported ${isImage ? 'image' : 'video'} format.");
+          return;
+        }
+        if (fileSize > maxSize) {
+          _showErrorSnackbar(
+              "${isImage ? 'Image' : 'Video'} is too large. Max size: ${maxSize ~/ (1024 * 1024)} MB.");
+          return;
+        }
+
+        // Initiate the send process
+        _initiateMediaSend(file, fileName, mimeType);
+      } else {
+        print("[ChatDetailScreen] Media picking cancelled.");
+      }
+    } catch (e) {
+      print("[ChatDetailScreen] Error picking media: $e");
+      _showErrorSnackbar("Error selecting media: ${e.toString()}");
+    }
+  }
+
+  // Adds optimistic message and triggers background upload
+  Future<void> _initiateMediaSend(
+      File file, String fileName, String mimeType) async {
+    if (!mounted) return;
+    final conversationNotifier =
+        ref.read(conversationProvider(widget.matchUserId).notifier);
+    final currentUserId = ref.read(currentUserIdProvider);
+
+    if (currentUserId == null) {
+      _showErrorSnackbar("Cannot send media: User not identified.");
+      return;
+    }
+
+    // 1. Generate Temporary ID
+    final tempId = DateTime.now().millisecondsSinceEpoch.toString();
+
+    // 2. Create Optimistic Message
+    final optimisticMessage = ChatMessage(
+      tempId: tempId,
+      messageID: 0, // Use 0 or negative for temporary
+      senderUserID: currentUserId,
+      recipientUserID: widget.matchUserId,
+      messageText: '',
+      mediaUrl: null, // No final URL yet
+      mediaType: mimeType,
+      sentAt: DateTime.now(), // Local time for display
+      isRead: false,
+      status: ChatMessageStatus.pending, // Initial status
+      localFilePath: file.path, // Store local path
+      errorMessage: null,
+    );
+
+    // 3. Add Optimistic Message to UI IMMEDIATELY
+    print(
+        "[ChatDetailScreen _initiateMediaSend: ${widget.matchUserId}] Adding optimistic media message TempID: $tempId");
+    conversationNotifier.addSentMessage(optimisticMessage);
+
+    // 4. Trigger Background Upload/Send (DO NOT AWAIT here)
+    // Set the global uploading flag
+    setState(() => _isUploadingMedia = true);
+    _uploadAndSendMediaInBackground(file, fileName, mimeType, tempId).then((_) {
+      // This block executes after the background task finishes
+      if (mounted) {
+        // Check if *other* messages are still uploading before re-enabling globally
+        final stillUploading = ref
+            .read(conversationProvider(widget.matchUserId))
+            .messages
+            .any((m) =>
+                m.status == ChatMessageStatus.uploading ||
+                m.status == ChatMessageStatus.pending);
+        if (!stillUploading) {
+          print(
+              "[ChatDetailScreen _initiateMediaSend: ${widget.matchUserId}] Last upload finished. Re-enabling input.");
+          setState(() => _isUploadingMedia = false);
+        } else {
+          print(
+              "[ChatDetailScreen _initiateMediaSend: ${widget.matchUserId}] Upload for $tempId finished, but others are pending. Input remains disabled.");
+        }
+      }
+    });
+
+    // 5. Scroll is handled by the listener based on the message add
+  }
+
+  // Background task to upload, send WebSocket message, and update status
+  Future<void> _uploadAndSendMediaInBackground(
+      File file, String fileName, String mimeType, String tempId) async {
+    // Use read outside async gap if possible
+    final conversationNotifier =
+        ref.read(conversationProvider(widget.matchUserId).notifier);
+    final mediaRepo = ref.read(mediaRepositoryProvider);
+    final chatService = ref.read(chatServiceProvider);
+    final bool isImage = mimeType.startsWith('image/');
+
+    // Update status to Uploading (using addPostFrameCallback for safety)
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        print("[ChatBG Task $tempId] Updating status to Uploading");
+        conversationNotifier.updateMessageStatus(
+            tempId, ChatMessageStatus.uploading);
+      }
+    });
+
+    String? objectUrl; // To store the final URL
+
+    try {
+      print("[ChatBG Task $tempId] Getting chat presigned URL...");
+      final urls = await mediaRepo.getChatMediaPresignedUrl(fileName, mimeType);
+      final presignedUrl = urls['presigned_url'];
+      objectUrl = urls['object_url']; // Assign final URL
+
+      if (presignedUrl == null || objectUrl == null) {
+        throw ApiException("Failed to get upload URLs from server.");
+      }
+
+      print("[ChatBG Task $tempId] Uploading to S3...");
+      final uploadModel = MediaUploadModel(
+        file: file,
+        fileName: fileName,
+        fileType: mimeType,
+        presignedUrl: presignedUrl,
+      );
+      bool uploadSuccess = await mediaRepo.retryUpload(uploadModel);
+
+      if (!uploadSuccess) {
+        throw ApiException("Failed to upload media to storage.");
+      }
+
+      // --- Pre-cache the image AFTER successful upload ---
+      if (isImage && objectUrl != null) {
+        // Check objectUrl is not null
+        print("[ChatBG Task $tempId] Pre-caching image: $objectUrl");
+        try {
+          // Use the default cache manager or configure a specific one
+          await DefaultCacheManager().downloadFile(objectUrl);
+          print(
+              "[ChatBG Task $tempId] Image pre-caching completed for $objectUrl");
+        } catch (cacheErr) {
+          print(
+              "[ChatBG Task $tempId] WARNING: Image pre-caching failed: $cacheErr");
+        }
+      }
+      // --- End Pre-cache ---
+
+      print(
+          "[ChatBG Task $tempId] Upload successful. Sending WebSocket message...");
+      chatService.sendMessage(
+        widget.matchUserId,
+        mediaUrl: objectUrl,
+        mediaType: mimeType,
+      );
+
+      // Update status to SENT only AFTER successful upload and WS send attempt
+      if (mounted) {
+        print(
+            "[ChatBG Task $tempId] Updating status to Sent, Final URL: $objectUrl");
+        conversationNotifier.updateMessageStatus(
+          tempId,
+          ChatMessageStatus.sent,
+          finalMediaUrl: objectUrl, // Provide the final URL
+        );
+      }
+      print("[ChatBG Task $tempId] Message marked as SENT locally.");
+    } on ApiException catch (e) {
+      print("[ChatBG Task $tempId] API Error: ${e.message}");
+      if (mounted) {
+        print("[ChatBG Task $tempId] Updating status to Failed (API Error)");
+        conversationNotifier.updateMessageStatus(
+          tempId,
+          ChatMessageStatus.failed,
+          errorMessage: e.message,
+        );
+      }
+    } catch (e) {
+      print("[ChatBG Task $tempId] General Error: $e");
+      if (mounted) {
+        print(
+            "[ChatBG Task $tempId] Updating status to Failed (General Error)");
+        conversationNotifier.updateMessageStatus(
+          tempId,
+          ChatMessageStatus.failed,
+          errorMessage: "Upload/Send failed: ${e.toString()}",
+        );
+      }
+    }
+    // finally block removed - input re-enabling is handled in _initiateMediaSend.then()
+  }
+
+  // Snackbar helpers
+  void _showSnackbar(String message,
+      {bool isError = false, Duration duration = const Duration(seconds: 3)}) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).removeCurrentSnackBar();
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message, style: GoogleFonts.poppins()),
+        backgroundColor: isError ? Colors.redAccent : Colors.green,
+        duration: duration,
+      ),
+    );
+  }
+
+  void _showErrorSnackbar(String message) {
+    _showSnackbar(message, isError: true);
   }
 
   @override
   Widget build(BuildContext context) {
+    print(
+        "[ChatDetailScreen Build: ${widget.matchUserId}] Rebuilding Widget... IsUploading: $_isUploadingMedia");
+
     final state = ref.watch(conversationProvider(widget.matchUserId));
     final currentUserId = ref.watch(currentUserIdProvider);
     final wsState = ref.watch(webSocketStateProvider);
 
+    // Refined Scroll Listener
     ref.listen<ConversationState>(conversationProvider(widget.matchUserId),
         (prev, next) {
-      bool messageAdded =
-          (prev == null || next.messages.length != prev.messages.length);
-      if (messageAdded) {
-        WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToBottom());
+      final prevLength = prev?.messages.length ?? 0;
+      final nextLength = next.messages.length;
+      final prevFirstTempId = prev?.messages.isNotEmpty ?? false
+          ? prev!.messages.first.tempId
+          : null;
+      final nextFirstTempId =
+          next.messages.isNotEmpty ? next.messages.first.tempId : null;
+      final nextFirstStatus =
+          next.messages.isNotEmpty ? next.messages.first.status : null;
+      final Map<String, int> nextStatusCounts = {};
+      for (var msg in next.messages) {
+        nextStatusCounts[msg.status.toString()] =
+            (nextStatusCounts[msg.status.toString()] ?? 0) + 1;
+      }
+      print(
+          "[ChatDetailScreen Listener: ${widget.matchUserId}] State changed. PrevLen=$prevLength, NextLen=$nextLength. PrevFirstTempId=$prevFirstTempId, NextFirstTempId=$nextFirstTempId, NextFirstStatus=$nextFirstStatus. Next Status Counts: $nextStatusCounts");
+
+      // Scroll only when a NEW PENDING message is ADDED optimistically by the current user
+      if (nextLength > prevLength &&
+          next.messages.isNotEmpty &&
+          next.messages.first.senderUserID == currentUserId &&
+          next.messages.first.status == ChatMessageStatus.pending) {
+        // More specific check
+        print(
+            "[ChatDetailScreen Listener: ${widget.matchUserId}] New PENDING message added by me. Scheduling scroll.");
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          print(
+              "[ChatDetailScreen Listener: ${widget.matchUserId}] Executing scroll after frame callback.");
+          _scrollToBottom();
+        });
+      } else if (nextLength == prevLength &&
+          prevLength > 0 &&
+          next.messages.isNotEmpty &&
+          next.messages.first.tempId != null) {
+        print(
+            "[ChatDetailScreen Listener: ${widget.matchUserId}] Message status likely updated (Length same). TempID=${next.messages.first.tempId}, NewStatus=${next.messages.first.status}. No scroll triggered.");
+      } else {
+        print(
+            "[ChatDetailScreen Listener: ${widget.matchUserId}] No scroll triggered (Condition not met or received message).");
       }
     });
 
@@ -7080,14 +7718,12 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
         backgroundColor: Colors.white,
         foregroundColor: Colors.black87,
         leading: IconButton(
-          // Add back button
           icon:
               Icon(Icons.arrow_back_ios_new, size: 20, color: Colors.grey[700]),
           onPressed: () => Navigator.of(context).pop(),
         ),
         title: Row(
-          mainAxisSize:
-              MainAxisSize.min, // Prevent Row taking full width unnecessarily
+          mainAxisSize: MainAxisSize.min,
           children: [
             CircleAvatar(
               radius: 18,
@@ -7099,8 +7735,7 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
                   ? const Icon(Icons.person, size: 20, color: Colors.white)
                   : null,
             ),
-            const SizedBox(width: 10), // Reduced spacing slightly
-            // Flexible helps prevent overflow if name is long
+            const SizedBox(width: 10),
             Flexible(
               child: Text(
                 widget.matchName,
@@ -7108,15 +7743,15 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
                   fontSize: 17,
                   fontWeight: FontWeight.w600,
                 ),
-                overflow: TextOverflow.ellipsis, // Handle long names
+                overflow: TextOverflow.ellipsis,
               ),
             ),
           ],
         ),
-        titleSpacing: 0, // Reduce default title spacing
+        titleSpacing: 0,
         actions: [
           Padding(
-            padding: const EdgeInsets.only(right: 16.0), // Increased padding
+            padding: const EdgeInsets.only(right: 16.0),
             child: Icon(
               Icons.circle,
               size: 10,
@@ -7133,19 +7768,20 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
         children: [
           Expanded(
             child: GestureDetector(
-              // Add GestureDetector to dismiss keyboard
-              onTap: () =>
-                  FocusScope.of(context).unfocus(), // Dismiss keyboard on tap
+              onTap: () => FocusScope.of(context).unfocus(),
               child: _buildMessagesList(state, currentUserId),
             ),
           ),
-          _buildMessageInputArea(), // Use the refined input area
+          _buildMessageInputArea(),
         ],
       ),
     );
   }
 
+  // Builds the list of messages
   Widget _buildMessagesList(ConversationState state, int? currentUserId) {
+    print(
+        "[ChatDetailScreen _buildMessagesList: ${widget.matchUserId}] Building message list. Count: ${state.messages.length}");
     if (state.isLoading && state.messages.isEmpty) {
       return const Center(
           child: CircularProgressIndicator(color: Color(0xFF8B5CF6)));
@@ -7175,30 +7811,11 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
       );
     }
 
-    // *** ADD LOGGING HERE ***
-    print(
-        "[ChatDetailScreen _buildMessagesList] Building list. Message count: ${state.messages.length}");
-    // Log the first few messages (rendered at the bottom) and the last (rendered at the top)
-    for (int i = 0; i < state.messages.length; i++) {
-      final msg = state.messages[i];
-      print(
-          "  - State[${i}]: '${msg.messageText}' (Sender: ${msg.senderUserID})");
-      if (i >= 2 && state.messages.length > 5) {
-        // Log first 3 and last one if list is long
-        print("  - ...");
-        final lastMsg = state.messages.last;
-        print(
-            "  - State[${state.messages.length - 1}]: '${lastMsg.messageText}' (Sender: ${lastMsg.senderUserID})");
-        break;
-      }
-    }
-    // *** END LOGGING ***
-
     return ListView.builder(
+      addAutomaticKeepAlives: true, // Keep items alive when scrolled
       controller: _scrollController,
       reverse: true,
-      padding: const EdgeInsets.symmetric(
-          vertical: 10.0, horizontal: 8.0), // Added horizontal padding
+      padding: const EdgeInsets.symmetric(vertical: 10.0, horizontal: 8.0),
       itemCount: state.messages.length,
       itemBuilder: (context, index) {
         final message = state.messages[index];
@@ -7208,16 +7825,19 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
           final prevMessage = state.messages[index - 1];
           if (prevMessage.senderUserID == message.senderUserID) {
             final timeDiff = message.sentAt.difference(prevMessage.sentAt);
-            // Show tail only if previous message is older than ~1 minute
             if (timeDiff.inSeconds < 60) {
               showTail = false;
             }
           }
         }
-        // Add some padding between bubbles
+
+        final keyId = message.tempId ?? message.messageID.toString();
         return Padding(
           padding: const EdgeInsets.symmetric(vertical: 2.0),
           child: MessageBubble(
+            // Update Key to include more factors to ensure uniqueness and trigger rebuild only when necessary
+            key: ValueKey(
+                "${keyId}_${message.status}_${message.mediaUrl ?? message.localFilePath}"),
             message: message,
             isMe: isMe,
             showTail: showTail,
@@ -7227,9 +7847,11 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
     );
   }
 
+  // Builds the input area
   Widget _buildMessageInputArea() {
-    // Listen to the controller to enable/disable send button
-    final canSend = ref.watch(messageInputProvider);
+    final canSendText = ref.watch(messageInputProvider);
+    // Use _isUploadingMedia to disable inputs
+    final bool allowInput = !_isUploadingMedia;
 
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12.0, vertical: 8.0),
@@ -7248,9 +7870,19 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.center,
           children: [
+            IconButton(
+              // Attachment button
+              icon: Icon(Icons.add_circle_outline_rounded,
+                  color: allowInput ? Colors.grey[600] : Colors.grey[300]),
+              onPressed: allowInput
+                  ? _showAttachmentOptions
+                  : null, // Disable if uploading
+              tooltip: "Attach Media",
+            ),
+            const SizedBox(width: 4.0),
             Expanded(
+              // Text field
               child: Container(
-                // Container to provide background and padding
                 decoration: BoxDecoration(
                   color: Colors.grey[100],
                   borderRadius: BorderRadius.circular(25.0),
@@ -7258,45 +7890,43 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
                 child: Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 16.0),
                   child: TextField(
-                    focusNode: _inputFocusNode, // Use the explicit focus node
+                    focusNode: _inputFocusNode,
                     controller: _messageController,
                     textCapitalization: TextCapitalization.sentences,
                     decoration: InputDecoration(
-                      hintText: "Type a message...",
+                      hintText:
+                          allowInput ? "Type a message..." : "Uploading...",
                       hintStyle: GoogleFonts.poppins(color: Colors.grey[500]),
-                      border:
-                          InputBorder.none, // No border inside the container
-                      contentPadding: const EdgeInsets.symmetric(
-                          vertical: 12.0), // Adjust padding
+                      border: InputBorder.none,
+                      contentPadding:
+                          const EdgeInsets.symmetric(vertical: 12.0),
                     ),
                     onChanged: (text) {
-                      // Update the state provider controlling the send button
                       ref.read(messageInputProvider.notifier).state =
                           text.trim().isNotEmpty;
                     },
-                    onTap: () {
-                      // Debugging tap
-                      print("[ChatDetailScreen] TextField tapped!");
-                    },
-                    onSubmitted: (_) =>
-                        canSend ? _sendMessage() : null, // Send only if valid
+                    onSubmitted: (_) => canSendText && allowInput
+                        ? _sendMessage()
+                        : null, // Send only if allowed and has text
                     minLines: 1,
                     maxLines: 5,
                     keyboardType: TextInputType.multiline,
                     style: GoogleFonts.poppins(
                         color: Colors.black87, fontSize: 15),
+                    enabled: allowInput, // Disable text field during upload
                   ),
                 ),
               ),
             ),
             const SizedBox(width: 8.0),
             IconButton(
+              // Send button
               icon: const Icon(Icons.send_rounded),
               color: const Color(0xFF8B5CF6),
-              // Disable button if text is empty
-              onPressed: canSend ? _sendMessage : null,
+              // Disable if no text OR if uploading media
+              onPressed: canSendText && allowInput ? _sendMessage : null,
               tooltip: "Send Message",
-              disabledColor: Colors.grey[400], // Visual cue when disabled
+              disabledColor: Colors.grey[400],
             ),
           ],
         ),
@@ -7305,7 +7935,7 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
   }
 }
 
-// Simple provider to track if the input field has text
+// Provider to track if text input field has text
 final messageInputProvider = StateProvider<bool>((ref) => false);
 
 
@@ -19040,86 +19670,402 @@ class MatchListTile extends StatelessWidget {
 File: widgets/message_bubble.dart
 ================================================
 // lib/widgets/message_bubble.dart
+import 'dart:io';
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:dtx/models/chat_message.dart';
+import 'package:dtx/providers/audio_player_provider.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:audioplayers/audioplayers.dart';
+import 'package:path/path.dart' as p;
+import 'package:url_launcher/url_launcher.dart';
 
-class MessageBubble extends StatelessWidget {
+// Convert to ConsumerStatefulWidget and add AutomaticKeepAliveClientMixin
+class MessageBubble extends ConsumerStatefulWidget {
   final ChatMessage message;
   final bool isMe;
-  final bool showTail; // Add this parameter
+  final bool showTail;
 
   const MessageBubble({
-    super.key,
+    Key? key, // Use Key? key
     required this.message,
     required this.isMe,
-    required this.showTail, // Require showTail
-  });
+    required this.showTail,
+  }) : super(key: key); // Pass key to super
+
+  @override
+  ConsumerState<MessageBubble> createState() => _MessageBubbleState();
+}
+
+class _MessageBubbleState extends ConsumerState<MessageBubble>
+    with AutomaticKeepAliveClientMixin {
+  // Add mixin
+
+  // --- Override wantKeepAlive ---
+  @override
+  bool get wantKeepAlive => true; // Keep the state alive
+
+  // --- Move helpers inside State class ---
+  String getFilenameFromUrl(String? url) {
+    if (url == null || url.isEmpty) return "File";
+    try {
+      final uri = Uri.parse(url);
+      String pathSegment = Uri.decodeComponent(uri.pathSegments.last);
+      final parts = pathSegment.split('-');
+      if (parts.length > 1 &&
+          int.tryParse(parts[0]) != null &&
+          parts[0].length > 10) {
+        return parts.sublist(1).join('-');
+      }
+      return pathSegment;
+    } catch (e) {
+      try {
+        return p.basename(url);
+      } catch (e2) {
+        return "File";
+      }
+    }
+  }
+
+  Future<void> _openMedia(BuildContext context, String url) async {
+    final Uri uri = Uri.parse(url);
+    if (!await canLaunchUrl(uri)) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not launch $url')),
+        );
+      }
+      print("Could not launch $uri");
+      return;
+    }
+    try {
+      bool launched =
+          await launchUrl(uri, mode: LaunchMode.externalApplication);
+      if (!launched && context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not launch $url')),
+        );
+      }
+    } catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error launching file: $e')),
+        );
+      }
+      print("Error launching $uri: $e");
+    }
+  }
+
+  Widget _buildMediaLoadingPlaceholder({required bool isMe}) {
+    return Container(
+      color: Colors.grey[isMe ? 700 : 300]?.withOpacity(0.5),
+      child: Center(
+          child: CircularProgressIndicator(
+              color: isMe ? Colors.white70 : Colors.grey[500])),
+    );
+  }
+
+  Widget _buildMediaErrorPlaceholder({required bool isMe}) {
+    return Container(
+      color: Colors.red[isMe ? 900 : 100]?.withOpacity(0.5),
+      child: Center(
+          child: Icon(Icons.error_outline,
+              color: isMe ? Colors.red.shade200 : Colors.red.shade400,
+              size: 40)),
+    );
+  }
+  // --- End Helpers ---
 
   @override
   Widget build(BuildContext context) {
+    // --- IMPORTANT: Call super.build(context) ---
+    super.build(context);
+
+    // Access widget properties using widget.*
+    final message = widget.message;
+    final isMe = widget.isMe;
+    final showTail = widget.showTail;
+
+    final keyId = message.tempId ?? message.messageID.toString();
+    print(
+        "[MessageBubble Build: ${keyId}] Rebuilding. Status: ${message.status}, isMedia: ${message.isMedia}, LocalPath: ${message.localFilePath != null}, MediaUrl: ${message.mediaUrl != null}");
+
     final radius = Radius.circular(18.0);
     final borderRadius = BorderRadius.only(
       topLeft: radius,
       topRight: radius,
-      // Apply tail based on isMe and showTail
       bottomLeft: isMe || !showTail ? radius : Radius.zero,
       bottomRight: !isMe || !showTail ? radius : Radius.zero,
     );
+    Widget messageContent;
+    Widget? statusIcon;
 
+    // --- Status Icon Logic ---
+    if (isMe && message.status != ChatMessageStatus.sent) {
+      switch (message.status) {
+        case ChatMessageStatus.pending:
+        case ChatMessageStatus.uploading:
+          statusIcon =
+              Icon(Icons.access_time_rounded, color: Colors.white70, size: 16);
+          break;
+        case ChatMessageStatus.failed:
+          statusIcon = Tooltip(
+            message: message.errorMessage ?? "Failed to send",
+            child: Icon(Icons.error_outline_rounded,
+                color: Colors.red.shade300, size: 18),
+          );
+          break;
+        case ChatMessageStatus.sent:
+          break;
+      }
+    }
+
+    // --- Content Rendering Logic ---
+    if (message.isMedia) {
+      final mediaType = message.mediaType?.toLowerCase() ?? '';
+      // Still prioritize local path if it exists
+      final String? displayPath =
+          (message.localFilePath != null && message.localFilePath!.isNotEmpty)
+              ? message.localFilePath
+              : message.mediaUrl;
+      final bool isUsingLocalFile =
+          displayPath == message.localFilePath && message.localFilePath != null;
+      final bool isMediaSent = message.status == ChatMessageStatus.sent;
+
+      print(
+          "[MessageBubble Build $keyId] Content Logic. isUsingLocalFile: $isUsingLocalFile, displayPath: $displayPath, isMediaSent: $isMediaSent");
+
+      if (displayPath == null || displayPath.isEmpty) {
+        messageContent = Text(
+          "[Media Error]",
+          style: GoogleFonts.poppins(color: Colors.red, fontSize: 14),
+        );
+      }
+      // --- IMAGE ---
+      else if (mediaType.startsWith('image/')) {
+        print(
+            "[MessageBubble Build $keyId] Rendering Image. Source: ${isUsingLocalFile ? 'File' : 'Network'}");
+        Widget imageToShow;
+        if (isUsingLocalFile) {
+          imageToShow = Image.file(File(displayPath),
+              key: ValueKey(displayPath),
+              fit: BoxFit.cover,
+              errorBuilder: (_, __, ___) =>
+                  _buildMediaErrorPlaceholder(isMe: isMe));
+        } else {
+          // Use CachedNetworkImage for network URLs
+          imageToShow = CachedNetworkImage(
+            key: ValueKey(displayPath),
+            imageUrl: displayPath,
+            fit: BoxFit.cover,
+            placeholder: (context, url) =>
+                _buildMediaLoadingPlaceholder(isMe: isMe),
+            errorWidget: (context, url, error) =>
+                _buildMediaErrorPlaceholder(isMe: isMe),
+          );
+        }
+        messageContent = ClipRRect(
+          borderRadius: BorderRadius.circular(8.0), // Round corners for image
+          child: ConstrainedBox(
+            constraints: BoxConstraints(
+              maxWidth: MediaQuery.of(context).size.width * 0.65,
+              maxHeight: MediaQuery.of(context).size.height * 0.4,
+            ),
+            child: imageToShow,
+          ),
+        );
+      }
+      // --- VIDEO ---
+      else if (mediaType.startsWith('video/')) {
+        messageContent = InkWell(
+          onTap: isMediaSent && !isUsingLocalFile
+              ? () => _openMedia(context, displayPath)
+              : null,
+          child: Container(
+            padding: const EdgeInsets.all(10),
+            constraints: BoxConstraints(
+                maxWidth: MediaQuery.of(context).size.width * 0.65,
+                minHeight: 100),
+            decoration: BoxDecoration(
+                color: Colors.grey[isMe ? 700 : 300],
+                borderRadius: BorderRadius.circular(8)),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(Icons.videocam_outlined,
+                    size: 40, color: isMe ? Colors.white70 : Colors.grey[600]),
+                const SizedBox(height: 8),
+                Text(
+                  getFilenameFromUrl(displayPath),
+                  style: GoogleFonts.poppins(
+                      fontSize: 12,
+                      color: isMe ? Colors.white : Colors.black87),
+                  textAlign: TextAlign.center,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  isMediaSent ? "Tap to play video" : "Video",
+                  style: GoogleFonts.poppins(
+                      fontSize: 10,
+                      color: isMe ? Colors.white70 : Colors.grey[500]),
+                ),
+              ],
+            ),
+          ),
+        );
+      }
+      // --- AUDIO ---
+      else if (mediaType.startsWith('audio/')) {
+        final audioPlayerState = ref.watch(
+            audioPlayerStateProvider); // Use ref from ConsumerStatefulWidget
+        final currentPlayingUrl = ref.watch(currentAudioUrlProvider);
+        final playerNotifier = ref.read(audioPlayerControllerProvider.notifier);
+        final bool canPlay = isMediaSent && !isUsingLocalFile;
+        final bool isThisLoading = canPlay &&
+            currentPlayingUrl == displayPath &&
+            audioPlayerState == AudioPlayerState.loading;
+        final bool isThisPlaying = canPlay &&
+            currentPlayingUrl == displayPath &&
+            audioPlayerState == AudioPlayerState.playing;
+        final bool isThisPaused = canPlay &&
+            currentPlayingUrl == displayPath &&
+            audioPlayerState == AudioPlayerState.paused;
+
+        messageContent = Row(mainAxisSize: MainAxisSize.min, children: [
+          IconButton(
+            icon: isThisLoading
+                ? SizedBox(
+                    width: 24,
+                    height: 24,
+                    child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: isMe ? Colors.white : Color(0xFF8B5CF6)))
+                : Icon(isThisPlaying
+                    ? Icons.pause_circle_filled_rounded
+                    : Icons.play_circle_fill_rounded),
+            color: isMe
+                ? Colors.white
+                : (canPlay ? const Color(0xFF8B5CF6) : Colors.grey[400]),
+            iconSize: 36,
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints(),
+            tooltip: canPlay ? (isThisPlaying ? 'Pause' : 'Play') : 'Audio',
+            onPressed: isThisLoading || !canPlay
+                ? null
+                : () {
+                    if (isThisPlaying)
+                      playerNotifier.pause();
+                    else if (isThisPaused)
+                      playerNotifier.resume();
+                    else
+                      playerNotifier.play(displayPath!);
+                  },
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              getFilenameFromUrl(displayPath),
+              style: GoogleFonts.poppins(
+                  fontSize: 13, color: isMe ? Colors.white : Colors.black87),
+              overflow: TextOverflow.ellipsis,
+              maxLines: 2,
+            ),
+          ),
+        ]);
+      }
+      // --- GENERIC FILE ---
+      else {
+        messageContent = InkWell(
+          onTap: isMediaSent && !isUsingLocalFile
+              ? () => _openMedia(context, displayPath)
+              : null,
+          child: Row(mainAxisSize: MainAxisSize.min, children: [
+            Icon(Icons.insert_drive_file_outlined,
+                color: isMe ? Colors.white70 : Colors.grey[600], size: 30),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                getFilenameFromUrl(displayPath),
+                style: GoogleFonts.poppins(
+                    fontSize: 13, color: isMe ? Colors.white : Colors.black87),
+                overflow: TextOverflow.ellipsis,
+                maxLines: 2,
+              ),
+            ),
+          ]),
+        );
+      }
+    } else {
+      // --- TEXT MESSAGE ---
+      messageContent = Text(
+        message.messageText,
+        style: GoogleFonts.poppins(
+          color: isMe ? Colors.white : Colors.black87,
+          fontSize: 15,
+        ),
+      );
+    }
+
+    // --- Build Final Bubble ---
     return Align(
       alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
       child: Container(
         constraints: BoxConstraints(
-          maxWidth: MediaQuery.of(context).size.width * 0.75, // Max width
+          maxWidth: MediaQuery.of(context).size.width * 0.75,
         ),
         margin: EdgeInsets.only(
           top: 4.0,
           bottom: 4.0,
-          left: isMe ? 0 : 10.0, // Margin for alignment
-          right: isMe ? 10.0 : 0,
+          left: isMe ? 0 : (showTail ? 0 : 10.0),
+          right: isMe ? (showTail ? 0 : 10.0) : 0,
         ),
-        padding: const EdgeInsets.symmetric(horizontal: 14.0, vertical: 10.0),
         decoration: BoxDecoration(
-            color: isMe ? const Color(0xFF8B5CF6) : Colors.white,
-            borderRadius: borderRadius,
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withOpacity(0.05),
-                blurRadius: 3,
-                offset: Offset(0, 1),
-              )
-            ]),
-        child: Column(
-          crossAxisAlignment:
-              isMe ? CrossAxisAlignment.end : CrossAxisAlignment.start,
-          mainAxisSize: MainAxisSize.min, // Important for column height
-          children: [
-            Text(
-              message.messageText,
-              style: GoogleFonts.poppins(
-                color: isMe ? Colors.white : Colors.black87,
-                fontSize: 15,
-              ),
-            ),
-            // Optional: Add timestamp inside the bubble
-            /*
-             Padding(
-                padding: const EdgeInsets.only(top: 4.0),
-                child: Text(
-                   message.formattedTimestamp,
-                   style: GoogleFonts.poppins(
-                      color: isMe ? Colors.white70 : Colors.grey[500],
-                      fontSize: 10,
-                   ),
-                ),
-             ),
-             */
+          color: isMe ? const Color(0xFF8B5CF6) : Colors.white,
+          borderRadius: borderRadius,
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withOpacity(0.05),
+              blurRadius: 3,
+              offset: const Offset(0, 1),
+            )
           ],
+        ),
+        child: ClipRRect(
+          // Clip bubble content if it's an image
+          borderRadius: message.isMedia &&
+                  (message.mediaType?.startsWith('image/') ?? false)
+              ? BorderRadius.circular(8.0)
+              : BorderRadius.zero,
+          child: Stack(
+            children: [
+              Padding(
+                padding: message.isMedia &&
+                        (message.mediaType?.startsWith('image/') ?? false)
+                    ? EdgeInsets.zero
+                    : const EdgeInsets.symmetric(
+                        horizontal: 14.0, vertical: 10.0),
+                child: messageContent,
+              ),
+              if (statusIcon != null)
+                Positioned(
+                  bottom: 4,
+                  right: isMe ? 4 : null,
+                  left: isMe ? null : 4,
+                  child: Container(
+                    padding: const EdgeInsets.all(2),
+                    child: statusIcon,
+                  ),
+                ),
+            ],
+          ),
         ),
       ),
     );
   }
-}
+} // End _MessageBubbleState
 
 
