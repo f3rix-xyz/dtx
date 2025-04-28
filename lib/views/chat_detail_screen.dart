@@ -315,6 +315,9 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
     final conversationNotifier =
         ref.read(conversationProvider(widget.matchUserId).notifier);
     final currentUserId = ref.read(currentUserIdProvider);
+    final chatService =
+        ref.read(chatServiceProvider); // Get chat service instance
+
     if (currentUserId == null) {
       _showErrorSnackbar("Cannot send media: User not identified.");
       return;
@@ -336,27 +339,36 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
     );
     print(
         "[ChatDetailScreen _initiateMediaSend: ${widget.matchUserId}] Adding optimistic media message TempID: $tempId");
+
+    // *** FIX: Call public method ***
+    chatService.addPendingMessage(tempId, widget.matchUserId);
+    // *** END FIX ***
+
     conversationNotifier.addSentMessage(optimisticMessage);
     setState(() => _isUploadingMedia = true);
+
     _uploadAndSendMediaInBackground(file, fileName, mimeType, tempId).then((_) {
       if (mounted) {
-        final stillUploading = ref
+        final stillProcessing = ref
             .read(conversationProvider(widget.matchUserId))
             .messages
             .any((m) =>
-                m.status == ChatMessageStatus.uploading ||
-                m.status == ChatMessageStatus.pending);
-        if (!stillUploading) {
+                m.senderUserID == currentUserId &&
+                (m.status == ChatMessageStatus.uploading ||
+                    m.status == ChatMessageStatus.pending));
+        if (!stillProcessing) {
           print(
-              "[ChatDetailScreen _initiateMediaSend: ${widget.matchUserId}] Last upload finished. Re-enabling input.");
+              "[ChatDetailScreen _initiateMediaSend: ${widget.matchUserId}] All uploads/acks seem finished for current user. Re-enabling input.");
           setState(() => _isUploadingMedia = false);
         } else {
           print(
-              "[ChatDetailScreen _initiateMediaSend: ${widget.matchUserId}] Upload for $tempId finished, but others are pending. Input remains disabled.");
+              "[ChatDetailScreen _initiateMediaSend: ${widget.matchUserId}] Background task for $tempId finished, but others might be pending/uploading. Input remains disabled.");
         }
       }
     });
   }
+
+  // Inside _uploadAndSendMediaInBackground method in _ChatDetailScreenState
 
   Future<void> _uploadAndSendMediaInBackground(
       File file, String fileName, String mimeType, String tempId) async {
@@ -365,72 +377,93 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
     final mediaRepo = ref.read(mediaRepositoryProvider);
     final chatService = ref.read(chatServiceProvider);
     final bool isImage = mimeType.startsWith('image/');
+
+    // --- Update status to Uploading ---
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) {
         print("[ChatBG Task $tempId] Updating status to Uploading");
+        // Ensure we only update status, don't change ID or URL yet
         conversationNotifier.updateMessageStatus(
             tempId, ChatMessageStatus.uploading);
       }
     });
+
     String? objectUrl;
     try {
       print("[ChatBG Task $tempId] Getting chat presigned URL...");
       final urls = await mediaRepo.getChatMediaPresignedUrl(fileName, mimeType);
       final presignedUrl = urls['presigned_url'];
-      objectUrl = urls['object_url'];
+      objectUrl = urls['object_url']; // Store the final URL
       if (presignedUrl == null || objectUrl == null) {
         throw ApiException("Failed to get upload URLs from server.");
       }
+
       print("[ChatBG Task $tempId] Uploading to S3...");
       final uploadModel = MediaUploadModel(
           file: file,
           fileName: fileName,
           fileType: mimeType,
           presignedUrl: presignedUrl);
-      bool uploadSuccess = await mediaRepo.retryUpload(uploadModel);
+      bool uploadSuccess =
+          await mediaRepo.retryUpload(uploadModel); // Use retry
+
       if (!uploadSuccess) {
         throw ApiException("Failed to upload media to storage.");
       }
+
+      // Pre-cache image if needed
       if (isImage && objectUrl != null) {
         print("[ChatBG Task $tempId] Pre-caching image: $objectUrl");
         try {
           await DefaultCacheManager().downloadFile(objectUrl);
-          print(
-              "[ChatBG Task $tempId] Image pre-caching completed for $objectUrl");
+          print("[ChatBG Task $tempId] Image pre-caching completed");
         } catch (cacheErr) {
           print(
               "[ChatBG Task $tempId] WARNING: Image pre-caching failed: $cacheErr");
         }
       }
+
       print(
           "[ChatBG Task $tempId] Upload successful. Sending WebSocket message...");
+      // Send message via WebSocket (Includes the final objectUrl)
       chatService.sendMessage(widget.matchUserId,
           mediaUrl: objectUrl, mediaType: mimeType);
-      if (mounted) {
-        print(
-            "[ChatBG Task $tempId] Updating status to Sent, Final URL: $objectUrl");
-        conversationNotifier.updateMessageStatus(tempId, ChatMessageStatus.sent,
-            finalMediaUrl: objectUrl);
-      }
-      print("[ChatBG Task $tempId] Message marked as SENT locally.");
+
+      // --- *** REMOVED THIS BLOCK - Ack will handle 'sent' status *** ---
+      // if (mounted) {
+      //   print("[ChatBG Task $tempId] Updating status to Sent, Final URL: $objectUrl");
+      //   conversationNotifier.updateMessageStatus(tempId, ChatMessageStatus.sent, finalMediaUrl: objectUrl);
+      // }
+      // print("[ChatBG Task $tempId] Message marked as SENT locally.");
+      // --- *** END REMOVED BLOCK *** ---
+
+      print("[ChatBG Task $tempId] WebSocket message sent. Awaiting ack...");
     } on ApiException catch (e) {
       print("[ChatBG Task $tempId] API Error: ${e.message}");
       if (mounted) {
         print("[ChatBG Task $tempId] Updating status to Failed (API Error)");
+        // Update status to failed, passing the error message
         conversationNotifier.updateMessageStatus(
             tempId, ChatMessageStatus.failed,
-            errorMessage: e.message);
+            errorMessage: e.message,
+            finalMediaUrl: objectUrl // Keep url even on fail? Optional.
+            );
       }
-    } catch (e) {
+    } catch (e, stacktrace) {
+      // Added stacktrace
       print("[ChatBG Task $tempId] General Error: $e");
+      print("[ChatBG Task $tempId] Stacktrace: $stacktrace");
       if (mounted) {
         print(
             "[ChatBG Task $tempId] Updating status to Failed (General Error)");
         conversationNotifier.updateMessageStatus(
             tempId, ChatMessageStatus.failed,
-            errorMessage: "Upload/Send failed: ${e.toString()}");
+            errorMessage: "Upload/Send failed: ${e.toString()}",
+            finalMediaUrl: objectUrl // Keep url even on fail? Optional.
+            );
       }
     }
+    // Removed the final check for _isUploadingMedia here, it's handled per-task now
   }
 
   void _showSnackbar(String message,
