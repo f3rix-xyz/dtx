@@ -8,10 +8,8 @@ class ChatRepository {
 
   ChatRepository(this._apiService);
 
-  // --- MODIFIED: fetchConversation ---
   Future<List<ChatMessage>> fetchConversation({
     required int otherUserId,
-    // Removed limit and offset parameters
   }) async {
     final String methodName = 'fetchConversation';
     print(
@@ -21,48 +19,72 @@ class ChatRepository {
       if (token == null) throw ApiException('Authentication token missing');
       final headers = {'Authorization': 'Bearer $token'};
 
-      // Endpoint does NOT include the user ID anymore
       final endpoint = '/api/conversation';
-      final body = {'other_user_id': otherUserId}; // Send ID in the body
+      final body = {'other_user_id': otherUserId};
 
-      // Change to POST request
+      print('[ChatRepository $methodName] Making POST request to: $endpoint');
+      print('[ChatRepository $methodName] Request Body: $body');
+
       final response = await _apiService.post(
         endpoint,
         body: body,
         headers: headers,
       );
-      // print('[ChatRepository $methodName] API Response: $response'); // Debug careful with PII
+      // print('[ChatRepository $methodName] Raw API Response Map: $response'); // Uncomment if needed, but can be large
 
-      // API now returns success and messages directly
-      if (response['success'] == true && response['messages'] != null) {
+      if (response['success'] == true) {
         final List<dynamic> messagesData = response['messages'] as List? ?? [];
+        print(
+            '[ChatRepository $methodName] API Success. Raw messagesData length: ${messagesData.length}'); // Log length
+
         final messages = messagesData
-            .map((data) => ChatMessage.fromJson(data as Map<String, dynamic>))
+            .map((data) {
+              // <<< --- ADDED LOGGING HERE --- >>>
+              print(
+                  "[ChatRepository map] Processing raw message data item: $data");
+              // <<< --- END ADDED LOGGING --- >>>
+              try {
+                if (data is Map<String, dynamic>) {
+                  return ChatMessage.fromJson(data);
+                } else {
+                  print(
+                      "[ChatRepository map] Warning: Invalid item type in messages list: ${data.runtimeType}");
+                  return null;
+                }
+              } catch (e, stacktrace) {
+                // Add stacktrace
+                print("[ChatRepository map] Error parsing chat message: $e");
+                print(
+                    "[ChatRepository map] Stacktrace: $stacktrace"); // Log stacktrace
+                print(
+                    "[ChatRepository map] Faulty Data: $data"); // Log faulty data
+                return null;
+              }
+            })
+            .whereType<ChatMessage>()
             .toList();
 
         print(
-            '[ChatRepository $methodName] Success. Count: ${messages.length}');
-        // Return only the list of messages
+            '[ChatRepository $methodName] Parsed successfully. Final Message Count: ${messages.length}');
         return messages;
-      } else if (response['success'] == true && response['messages'] == null) {
-        print(
-            '[ChatRepository $methodName] No messages found (API returned null).');
-        return <ChatMessage>[]; // Empty conversation
       } else {
         final message =
             response['message']?.toString() ?? 'Failed to fetch conversation.';
-        print('[ChatRepository $methodName] Fetch failed: $message');
+        print(
+            '[ChatRepository $methodName] API call returned success=false: $message');
         throw ApiException(message);
       }
     } on ApiException catch (e) {
       print(
           '[ChatRepository $methodName] API Exception: ${e.message}, Status: ${e.statusCode}');
       rethrow;
-    } catch (e) {
+    } catch (e, stacktrace) {
+      // Add stacktrace
       print('[ChatRepository $methodName] Unexpected Error: $e');
+      print(
+          "[ChatRepository $methodName] Stacktrace: $stacktrace"); // Log stacktrace
       throw ApiException(
           'An unexpected error occurred while fetching conversation: ${e.toString()}');
     }
   }
-  // --- END MODIFIED ---
 }

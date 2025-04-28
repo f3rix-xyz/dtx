@@ -1,65 +1,57 @@
 // lib/models/chat_message.dart
 import 'package:intl/intl.dart';
 
-// --- NEW: Enum for message status ---
+// Enum for message status remains the same
 enum ChatMessageStatus {
-  pending, // Added to local list, upload not started/failed immediately
-  uploading, // Upload in progress
-  sent, // Confirmed sent (or received)
-  failed, // Upload or send failed
+  pending,
+  uploading,
+  sent,
+  failed,
 }
-// --- END NEW ---
 
 class ChatMessage {
-  // Use String for tempId for flexibility (e.g., timestamp-based)
-  final String? tempId; // Unique temporary ID for optimistic messages
+  final String? tempId;
   final int messageID; // Real ID from backend (0 or negative for optimistic)
   final int senderUserID;
   final int recipientUserID;
-  final String messageText;
-  final String? mediaUrl; // Final URL after upload
-  final String? mediaType; // Nullable type (e.g., "image/jpeg", "video/mp4")
-  final DateTime sentAt; // Timestamp when *sent* or added optimistically
-  final bool isRead; // Read status from recipient perspective
+  final String messageText; // Final text content
+  final String? mediaUrl;
+  final String? mediaType;
+  final DateTime sentAt;
+  final bool isRead;
   final DateTime? readAt;
 
-  // --- NEW: Fields for optimistic UI ---
-  final ChatMessageStatus status; // Tracks sending state
-  final String?
-      localFilePath; // Path to the local file being uploaded (TEMPORARY, cleared after sent)
-  final String?
-      initialLocalPath; // NEW: Always store the first path if it was local
-  final String? errorMessage; // Store failure reason
-  // --- END NEW ---
+  // Fields for optimistic UI (remain the same)
+  final ChatMessageStatus status;
+  final String? localFilePath;
+  final String? initialLocalPath;
+  final String? errorMessage;
 
   ChatMessage({
-    this.tempId, // Add tempId
+    this.tempId,
     required this.messageID,
     required this.senderUserID,
     required this.recipientUserID,
-    required this.messageText,
+    required this.messageText, // Use the final parsed text
     this.mediaUrl,
     this.mediaType,
     required this.sentAt,
     this.isRead = false,
     this.readAt,
-    // --- NEW: Add status and local path to constructor ---
-    this.status =
-        ChatMessageStatus.sent, // Default to sent for received/fetched messages
+    this.status = ChatMessageStatus.sent,
     this.localFilePath,
-    this.initialLocalPath, // Add initialLocalPath
+    this.initialLocalPath,
     this.errorMessage,
-    // --- END NEW ---
   });
 
   bool isMe(int currentUserId) => senderUserID == currentUserId;
 
-  // Updated: Check either final URL or temporary local path
   bool get isMedia =>
       (mediaUrl != null && mediaUrl!.isNotEmpty) ||
       (localFilePath != null && localFilePath!.isNotEmpty);
 
   String get formattedTimestamp {
+    // Formatting logic remains the same
     final now = DateTime.now();
     final today = DateTime(now.year, now.month, now.day);
     final messageDay = DateTime(sentAt.year, sentAt.month, sentAt.day);
@@ -73,14 +65,16 @@ class ChatMessage {
     }
   }
 
+  // --- UPDATED: fromJson Factory with Corrected Parsing ---
   factory ChatMessage.fromJson(Map<String, dynamic> json) {
-    // --- Helper functions remain the same ---
+    // Helper functions for timestamps (remain the same)
     DateTime parseTimestamp(dynamic tsField) {
       if (tsField is String) {
         try {
           return DateTime.parse(tsField).toLocal();
         } catch (e) {
-          print("Error parsing timestamp '$tsField': $e");
+          print(
+              "[ChatMessage.fromJson] Error parsing timestamp '$tsField': $e");
           return DateTime.now().toUtc();
         }
       }
@@ -98,29 +92,109 @@ class ChatMessage {
       return null;
     }
 
-    // --- Updated Factory ---
-    return ChatMessage(
-      // No tempId, localFilePath, initialLocalPath, errorMessage from JSON
-      messageID: json['MessageID'] as int? ?? json['message_id'] as int? ?? 0,
-      senderUserID:
-          json['SenderUserID'] as int? ?? json['sender_user_id'] as int? ?? 0,
-      recipientUserID: json['RecipientUserID'] as int? ??
-          json['recipient_user_id'] as int? ??
-          0,
-      messageText:
-          json['MessageText'] as String? ?? json['text'] as String? ?? '',
-      mediaUrl: json['MediaUrl'] as String? ?? json['media_url'] as String?,
-      mediaType: json['MediaType'] as String? ?? json['media_type'] as String?,
-      sentAt: parseTimestamp(json['SentAt'] ?? json['sent_at']),
-      isRead: json['IsRead'] as bool? ?? json['is_read'] as bool? ?? false,
-      readAt: parseNullableTimestamp(json['ReadAt'] ?? json['read_at']),
-      status:
-          ChatMessageStatus.sent, // Messages from API/WS are considered 'sent'
-    );
-    // --- END Updated Factory ---
-  }
+    // *** REVISED: Helper function to parse message text ***
+    String parseMessageText(Map<String, dynamic> jsonData) {
+      print(
+          "[ChatMessage.fromJson->parseMessageText] Parsing message data: $jsonData");
 
-  // --- Updated copyWith method ---
+      // --- NEW: Prioritize checking if 'message_text' is a String ---
+      if (jsonData.containsKey('message_text') &&
+          jsonData['message_text'] is String) {
+        final extractedText = jsonData['message_text'];
+        print(
+            "[parseMessageText] Found 'message_text' key as String: '$extractedText'");
+        return extractedText;
+      }
+      // --- END NEW ---
+
+      // 1. Check for 'message_text' as a Map (pgtype.Text structure - Fallback)
+      if (jsonData.containsKey('message_text') &&
+          jsonData['message_text'] is Map) {
+        print("[parseMessageText] Found 'message_text' key as Map.");
+        final textMap = jsonData['message_text'] as Map<String, dynamic>;
+        if (textMap['Valid'] == true && textMap['String'] is String) {
+          final extractedText = textMap['String'];
+          print(
+              "[parseMessageText] Extracted text from message_text.String: '$extractedText'");
+          return extractedText;
+        } else {
+          print(
+              "[parseMessageText] message_text Map was not Valid or String key missing/invalid type. Map: $textMap");
+        }
+      } else if (jsonData.containsKey('message_text')) {
+        // Log if 'message_text' exists but is not a String or Map we handled
+        print(
+            "[parseMessageText] Found 'message_text' key, but it's not a String or Map. Type: ${jsonData['message_text'].runtimeType}, Value: ${jsonData['message_text']}");
+      } else {
+        print("[parseMessageText] 'message_text' key NOT found.");
+      }
+
+      // 2. Fallback for 'text' key as a String
+      if (jsonData.containsKey('text')) {
+        if (jsonData['text'] is String) {
+          final extractedText = jsonData['text'];
+          print(
+              "[parseMessageText] Found 'text' key as String: '$extractedText'");
+          return extractedText;
+        } else {
+          print(
+              "[parseMessageText] Found 'text' key, but it's NOT a String. Type: ${jsonData['text'].runtimeType}, Value: ${jsonData['text']}");
+        }
+      } else {
+        print("[parseMessageText] 'text' key NOT found.");
+      }
+
+      // 3. Fallback for 'MessageText' key as a String
+      if (jsonData.containsKey('MessageText')) {
+        if (jsonData['MessageText'] is String) {
+          final extractedText = jsonData['MessageText'];
+          print(
+              "[parseMessageText] Found 'MessageText' key as String: '$extractedText'");
+          return extractedText;
+        } else {
+          print(
+              "[parseMessageText] Found 'MessageText' key, but it's NOT a String. Type: ${jsonData['MessageText'].runtimeType}, Value: ${jsonData['MessageText']}");
+        }
+      } else {
+        print("[parseMessageText] 'MessageText' key NOT found.");
+      }
+
+      // 4. Default if no valid text field found
+      print(
+          "[parseMessageText] No valid text found in expected keys. Returning empty string.");
+      return '';
+    }
+    // *** END REVISED Helper ***
+
+    final messageID = json['id'] as int? ?? 0;
+    final senderUserID = json['sender_user_id'] as int? ?? 0;
+    final recipientUserID = json['recipient_user_id'] as int? ?? 0;
+    final text = parseMessageText(json); // Use revised helper
+    final mediaUrl = json['media_url'] as String?;
+    final mediaType = json['media_type'] as String?;
+    final sentAt = parseTimestamp(json['sent_at']);
+    final isRead = json['is_read'] as bool? ?? false;
+    final readAt = parseNullableTimestamp(json['read_at']);
+
+    print(
+        "[ChatMessage.fromJson] Creating ChatMessage with: id=$messageID, sender=$senderUserID, recipient=$recipientUserID, text='$text', mediaUrl=$mediaUrl, mediaType=$mediaType, sentAt=$sentAt, isRead=$isRead, readAt=$readAt");
+
+    return ChatMessage(
+      messageID: messageID,
+      senderUserID: senderUserID,
+      recipientUserID: recipientUserID,
+      messageText: text,
+      mediaUrl: mediaUrl,
+      mediaType: mediaType,
+      sentAt: sentAt,
+      isRead: isRead,
+      readAt: readAt,
+      status: ChatMessageStatus.sent,
+    );
+  }
+  // --- END UPDATED fromJson Factory ---
+
+  // copyWith method remains the same
   ChatMessage copyWith({
     String? tempId,
     int? messageID,
@@ -134,8 +208,8 @@ class ChatMessage {
     DateTime? readAt,
     ChatMessageStatus? status,
     String? localFilePath,
-    bool clearLocalFilePath = false, // Flag to explicitly clear temporary path
-    String? initialLocalPath, // Usually don't update this via copyWith
+    bool clearLocalFilePath = false,
+    String? initialLocalPath,
     String? errorMessage,
     bool clearErrorMessage = false,
   }) {
@@ -151,14 +225,11 @@ class ChatMessage {
       isRead: isRead ?? this.isRead,
       readAt: readAt ?? this.readAt,
       status: status ?? this.status,
-      // Clear localFilePath if flag is set OR use new value OR keep old
       localFilePath:
           clearLocalFilePath ? null : (localFilePath ?? this.localFilePath),
-      initialLocalPath:
-          initialLocalPath ?? this.initialLocalPath, // Preserve original path
+      initialLocalPath: initialLocalPath ?? this.initialLocalPath,
       errorMessage:
           clearErrorMessage ? null : (errorMessage ?? this.errorMessage),
     );
   }
-  // --- END Updated copyWith method ---
 }
