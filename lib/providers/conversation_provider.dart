@@ -1,16 +1,16 @@
-// lib/providers/conversation_provider.dart
+// START OF FILE: lib/providers/conversation_provider.dart
 import 'dart:async';
 import 'package:dtx/models/chat_message.dart';
 import 'package:dtx/models/error_model.dart';
-import 'package:dtx/providers/service_provider.dart';
+import 'package:dtx/providers/service_provider.dart'; // Keep if needed, maybe not directly
 import 'package:dtx/repositories/chat_repository.dart';
 import 'package:dtx/services/api_service.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:flutter/foundation.dart'; // Import foundation for list identity check
+import 'package:flutter/foundation.dart'; // Keep for list identity check
 
 class ConversationState {
   final bool isLoading;
-  final List<ChatMessage> messages;
+  final List<ChatMessage> messages; // List order: Newest at index 0
   final AppError? error;
 
   const ConversationState({
@@ -43,7 +43,6 @@ class ConversationNotifier extends StateNotifier<ConversationState> {
   }
 
   Future<void> fetchMessages() async {
-    // (fetchMessages remains the same)
     if (state.isLoading) return;
     print("[Provider Fetch: $_otherUserId] Fetching ALL messages...");
     state = state.copyWith(isLoading: true, error: () => null);
@@ -51,19 +50,19 @@ class ConversationNotifier extends StateNotifier<ConversationState> {
     try {
       final messagesFromRepo = await _chatRepository.fetchConversation(
         otherUserId: _otherUserId,
-      );
+      ); // Messages from API are ASC (Oldest first)
 
       if (mounted) {
         final oldMessagesHashCode = state.messages.hashCode;
+        // --- FIX: Reverse the list before setting state ---
+        final reversedMessages = messagesFromRepo.reversed.toList();
         state = state.copyWith(
           isLoading: false,
-          // Messages from API are ASC, no need to reverse anymore?
-          // If they ARE ASC and you want latest at bottom, keep as is.
-          // If they are DESC and you want latest at bottom, use reversed.
-          messages: messagesFromRepo,
+          messages: reversedMessages, // Store newest first
         );
+        // --- END FIX ---
         print(
-            "[Provider Fetch: $_otherUserId] Fetched ${messagesFromRepo.length} messages (ASC order). List hashCode changed: ${state.messages.hashCode != oldMessagesHashCode}");
+            "[Provider Fetch: $_otherUserId] Fetched ${messagesFromRepo.length} messages. Stored ${reversedMessages.length} (Newest first). List hashCode changed: ${state.messages.hashCode != oldMessagesHashCode}");
       }
     } on ApiException catch (e) {
       print(
@@ -73,9 +72,8 @@ class ConversationNotifier extends StateNotifier<ConversationState> {
             isLoading: false, error: () => AppError.server(e.message));
       }
     } catch (e, stacktrace) {
-      // Added stacktrace logging
       print("[Provider Fetch Error: $_otherUserId] Unexpected Error: $e");
-      print(stacktrace); // Log stacktrace
+      print(stacktrace);
       if (mounted) {
         state = state.copyWith(
             isLoading: false,
@@ -85,30 +83,29 @@ class ConversationNotifier extends StateNotifier<ConversationState> {
   }
 
   void addSentMessage(ChatMessage message) {
-    // (addSentMessage remains the same - adds to end)
     if (!mounted) return;
     print(
-        "[Provider AddSent: $_otherUserId] Adding message: TempID=${message.tempId}, RealID=${message.messageID}, Status=${message.status}, Type=${message.isMedia ? message.mediaType : 'text'}");
+        "[Provider AddSent: $_otherUserId] Adding message to START: TempID=${message.tempId}, RealID=${message.messageID}, Status=${message.status}, Type=${message.isMedia ? message.mediaType : 'text'}");
     final oldMessagesHashCode = state.messages.hashCode;
-    // Add new messages to the END of the list (assuming chronological order)
-    state = state.copyWith(messages: [...state.messages, message]);
+    // --- FIX: Add new message to the START of the list ---
+    state = state.copyWith(messages: [message, ...state.messages]);
+    // --- END FIX ---
     print(
-        "[Provider AddSent: $_otherUserId] Message added to end. List hashCode changed: ${state.messages.hashCode != oldMessagesHashCode}. New count: ${state.messages.length}");
+        "[Provider AddSent: $_otherUserId] Message added to start. List hashCode changed: ${state.messages.hashCode != oldMessagesHashCode}. New count: ${state.messages.length}");
   }
 
   void addReceivedMessage(ChatMessage message) {
-    // (addReceivedMessage remains the same - adds to end)
     if (!mounted) return;
     print(
-        "[Provider AddRcvd: $_otherUserId] Adding received message: RealID=${message.messageID}, Type=${message.isMedia ? message.mediaType : 'text'}");
+        "[Provider AddRcvd: $_otherUserId] Adding received message to START: RealID=${message.messageID}, Type=${message.isMedia ? message.mediaType : 'text'}");
     final oldMessagesHashCode = state.messages.hashCode;
-    // Add new messages to the END of the list
-    state = state.copyWith(messages: [...state.messages, message]);
+    // --- FIX: Add new message to the START of the list ---
+    state = state.copyWith(messages: [message, ...state.messages]);
+    // --- END FIX ---
     print(
-        "[Provider AddRcvd: $_otherUserId] Message added to end. List hashCode changed: ${state.messages.hashCode != oldMessagesHashCode}. New count: ${state.messages.length}");
+        "[Provider AddRcvd: $_otherUserId] Message added to start. List hashCode changed: ${state.messages.hashCode != oldMessagesHashCode}. New count: ${state.messages.length}");
   }
 
-  // --- CORRECTED: updateMessageStatus ---
   void updateMessageStatus(String tempOrRealId, ChatMessageStatus newStatus,
       {int? finalMessageId, String? finalMediaUrl, String? errorMessage}) {
     if (!mounted) return;
@@ -116,25 +113,23 @@ class ConversationNotifier extends StateNotifier<ConversationState> {
         "[Provider UpdateStatus: $_otherUserId] Attempting update: ID=$tempOrRealId, NewStatus=$newStatus, FinalMsgID=$finalMessageId, FinalURL=${finalMediaUrl != null}, Error=${errorMessage != null}");
 
     final currentMessages = state.messages;
-    // Find message by tempId (for optimistic messages) OR by real messageID
+    // Find message by tempId OR real messageID (using String comparison for flexibility)
+    // Since the list is newest-first, finding the index is still valid.
     final messageIndex = currentMessages.indexWhere((msg) =>
         (msg.tempId != null && msg.tempId == tempOrRealId) ||
-        (msg.messageID != 0 &&
-            msg.messageID.toString() ==
-                tempOrRealId)); // Compare string representation of ID
+        (msg.messageID != 0 && msg.messageID.toString() == tempOrRealId));
 
     if (messageIndex != -1) {
       final messageToUpdate = currentMessages[messageIndex];
       print(
-          "[Provider UpdateStatus: $_otherUserId] Found message at index $messageIndex. Current Status=${messageToUpdate.status}");
+          "[Provider UpdateStatus: $_otherUserId] Found message at index $messageIndex (Newest=0). Current Status=${messageToUpdate.status}");
 
       final updatedMessage = messageToUpdate.copyWith(
         status: newStatus,
-        messageID: finalMessageId,
-        // --- FIX: Pass String? directly ---
-        mediaUrl: finalMediaUrl,
+        messageID: finalMessageId ??
+            messageToUpdate.messageID, // Use new ID if provided
+        mediaUrl: finalMediaUrl, // Update URL if provided
         errorMessage: errorMessage,
-        // --- END FIX ---
         clearErrorMessage: errorMessage == null,
         clearLocalFilePath: false, // Keep local path as needed
       );
@@ -145,23 +140,24 @@ class ConversationNotifier extends StateNotifier<ConversationState> {
       final oldMessagesHashCode = state.messages.hashCode;
       final oldListIdentityHashCode = identityHashCode(state.messages);
 
-      state = state.copyWith(messages: updatedMessages);
+      state = state.copyWith(messages: updatedMessages); // Set the updated list
 
       final newListIdentityHashCode = identityHashCode(state.messages);
       print(
-          "[Provider UpdateStatus: $_otherUserId] Status updated for ID $tempOrRealId. RealID: ${updatedMessage.messageID} Final URL: ${updatedMessage.mediaUrl}. Local Path Kept: ${updatedMessage.localFilePath}. Error: ${updatedMessage.errorMessage}. List hashCode changed: ${state.messages.hashCode != oldMessagesHashCode}. List instance changed: ${oldListIdentityHashCode != newListIdentityHashCode}");
+          "[Provider UpdateStatus: $_otherUserId] Status updated for ID $tempOrRealId. RealID: ${updatedMessage.messageID}, NewStatus: ${updatedMessage.status}. List hashCode changed: ${state.messages.hashCode != oldMessagesHashCode}. List instance changed: ${oldListIdentityHashCode != newListIdentityHashCode}");
     } else {
       print(
           "[Provider UpdateStatus: $_otherUserId] WARNING: Could not find message with Temp/Real ID $tempOrRealId to update status.");
     }
   }
-  // --- END CORRECTION ---
 }
 
 // Provider definition remains the same
 final conversationProvider =
     StateNotifierProvider.family<ConversationNotifier, ConversationState, int>(
         (ref, otherUserId) {
+  // Ensure ChatRepository is watched/provided correctly
   final repo = ref.watch(chatRepositoryProvider);
   return ConversationNotifier(repo, otherUserId);
 });
+// END OF FILE: lib/providers/conversation_provider.dart

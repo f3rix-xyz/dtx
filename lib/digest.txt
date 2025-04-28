@@ -11,7 +11,8 @@ Directory structure:
     │   ├── location_model.dart
     │   ├── match_user.dart
     │   ├── media_upload_model.dart
-    │   └── user_model.dart
+    │   ├── user_model.dart
+    │   └── ws_message_model.dart
     ├── providers/
     │   ├── audio_player_provider.dart
     │   ├── audio_upload_provider.dart
@@ -203,65 +204,57 @@ File: models/chat_message.dart
 // lib/models/chat_message.dart
 import 'package:intl/intl.dart';
 
-// --- NEW: Enum for message status ---
+// Enum for message status remains the same
 enum ChatMessageStatus {
-  pending, // Added to local list, upload not started/failed immediately
-  uploading, // Upload in progress
-  sent, // Confirmed sent (or received)
-  failed, // Upload or send failed
+  pending,
+  uploading,
+  sent,
+  failed,
 }
-// --- END NEW ---
 
 class ChatMessage {
-  // Use String for tempId for flexibility (e.g., timestamp-based)
-  final String? tempId; // Unique temporary ID for optimistic messages
+  final String? tempId;
   final int messageID; // Real ID from backend (0 or negative for optimistic)
   final int senderUserID;
   final int recipientUserID;
-  final String messageText;
-  final String? mediaUrl; // Final URL after upload
-  final String? mediaType; // Nullable type (e.g., "image/jpeg", "video/mp4")
-  final DateTime sentAt; // Timestamp when *sent* or added optimistically
-  final bool isRead; // Read status from recipient perspective
+  final String messageText; // Final text content
+  final String? mediaUrl;
+  final String? mediaType;
+  final DateTime sentAt;
+  final bool isRead;
   final DateTime? readAt;
 
-  // --- NEW: Fields for optimistic UI ---
-  final ChatMessageStatus status; // Tracks sending state
-  final String?
-      localFilePath; // Path to the local file being uploaded (TEMPORARY, cleared after sent)
-  final String?
-      initialLocalPath; // NEW: Always store the first path if it was local
-  final String? errorMessage; // Store failure reason
-  // --- END NEW ---
+  // Fields for optimistic UI (remain the same)
+  final ChatMessageStatus status;
+  final String? localFilePath;
+  final String? initialLocalPath;
+  final String? errorMessage;
 
   ChatMessage({
-    this.tempId, // Add tempId
+    this.tempId,
     required this.messageID,
     required this.senderUserID,
     required this.recipientUserID,
-    required this.messageText,
+    required this.messageText, // Use the final parsed text
     this.mediaUrl,
     this.mediaType,
     required this.sentAt,
     this.isRead = false,
     this.readAt,
-    // --- NEW: Add status and local path to constructor ---
-    this.status =
-        ChatMessageStatus.sent, // Default to sent for received/fetched messages
+    this.status = ChatMessageStatus.sent,
     this.localFilePath,
-    this.initialLocalPath, // Add initialLocalPath
+    this.initialLocalPath,
     this.errorMessage,
-    // --- END NEW ---
   });
 
   bool isMe(int currentUserId) => senderUserID == currentUserId;
 
-  // Updated: Check either final URL or temporary local path
   bool get isMedia =>
       (mediaUrl != null && mediaUrl!.isNotEmpty) ||
       (localFilePath != null && localFilePath!.isNotEmpty);
 
   String get formattedTimestamp {
+    // Formatting logic remains the same
     final now = DateTime.now();
     final today = DateTime(now.year, now.month, now.day);
     final messageDay = DateTime(sentAt.year, sentAt.month, sentAt.day);
@@ -275,14 +268,16 @@ class ChatMessage {
     }
   }
 
+  // --- UPDATED: fromJson Factory with Corrected Parsing ---
   factory ChatMessage.fromJson(Map<String, dynamic> json) {
-    // --- Helper functions remain the same ---
+    // Helper functions for timestamps (remain the same)
     DateTime parseTimestamp(dynamic tsField) {
       if (tsField is String) {
         try {
           return DateTime.parse(tsField).toLocal();
         } catch (e) {
-          print("Error parsing timestamp '$tsField': $e");
+          print(
+              "[ChatMessage.fromJson] Error parsing timestamp '$tsField': $e");
           return DateTime.now().toUtc();
         }
       }
@@ -300,29 +295,109 @@ class ChatMessage {
       return null;
     }
 
-    // --- Updated Factory ---
-    return ChatMessage(
-      // No tempId, localFilePath, initialLocalPath, errorMessage from JSON
-      messageID: json['MessageID'] as int? ?? json['message_id'] as int? ?? 0,
-      senderUserID:
-          json['SenderUserID'] as int? ?? json['sender_user_id'] as int? ?? 0,
-      recipientUserID: json['RecipientUserID'] as int? ??
-          json['recipient_user_id'] as int? ??
-          0,
-      messageText:
-          json['MessageText'] as String? ?? json['text'] as String? ?? '',
-      mediaUrl: json['MediaUrl'] as String? ?? json['media_url'] as String?,
-      mediaType: json['MediaType'] as String? ?? json['media_type'] as String?,
-      sentAt: parseTimestamp(json['SentAt'] ?? json['sent_at']),
-      isRead: json['IsRead'] as bool? ?? json['is_read'] as bool? ?? false,
-      readAt: parseNullableTimestamp(json['ReadAt'] ?? json['read_at']),
-      status:
-          ChatMessageStatus.sent, // Messages from API/WS are considered 'sent'
-    );
-    // --- END Updated Factory ---
-  }
+    // *** REVISED: Helper function to parse message text ***
+    String parseMessageText(Map<String, dynamic> jsonData) {
+      print(
+          "[ChatMessage.fromJson->parseMessageText] Parsing message data: $jsonData");
 
-  // --- Updated copyWith method ---
+      // --- NEW: Prioritize checking if 'message_text' is a String ---
+      if (jsonData.containsKey('message_text') &&
+          jsonData['message_text'] is String) {
+        final extractedText = jsonData['message_text'];
+        print(
+            "[parseMessageText] Found 'message_text' key as String: '$extractedText'");
+        return extractedText;
+      }
+      // --- END NEW ---
+
+      // 1. Check for 'message_text' as a Map (pgtype.Text structure - Fallback)
+      if (jsonData.containsKey('message_text') &&
+          jsonData['message_text'] is Map) {
+        print("[parseMessageText] Found 'message_text' key as Map.");
+        final textMap = jsonData['message_text'] as Map<String, dynamic>;
+        if (textMap['Valid'] == true && textMap['String'] is String) {
+          final extractedText = textMap['String'];
+          print(
+              "[parseMessageText] Extracted text from message_text.String: '$extractedText'");
+          return extractedText;
+        } else {
+          print(
+              "[parseMessageText] message_text Map was not Valid or String key missing/invalid type. Map: $textMap");
+        }
+      } else if (jsonData.containsKey('message_text')) {
+        // Log if 'message_text' exists but is not a String or Map we handled
+        print(
+            "[parseMessageText] Found 'message_text' key, but it's not a String or Map. Type: ${jsonData['message_text'].runtimeType}, Value: ${jsonData['message_text']}");
+      } else {
+        print("[parseMessageText] 'message_text' key NOT found.");
+      }
+
+      // 2. Fallback for 'text' key as a String
+      if (jsonData.containsKey('text')) {
+        if (jsonData['text'] is String) {
+          final extractedText = jsonData['text'];
+          print(
+              "[parseMessageText] Found 'text' key as String: '$extractedText'");
+          return extractedText;
+        } else {
+          print(
+              "[parseMessageText] Found 'text' key, but it's NOT a String. Type: ${jsonData['text'].runtimeType}, Value: ${jsonData['text']}");
+        }
+      } else {
+        print("[parseMessageText] 'text' key NOT found.");
+      }
+
+      // 3. Fallback for 'MessageText' key as a String
+      if (jsonData.containsKey('MessageText')) {
+        if (jsonData['MessageText'] is String) {
+          final extractedText = jsonData['MessageText'];
+          print(
+              "[parseMessageText] Found 'MessageText' key as String: '$extractedText'");
+          return extractedText;
+        } else {
+          print(
+              "[parseMessageText] Found 'MessageText' key, but it's NOT a String. Type: ${jsonData['MessageText'].runtimeType}, Value: ${jsonData['MessageText']}");
+        }
+      } else {
+        print("[parseMessageText] 'MessageText' key NOT found.");
+      }
+
+      // 4. Default if no valid text field found
+      print(
+          "[parseMessageText] No valid text found in expected keys. Returning empty string.");
+      return '';
+    }
+    // *** END REVISED Helper ***
+
+    final messageID = json['id'] as int? ?? 0;
+    final senderUserID = json['sender_user_id'] as int? ?? 0;
+    final recipientUserID = json['recipient_user_id'] as int? ?? 0;
+    final text = parseMessageText(json); // Use revised helper
+    final mediaUrl = json['media_url'] as String?;
+    final mediaType = json['media_type'] as String?;
+    final sentAt = parseTimestamp(json['sent_at']);
+    final isRead = json['is_read'] as bool? ?? false;
+    final readAt = parseNullableTimestamp(json['read_at']);
+
+    print(
+        "[ChatMessage.fromJson] Creating ChatMessage with: id=$messageID, sender=$senderUserID, recipient=$recipientUserID, text='$text', mediaUrl=$mediaUrl, mediaType=$mediaType, sentAt=$sentAt, isRead=$isRead, readAt=$readAt");
+
+    return ChatMessage(
+      messageID: messageID,
+      senderUserID: senderUserID,
+      recipientUserID: recipientUserID,
+      messageText: text,
+      mediaUrl: mediaUrl,
+      mediaType: mediaType,
+      sentAt: sentAt,
+      isRead: isRead,
+      readAt: readAt,
+      status: ChatMessageStatus.sent,
+    );
+  }
+  // --- END UPDATED fromJson Factory ---
+
+  // copyWith method remains the same
   ChatMessage copyWith({
     String? tempId,
     int? messageID,
@@ -336,8 +411,8 @@ class ChatMessage {
     DateTime? readAt,
     ChatMessageStatus? status,
     String? localFilePath,
-    bool clearLocalFilePath = false, // Flag to explicitly clear temporary path
-    String? initialLocalPath, // Usually don't update this via copyWith
+    bool clearLocalFilePath = false,
+    String? initialLocalPath,
     String? errorMessage,
     bool clearErrorMessage = false,
   }) {
@@ -353,16 +428,13 @@ class ChatMessage {
       isRead: isRead ?? this.isRead,
       readAt: readAt ?? this.readAt,
       status: status ?? this.status,
-      // Clear localFilePath if flag is set OR use new value OR keep old
       localFilePath:
           clearLocalFilePath ? null : (localFilePath ?? this.localFilePath),
-      initialLocalPath:
-          initialLocalPath ?? this.initialLocalPath, // Preserve original path
+      initialLocalPath: initialLocalPath ?? this.initialLocalPath,
       errorMessage:
           clearErrorMessage ? null : (errorMessage ?? this.errorMessage),
     );
   }
-  // --- END Updated copyWith method ---
 }
 
 
@@ -1825,6 +1897,153 @@ class UserModel {
 
 
 ================================================
+File: models/ws_message_model.dart
+================================================
+// START OF FILE: lib/models/ws_message_model.dart
+// NEW FILE: lib/models/ws_message_model.dart
+
+import 'dart:convert';
+
+/// Represents the structure of messages exchanged over WebSocket.
+/// Used for BOTH sending (client -> server) and receiving (server -> client).
+/// Fields are nullable to accommodate different message types.
+class WsMessage {
+  // General fields
+  final String
+      type; // Type sent BY backend ("chat_message", "error", "info", "status_update", etc.)
+  final int? id; // Message ID (usually for chat messages, sent by backend)
+
+  // Chat Message specific fields
+  final int? senderUserID;
+  final int? recipientUserID; // REQUIRED when sending FROM client
+  final String? text; // Nullable
+  final String? mediaURL; // Nullable
+  final String? mediaType; // Nullable
+  final String? sentAt; // ISO 8601 string (sent by backend)
+  final int? replyToMessageID; // Nullable
+
+  // Reaction specific fields
+  final int? messageID; // The ID of the message being reacted to
+  final String? emoji; // Nullable
+  final int? reactorUserID; // User who reacted (sent by backend)
+  final bool? isRemoved; // True if reaction was removed (sent by backend)
+
+  // Status update specific fields
+  final int? userID; // User whose status changed (sent by backend)
+  final String? status; // "online" or "offline" (sent by backend)
+
+  // Read receipt specific fields (when other user reads messages)
+  final int? readerUserID; // User who read the messages (sent by backend)
+  // MessageID (re-used from reaction fields) indicates up to which message was read
+
+  // Generic/Error/Info fields
+  final String? content; // For error/info messages (sent by backend)
+
+  // Acknowledgement specific fields (server confirms client message)
+  final int? count; // e.g., for mark_read_ack
+
+  WsMessage({
+    required this.type, // Type is always required for received messages
+    this.id,
+    this.senderUserID,
+    this.recipientUserID,
+    this.text,
+    this.mediaURL,
+    this.mediaType,
+    this.sentAt,
+    this.replyToMessageID,
+    this.messageID,
+    this.emoji,
+    this.reactorUserID,
+    this.isRemoved,
+    this.userID,
+    this.status,
+    this.readerUserID,
+    this.content,
+    this.count,
+  });
+
+  // Factory constructor for parsing JSON received from WebSocket
+  factory WsMessage.fromJson(Map<String, dynamic> json) {
+    // Helper function to safely get int?
+    int? getInt(String key) {
+      final value = json[key];
+      if (value is int) return value;
+      if (value is String) return int.tryParse(value);
+      return null;
+    }
+
+    // Helper function to safely get bool?
+    bool? getBool(String key) {
+      final value = json[key];
+      if (value is bool) return value;
+      if (value is String) return value.toLowerCase() == 'true';
+      if (value is int) return value == 1;
+      return null;
+    }
+
+    // Helper function to safely get String?
+    String? getString(String key) {
+      final value = json[key];
+      if (value is String) return value;
+      return null;
+    }
+
+    return WsMessage(
+      type: getString('type') ?? 'unknown', // Default to 'unknown' if missing
+      id: getInt('id'),
+      senderUserID: getInt('sender_user_id'),
+      recipientUserID: getInt('recipient_user_id'),
+      text: getString('text'),
+      mediaURL: getString('media_url'),
+      mediaType: getString('media_type'),
+      sentAt: getString('sent_at'), // Keep as string for now
+      replyToMessageID: getInt('reply_to_message_id'),
+      messageID: getInt('message_id'), // Used for reactions and read receipts
+      emoji: getString('emoji'),
+      reactorUserID: getInt('reactor_user_id'),
+      isRemoved: getBool('is_removed'),
+      userID: getInt('user_id'), // Used for status updates
+      status: getString('status'),
+      readerUserID: getInt('reader_user_id'),
+      content: getString('content'),
+      count: getInt('count'),
+    );
+  }
+
+  // Method to convert to JSON (mainly for debugging, sending structure is simpler)
+  Map<String, dynamic> toJson() {
+    final Map<String, dynamic> data = {
+      'type': type,
+    };
+    // Add fields only if they are not null
+    if (id != null) data['id'] = id;
+    if (senderUserID != null) data['sender_user_id'] = senderUserID;
+    if (recipientUserID != null) data['recipient_user_id'] = recipientUserID;
+    if (text != null) data['text'] = text;
+    if (mediaURL != null) data['media_url'] = mediaURL;
+    if (mediaType != null) data['media_type'] = mediaType;
+    if (sentAt != null) data['sent_at'] = sentAt;
+    if (replyToMessageID != null)
+      data['reply_to_message_id'] = replyToMessageID;
+    if (messageID != null) data['message_id'] = messageID;
+    if (emoji != null) data['emoji'] = emoji;
+    if (reactorUserID != null) data['reactor_user_id'] = reactorUserID;
+    if (isRemoved != null) data['is_removed'] = isRemoved;
+    if (userID != null) data['user_id'] = userID;
+    if (status != null) data['status'] = status;
+    if (readerUserID != null) data['reader_user_id'] = readerUserID;
+    if (content != null) data['content'] = content;
+    if (count != null) data['count'] = count;
+    return data;
+  }
+}
+
+// END OF FILE: lib/models/ws_message_model.dart
+
+
+
+================================================
 File: providers/audio_player_provider.dart
 ================================================
 
@@ -2460,7 +2679,6 @@ import 'package:dtx/services/api_service.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter/foundation.dart'; // Import foundation for list identity check
 
-// ConversationState definition remains the same...
 class ConversationState {
   final bool isLoading;
   final List<ChatMessage> messages;
@@ -2496,7 +2714,7 @@ class ConversationNotifier extends StateNotifier<ConversationState> {
   }
 
   Future<void> fetchMessages() async {
-    // ... (fetchMessages remains the same) ...
+    // (fetchMessages remains the same)
     if (state.isLoading) return;
     print("[Provider Fetch: $_otherUserId] Fetching ALL messages...");
     state = state.copyWith(isLoading: true, error: () => null);
@@ -2507,14 +2725,16 @@ class ConversationNotifier extends StateNotifier<ConversationState> {
       );
 
       if (mounted) {
-        final reversedMessages = messagesFromRepo.reversed.toList();
-        final oldMessagesHashCode = state.messages.hashCode; // Log hashCode
+        final oldMessagesHashCode = state.messages.hashCode;
         state = state.copyWith(
           isLoading: false,
-          messages: reversedMessages,
+          // Messages from API are ASC, no need to reverse anymore?
+          // If they ARE ASC and you want latest at bottom, keep as is.
+          // If they are DESC and you want latest at bottom, use reversed.
+          messages: messagesFromRepo,
         );
         print(
-            "[Provider Fetch: $_otherUserId] Fetched and reversed ${reversedMessages.length} messages. List hashCode changed: ${state.messages.hashCode != oldMessagesHashCode}");
+            "[Provider Fetch: $_otherUserId] Fetched ${messagesFromRepo.length} messages (ASC order). List hashCode changed: ${state.messages.hashCode != oldMessagesHashCode}");
       }
     } on ApiException catch (e) {
       print(
@@ -2523,9 +2743,10 @@ class ConversationNotifier extends StateNotifier<ConversationState> {
         state = state.copyWith(
             isLoading: false, error: () => AppError.server(e.message));
       }
-    } catch (e) {
-      print(
-          "[Provider Fetch Error: $_otherUserId] Unexpected Error: ${e.toString()}");
+    } catch (e, stacktrace) {
+      // Added stacktrace logging
+      print("[Provider Fetch Error: $_otherUserId] Unexpected Error: $e");
+      print(stacktrace); // Log stacktrace
       if (mounted) {
         state = state.copyWith(
             isLoading: false,
@@ -2535,34 +2756,43 @@ class ConversationNotifier extends StateNotifier<ConversationState> {
   }
 
   void addSentMessage(ChatMessage message) {
+    // (addSentMessage remains the same - adds to end)
     if (!mounted) return;
     print(
         "[Provider AddSent: $_otherUserId] Adding message: TempID=${message.tempId}, RealID=${message.messageID}, Status=${message.status}, Type=${message.isMedia ? message.mediaType : 'text'}");
     final oldMessagesHashCode = state.messages.hashCode;
-    state = state.copyWith(messages: [message, ...state.messages]);
+    // Add new messages to the END of the list (assuming chronological order)
+    state = state.copyWith(messages: [...state.messages, message]);
     print(
-        "[Provider AddSent: $_otherUserId] Message added. List hashCode changed: ${state.messages.hashCode != oldMessagesHashCode}. New count: ${state.messages.length}");
+        "[Provider AddSent: $_otherUserId] Message added to end. List hashCode changed: ${state.messages.hashCode != oldMessagesHashCode}. New count: ${state.messages.length}");
   }
 
   void addReceivedMessage(ChatMessage message) {
+    // (addReceivedMessage remains the same - adds to end)
     if (!mounted) return;
     print(
         "[Provider AddRcvd: $_otherUserId] Adding received message: RealID=${message.messageID}, Type=${message.isMedia ? message.mediaType : 'text'}");
     final oldMessagesHashCode = state.messages.hashCode;
-    state = state.copyWith(messages: [message, ...state.messages]);
+    // Add new messages to the END of the list
+    state = state.copyWith(messages: [...state.messages, message]);
     print(
-        "[Provider AddRcvd: $_otherUserId] Message added. List hashCode changed: ${state.messages.hashCode != oldMessagesHashCode}. New count: ${state.messages.length}");
+        "[Provider AddRcvd: $_otherUserId] Message added to end. List hashCode changed: ${state.messages.hashCode != oldMessagesHashCode}. New count: ${state.messages.length}");
   }
 
-  void updateMessageStatus(String tempId, ChatMessageStatus newStatus,
-      {String? finalMediaUrl, String? errorMessage}) {
+  // --- CORRECTED: updateMessageStatus ---
+  void updateMessageStatus(String tempOrRealId, ChatMessageStatus newStatus,
+      {int? finalMessageId, String? finalMediaUrl, String? errorMessage}) {
     if (!mounted) return;
     print(
-        "[Provider UpdateStatus: $_otherUserId] Attempting update: TempID=$tempId, NewStatus=$newStatus, FinalURL=${finalMediaUrl != null}, Error=${errorMessage != null}");
+        "[Provider UpdateStatus: $_otherUserId] Attempting update: ID=$tempOrRealId, NewStatus=$newStatus, FinalMsgID=$finalMessageId, FinalURL=${finalMediaUrl != null}, Error=${errorMessage != null}");
 
     final currentMessages = state.messages;
-    final messageIndex =
-        currentMessages.indexWhere((msg) => msg.tempId == tempId);
+    // Find message by tempId (for optimistic messages) OR by real messageID
+    final messageIndex = currentMessages.indexWhere((msg) =>
+        (msg.tempId != null && msg.tempId == tempOrRealId) ||
+        (msg.messageID != 0 &&
+            msg.messageID.toString() ==
+                tempOrRealId)); // Compare string representation of ID
 
     if (messageIndex != -1) {
       final messageToUpdate = currentMessages[messageIndex];
@@ -2571,34 +2801,32 @@ class ConversationNotifier extends StateNotifier<ConversationState> {
 
       final updatedMessage = messageToUpdate.copyWith(
         status: newStatus,
-        mediaUrl: finalMediaUrl, // Still store the final URL
+        messageID: finalMessageId,
+        // --- FIX: Pass String? directly ---
+        mediaUrl: finalMediaUrl,
         errorMessage: errorMessage,
+        // --- END FIX ---
         clearErrorMessage: errorMessage == null,
-        // --- *** THE FIX: Keep localFilePath *** ---
-        // Change this line from `clearLocalFilePath: finalMediaUrl != null,`
-        //                    to `clearLocalFilePath: false,`
-        clearLocalFilePath: false, // Don't clear the local path when sent
-        // --- *** END FIX *** ---
+        clearLocalFilePath: false, // Keep local path as needed
       );
 
       final updatedMessages = List<ChatMessage>.from(currentMessages);
       updatedMessages[messageIndex] = updatedMessage;
 
       final oldMessagesHashCode = state.messages.hashCode;
-      final oldListIdentityHashCode =
-          identityHashCode(state.messages); // Log list instance identity
+      final oldListIdentityHashCode = identityHashCode(state.messages);
 
       state = state.copyWith(messages: updatedMessages);
 
-      final newListIdentityHashCode =
-          identityHashCode(state.messages); // Log new list instance identity
+      final newListIdentityHashCode = identityHashCode(state.messages);
       print(
-          "[Provider UpdateStatus: $_otherUserId] Status updated for TempID $tempId. Final URL: ${updatedMessage.mediaUrl}. Local Path Kept: ${updatedMessage.localFilePath}. Error: ${updatedMessage.errorMessage}. List hashCode changed: ${state.messages.hashCode != oldMessagesHashCode}. List instance changed: ${oldListIdentityHashCode != newListIdentityHashCode}");
+          "[Provider UpdateStatus: $_otherUserId] Status updated for ID $tempOrRealId. RealID: ${updatedMessage.messageID} Final URL: ${updatedMessage.mediaUrl}. Local Path Kept: ${updatedMessage.localFilePath}. Error: ${updatedMessage.errorMessage}. List hashCode changed: ${state.messages.hashCode != oldMessagesHashCode}. List instance changed: ${oldListIdentityHashCode != newListIdentityHashCode}");
     } else {
       print(
-          "[Provider UpdateStatus: $_otherUserId] WARNING: Could not find message with TempID $tempId to update status.");
+          "[Provider UpdateStatus: $_otherUserId] WARNING: Could not find message with Temp/Real ID $tempOrRealId to update status.");
     }
   }
+  // --- END CORRECTION ---
 }
 
 // Provider definition remains the same
@@ -4164,10 +4392,8 @@ class ChatRepository {
 
   ChatRepository(this._apiService);
 
-  // --- MODIFIED: fetchConversation ---
   Future<List<ChatMessage>> fetchConversation({
     required int otherUserId,
-    // Removed limit and offset parameters
   }) async {
     final String methodName = 'fetchConversation';
     print(
@@ -4177,50 +4403,74 @@ class ChatRepository {
       if (token == null) throw ApiException('Authentication token missing');
       final headers = {'Authorization': 'Bearer $token'};
 
-      // Endpoint does NOT include the user ID anymore
       final endpoint = '/api/conversation';
-      final body = {'other_user_id': otherUserId}; // Send ID in the body
+      final body = {'other_user_id': otherUserId};
 
-      // Change to POST request
+      print('[ChatRepository $methodName] Making POST request to: $endpoint');
+      print('[ChatRepository $methodName] Request Body: $body');
+
       final response = await _apiService.post(
         endpoint,
         body: body,
         headers: headers,
       );
-      // print('[ChatRepository $methodName] API Response: $response'); // Debug careful with PII
+      // print('[ChatRepository $methodName] Raw API Response Map: $response'); // Uncomment if needed, but can be large
 
-      // API now returns success and messages directly
-      if (response['success'] == true && response['messages'] != null) {
+      if (response['success'] == true) {
         final List<dynamic> messagesData = response['messages'] as List? ?? [];
+        print(
+            '[ChatRepository $methodName] API Success. Raw messagesData length: ${messagesData.length}'); // Log length
+
         final messages = messagesData
-            .map((data) => ChatMessage.fromJson(data as Map<String, dynamic>))
+            .map((data) {
+              // <<< --- ADDED LOGGING HERE --- >>>
+              print(
+                  "[ChatRepository map] Processing raw message data item: $data");
+              // <<< --- END ADDED LOGGING --- >>>
+              try {
+                if (data is Map<String, dynamic>) {
+                  return ChatMessage.fromJson(data);
+                } else {
+                  print(
+                      "[ChatRepository map] Warning: Invalid item type in messages list: ${data.runtimeType}");
+                  return null;
+                }
+              } catch (e, stacktrace) {
+                // Add stacktrace
+                print("[ChatRepository map] Error parsing chat message: $e");
+                print(
+                    "[ChatRepository map] Stacktrace: $stacktrace"); // Log stacktrace
+                print(
+                    "[ChatRepository map] Faulty Data: $data"); // Log faulty data
+                return null;
+              }
+            })
+            .whereType<ChatMessage>()
             .toList();
 
         print(
-            '[ChatRepository $methodName] Success. Count: ${messages.length}');
-        // Return only the list of messages
+            '[ChatRepository $methodName] Parsed successfully. Final Message Count: ${messages.length}');
         return messages;
-      } else if (response['success'] == true && response['messages'] == null) {
-        print(
-            '[ChatRepository $methodName] No messages found (API returned null).');
-        return <ChatMessage>[]; // Empty conversation
       } else {
         final message =
             response['message']?.toString() ?? 'Failed to fetch conversation.';
-        print('[ChatRepository $methodName] Fetch failed: $message');
+        print(
+            '[ChatRepository $methodName] API call returned success=false: $message');
         throw ApiException(message);
       }
     } on ApiException catch (e) {
       print(
           '[ChatRepository $methodName] API Exception: ${e.message}, Status: ${e.statusCode}');
       rethrow;
-    } catch (e) {
+    } catch (e, stacktrace) {
+      // Add stacktrace
       print('[ChatRepository $methodName] Unexpected Error: $e');
+      print(
+          "[ChatRepository $methodName] Stacktrace: $stacktrace"); // Log stacktrace
       throw ApiException(
           'An unexpected error occurred while fetching conversation: ${e.toString()}');
     }
   }
-  // --- END MODIFIED ---
 }
 
 
@@ -18875,7 +19125,7 @@ import 'package:dtx/models/user_model.dart';
 import 'package:dtx/models/like_models.dart';
 import 'package:dtx/providers/audio_player_provider.dart';
 import 'package:dtx/utils/app_enums.dart';
-import 'package:dtx/providers/user_provider.dart';
+import 'package:dtx/providers/user_provider.dart'; // Needed for currentUserGender check in dialog
 import 'package:dtx/widgets/report_reason_dialog.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -18893,6 +19143,7 @@ typedef PerformDislikeApiCall = Future<bool> Function();
 typedef InteractionCompleteCallback = void Function();
 typedef PerformReportApiCall = Future<bool> Function(
     {required ReportReason reason});
+
 const int maxCommentLength = 140;
 
 class HomeProfileCard extends ConsumerWidget {
@@ -18911,7 +19162,7 @@ class HomeProfileCard extends ConsumerWidget {
     required this.onInteractionComplete,
   });
 
-  // --- _showInteractionDialog (Corrected - Not Commented) ---
+  // --- Interaction Dialog (Like/Rose/Comment) ---
   Future<void> _showInteractionDialog(
     BuildContext context,
     WidgetRef ref,
@@ -18923,19 +19174,24 @@ class HomeProfileCard extends ConsumerWidget {
     final isMale = currentUserGender == Gender.man;
     final FocusNode commentFocusNode = FocusNode();
     final TextEditingController commentController = TextEditingController();
+    // Notifier tracks if the comment field allows sending (non-empty for males)
     final ValueNotifier<bool> sendLikeEnabledNotifier =
         ValueNotifier<bool>(!isMale);
+    // Notifier tracks if an API call (like/rose) is in progress within the dialog
     final ValueNotifier<bool> _isDialogInteractionActive =
         ValueNotifier<bool>(false);
-    VoidCallback? listenerCallback;
+    VoidCallback? listenerCallback; // To hold the listener function reference
 
+    // Add listener only if the user is male to enable/disable based on comment
     if (isMale) {
       listenerCallback = () {
+        // Check if the widget is still mounted and the notifier hasn't been disposed
         if (context.mounted && commentController.hasListeners) {
           try {
             sendLikeEnabledNotifier.value =
                 commentController.text.trim().isNotEmpty;
           } catch (e) {
+            // Handle cases where the notifier might be disposed prematurely
             print(
                 "Error accessing sendLikeEnabledNotifier in listener (might be disposed): $e");
           }
@@ -18944,29 +19200,37 @@ class HomeProfileCard extends ConsumerWidget {
       commentController.addListener(listenerCallback);
     }
 
+    // --- Handle Like/Rose Submission ---
     Future<void> _handleInteraction(LikeInteractionType interactionType) async {
+      // Prevent multiple simultaneous submissions
       if (_isDialogInteractionActive.value) return;
 
+      // Safely get comment text
       String comment = "";
       try {
         comment = commentController.text.trim();
       } catch (e) {
-        print("Error reading commentController text: $e");
-        return;
+        print("Error reading commentController text (already disposed?): $e");
+        return; // Cannot proceed if controller is disposed
       }
 
+      // Unfocus text field
       commentFocusNode.unfocus();
+      // Short delay allows keyboard to retract smoothly before showing loading
       await Future.delayed(const Duration(milliseconds: 100));
 
+      // Set interaction active state safely
       try {
         _isDialogInteractionActive.value = true;
       } catch (e) {
-        print("Error setting _isDialogInteractionActive to true: $e");
-        return;
+        print(
+            "Error setting _isDialogInteractionActive to true (notifier disposed?): $e");
+        return; // Cannot proceed if notifier is disposed
       }
 
       bool success = false;
       try {
+        // Perform the API call passed from the HomeScreen
         success = await performLikeApiCall(
           contentType: contentType,
           contentIdentifier: contentIdentifier,
@@ -18974,13 +19238,16 @@ class HomeProfileCard extends ConsumerWidget {
           comment: comment.isNotEmpty ? comment : null,
         );
 
+        // Close dialog and trigger card removal ONLY on success
         if (success && context.mounted) {
           Navigator.of(context, rootNavigator: true).pop(); // Close dialog
-          onInteractionComplete(); // Trigger card removal etc.
+          onInteractionComplete(); // Trigger card removal etc. in HomeScreen
         }
-        // Errors shown via SnackBar in HomeScreen's callback
+        // Error snackbars/handling is managed within performLikeApiCall (in HomeScreen)
       } finally {
+        // Reset interaction state safely, even if API call failed
         try {
+          // Check context AND if the value is actually true before setting false
           if (context.mounted && _isDialogInteractionActive.value) {
             _isDialogInteractionActive.value = false;
           }
@@ -18990,25 +19257,28 @@ class HomeProfileCard extends ConsumerWidget {
         }
       }
     }
+    // --- End Handle Like/Rose Submission ---
 
     try {
+      // --- Show Dialog ---
       await showDialog<void>(
         context: context,
-        barrierDismissible: true,
+        barrierDismissible: true, // Allow dismissing by tapping outside
         builder: (BuildContext dialogContext) {
-          // --- START OF DIALOG UI ---
           return AlertDialog(
             contentPadding: const EdgeInsets.all(16),
             shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(20.0),
             ),
             content: SizedBox(
-              width: MediaQuery.of(dialogContext).size.width * 0.8,
+              width: MediaQuery.of(dialogContext).size.width *
+                  0.8, // Constrain width
               child: SingleChildScrollView(
+                // Allow scrolling if content overflows
                 child: Column(
-                  mainAxisSize: MainAxisSize.min,
+                  mainAxisSize: MainAxisSize.min, // Fit content vertically
                   children: [
-                    // Image Preview
+                    // Image Preview (if applicable)
                     if (previewImageUrl != null)
                       ClipRRect(
                         borderRadius: BorderRadius.circular(12.0),
@@ -19031,7 +19301,7 @@ class HomeProfileCard extends ConsumerWidget {
                                   color: Colors.grey[400])),
                         ),
                       ),
-                    // Audio Prompt Placeholder
+                    // Audio Prompt Placeholder (if applicable)
                     if (previewImageUrl == null &&
                         contentType == ContentLikeType.audioPrompt)
                       Container(
@@ -19045,7 +19315,7 @@ class HomeProfileCard extends ConsumerWidget {
                             child: Icon(Icons.multitrack_audio_rounded,
                                 size: 40, color: Colors.grey[500])),
                       ),
-                    // Text Prompt Placeholder
+                    // Text Prompt Placeholder (if applicable)
                     if (previewImageUrl == null &&
                         contentType != ContentLikeType.audioPrompt)
                       Container(
@@ -19059,8 +19329,10 @@ class HomeProfileCard extends ConsumerWidget {
                             child: Icon(Icons.article_outlined,
                                 size: 40, color: Colors.grey[500])),
                       ),
+
                     const SizedBox(height: 16),
-                    // Comment Field
+
+                    // Comment TextField
                     TextField(
                       controller: commentController,
                       focusNode: commentFocusNode,
@@ -19077,13 +19349,16 @@ class HomeProfileCard extends ConsumerWidget {
                         ),
                         contentPadding: const EdgeInsets.symmetric(
                             horizontal: 12, vertical: 10),
+                        counterText: "", // Hide default counter
                       ),
                       maxLength: maxCommentLength, // Use constant
                       maxLines: 3,
                       minLines: 1,
                       textCapitalization: TextCapitalization.sentences,
                     ),
+
                     const SizedBox(height: 16),
+
                     // Action Buttons (Rose/Like)
                     Row(
                       mainAxisAlignment: MainAxisAlignment.spaceEvenly,
@@ -19196,6 +19471,7 @@ class HomeProfileCard extends ConsumerWidget {
                         ),
                       ],
                     ),
+
                     // Cancel Button
                     ValueListenableBuilder<bool>(
                       valueListenable: _isDialogInteractionActive,
@@ -19207,7 +19483,7 @@ class HomeProfileCard extends ConsumerWidget {
                                       ? Colors.grey.shade400
                                       : Colors.grey)),
                           onPressed: isInteractionActive
-                              ? null
+                              ? null // Disable cancel if interaction is active
                               : () => Navigator.of(dialogContext).pop(),
                         );
                       },
@@ -19217,15 +19493,15 @@ class HomeProfileCard extends ConsumerWidget {
               ),
             ),
           );
-          // --- END OF DIALOG UI ---
         },
       );
+      // --- End Show Dialog ---
     } finally {
-      // Dispose resources safely
+      // Safely clean up listeners and controllers
       if (listenerCallback != null) {
         try {
           commentController.removeListener(listenerCallback);
-          listenerCallback = null; // Help garbage collection
+          listenerCallback = null; // Help GC
         } catch (e) {
           print(
               "Error removing commentController listener (already removed?): $e");
@@ -19254,22 +19530,27 @@ class HomeProfileCard extends ConsumerWidget {
     }
   }
 
-  // --- _handleReport (Keep as is) ---
+  // --- Handle Report Action (Shows Reason Dialog) ---
   Future<void> _handleReport(BuildContext context) async {
+    // Show the dialog to get the reason
     final selectedReason = await showReportReasonDialog(context);
     if (selectedReason != null) {
+      // Call the report API function passed from HomeScreen
+      // API call result/error handling is done in HomeScreen
       await performReportApiCall(reason: selectedReason);
+      // Card removal is handled by the callback in HomeScreen if report succeeds
     }
   }
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    // Content Block Generation (Keep as is)
+    // --- Content Block Generation (No Change) ---
     final List<dynamic> contentBlocks = [];
     final mediaUrls = profile.mediaUrls ?? [];
     final prompts = profile.prompts;
     contentBlocks.add("header_section");
-    if (mediaUrls.isNotEmpty) contentBlocks.add(mediaUrls[0]);
+    if (mediaUrls.isNotEmpty)
+      contentBlocks.add({"type": "media", "value": mediaUrls[0], "index": 0});
     if (prompts.isNotEmpty) contentBlocks.add(prompts[0]);
     contentBlocks.add("vitals_section");
     int mediaIndex = 1;
@@ -19277,7 +19558,8 @@ class HomeProfileCard extends ConsumerWidget {
     int maxRemaining = max(mediaUrls.length, prompts.length);
     for (int i = 1; i < maxRemaining; i++) {
       if (mediaIndex < mediaUrls.length) {
-        contentBlocks.add(mediaUrls[mediaIndex]);
+        contentBlocks
+            .add({"type": "media", "value": mediaUrls[mediaIndex], "index": i});
         mediaIndex++;
       }
       if (promptIndex < prompts.length) {
@@ -19285,17 +19567,17 @@ class HomeProfileCard extends ConsumerWidget {
         promptIndex++;
       }
     }
-    if (profile.audioPrompt != null) {
-      contentBlocks.add(profile.audioPrompt!);
-    }
+    if (profile.audioPrompt != null) contentBlocks.add(profile.audioPrompt!);
+    // --- End Content Block Generation ---
 
     return Container(
-      color: Colors.white,
+      color: Colors.white, // Background for the entire card area
       child: Stack(
+        // Use Stack to overlay buttons
         children: [
           // Main Scrollable Content
           ListView.builder(
-            physics: const ClampingScrollPhysics(),
+            physics: const ClampingScrollPhysics(), // Prevents overscroll glow
             padding: const EdgeInsets.only(bottom: 80.0), // Space for buttons
             itemCount: contentBlocks.length,
             itemBuilder: (context, index) {
@@ -19305,17 +19587,13 @@ class HomeProfileCard extends ConsumerWidget {
               final double horizontalPadding = 12.0;
               Widget contentWidget;
 
-              // Build Blocks (Calls corrected _buildMediaItem)
+              // Build content blocks based on type
               if (item is String && item == "header_section") {
-                contentWidget = _buildHeaderBlock(profile);
-              } else if (item is String && item.startsWith('http')) {
-                int originalMediaIndex =
-                    (profile.mediaUrls ?? []).indexOf(item);
-                if (originalMediaIndex == -1) originalMediaIndex = 0;
-                contentWidget =
-                    _buildMediaItem(context, ref, item, originalMediaIndex);
-              } // Passes URL
-              else if (item is Prompt) {
+                contentWidget = _buildHeaderBlock(context, profile);
+              } else if (item is Map && item["type"] == "media") {
+                contentWidget = _buildMediaItem(
+                    context, ref, item["value"] as String, item["index"]);
+              } else if (item is Prompt) {
                 contentWidget = _buildPromptItem(context, ref, item);
               } else if (item is AudioPromptModel) {
                 contentWidget = _buildAudioItem(context, ref, item);
@@ -19325,6 +19603,7 @@ class HomeProfileCard extends ConsumerWidget {
                 contentWidget = const SizedBox.shrink();
               }
 
+              // Add padding around each block
               return Padding(
                 padding: EdgeInsets.fromLTRB(horizontalPadding, topPadding,
                     horizontalPadding, bottomPadding),
@@ -19332,135 +19611,119 @@ class HomeProfileCard extends ConsumerWidget {
               );
             },
           ),
-          // Action Buttons Row
+
+          // Action Buttons Row (Dislike Only Now)
           Positioned(
-              bottom: 15,
-              left: 30,
-              right: 30,
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  _buildActionButton(
-                      // Dislike
-                      icon: Icons.close_rounded,
-                      color: Colors.redAccent.shade100,
-                      onPressed: () async {
-                        bool success = await performDislikeApiCall();
-                        if (success) {
-                          onInteractionComplete();
-                        }
-                      },
-                      tooltip: "Dislike",
-                      size: 55),
-                  _buildActionButton(
-                      // Report
-                      icon: Icons.flag_outlined,
-                      color: Colors.orange.shade600,
-                      onPressed: () => _handleReport(context),
-                      tooltip: "Report",
-                      size: 55),
-                ],
-              )),
+            bottom: 15, // Adjust position as needed
+            left: 30,
+            right: 30, // Ensure it takes full width for spaceBetween
+            child: Row(
+              // *** MODIFIED: Use spaceBetween and added Dislike Button back ***
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              // *** END MODIFICATION ***
+              children: [
+                // Dislike Button (Restored)
+                _buildActionButton(
+                  icon: Icons.close_rounded,
+                  color: Colors.redAccent.shade100,
+                  onPressed: () async {
+                    // Call the dislike API function passed from HomeScreen
+                    bool success = await performDislikeApiCall();
+                    if (success) {
+                      onInteractionComplete(); // Trigger card removal in HomeScreen
+                    }
+                  },
+                  tooltip: "Dislike",
+                  size: 55, // Smaller action buttons
+                ),
+                // Add other buttons here if needed in the future, using spaceBetween
+              ],
+            ),
+          ),
         ],
       ),
     );
   }
 
-  // --- Corrected _buildMediaItem using CachedNetworkImage ---
-  Widget _buildMediaItem(
-      BuildContext context, WidgetRef ref, String url, int index) {
-    bool isVideo = url.toLowerCase().contains('.mp4') ||
-        url.toLowerCase().contains('.mov') ||
-        url.toLowerCase().contains('.avi') ||
-        url.toLowerCase().contains('.webm');
-
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(10),
-      child: AspectRatio(
-        aspectRatio: 4 / 5.5,
-        child: Container(
-          decoration: BoxDecoration(color: Colors.grey[200]),
-          child: Stack(
-            fit: StackFit.expand,
-            children: [
-              CachedNetworkImage(
-                imageUrl: url,
-                fit: BoxFit.cover,
-                placeholder: (context, url) => const Center(
-                  child: CircularProgressIndicator(
-                    strokeWidth: 2.0,
-                    color: Color(0xAA8B5CF6),
-                  ),
+  // --- Header Block Builder ---
+  Widget _buildHeaderBlock(BuildContext context, UserModel profile) {
+    final age = profile.age;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Name and Age (Takes available space)
+            Flexible(
+              child: Text(
+                '${profile.name ?? 'Name'}${age != null ? ', $age' : ''}',
+                style: GoogleFonts.poppins(
+                  fontSize: 26,
+                  fontWeight: FontWeight.bold,
+                  color: Colors.black87,
                 ),
-                errorWidget: (context, url, error) => Center(
-                  child: Icon(
-                    Icons.broken_image_outlined,
-                    color: Colors.grey[400],
-                    size: 40,
-                  ),
-                ),
+                softWrap: true,
               ),
-              if (isVideo)
-                Center(
-                  child: Container(
-                    padding: const EdgeInsets.all(10),
-                    decoration: BoxDecoration(
-                      color: Colors.black.withOpacity(0.5),
-                      shape: BoxShape.circle,
-                    ),
-                    child: const Icon(Icons.play_arrow_rounded,
-                        color: Colors.white, size: 30),
-                  ),
-                ),
-              Positioned(
-                bottom: 10,
-                right: 10,
-                child: _buildSmallLikeButton(
-                  () => _showInteractionDialog(
-                    context,
-                    ref,
-                    ContentLikeType.media,
-                    index.toString(),
-                    url,
-                  ),
-                ),
+            ),
+            // More Options Menu Button
+            _buildHeaderMenuButton(context), // Use the helper
+          ],
+        ),
+        // Location (remains below the Name/Age/Menu row)
+        if (profile.hometown != null && profile.hometown!.isNotEmpty) ...[
+          const SizedBox(height: 4),
+          Row(
+            children: [
+              Icon(Icons.location_on_outlined,
+                  size: 16, color: Colors.grey[600]),
+              const SizedBox(width: 4),
+              Text(
+                profile.hometown!,
+                style:
+                    GoogleFonts.poppins(fontSize: 14, color: Colors.grey[700]),
               ),
             ],
           ),
+        ],
+      ],
+    );
+  }
+
+  // --- Header Menu Button Helper ---
+  Widget _buildHeaderMenuButton(BuildContext context) {
+    return PopupMenuButton<String>(
+      tooltip: "More options",
+      icon: Icon(Icons.more_vert_rounded, color: Colors.grey.shade600),
+      padding: EdgeInsets.zero,
+      constraints: const BoxConstraints(),
+      onSelected: (String result) {
+        if (result == 'report') {
+          _handleReport(context);
+        }
+      },
+      itemBuilder: (BuildContext context) => <PopupMenuEntry<String>>[
+        PopupMenuItem<String>(
+          value: 'report',
+          child: ListTile(
+            leading: Icon(Icons.flag_outlined, color: Colors.redAccent),
+            // *** MODIFIED: Simplified Text ***
+            title: Text('Report',
+                style: GoogleFonts.poppins(color: Colors.redAccent)),
+            // *** END MODIFICATION ***
+            dense: true,
+            contentPadding: EdgeInsets.symmetric(horizontal: 8.0),
+          ),
         ),
+      ],
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(10.0),
       ),
     );
   }
 
-  // --- Other Helper Methods (_buildHeaderBlock, _buildVitalsBlock, etc.) ---
-  // ... (keep these as they were in the previous correct version) ...
-  Widget _buildHeaderBlock(UserModel profile) {
-    final age = profile.age;
-    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Flexible(
-                child: Text(
-                    '${profile.name ?? 'Name'}${age != null ? ', $age' : ''}',
-                    style: GoogleFonts.poppins(
-                        fontSize: 26,
-                        fontWeight: FontWeight.bold,
-                        color: Colors.black87)))
-          ]),
-      if (profile.hometown != null && profile.hometown!.isNotEmpty) ...[
-        const SizedBox(height: 4),
-        Row(children: [
-          Icon(Icons.location_on_outlined, size: 16, color: Colors.grey[600]),
-          const SizedBox(width: 4),
-          Text(profile.hometown!,
-              style: GoogleFonts.poppins(fontSize: 14, color: Colors.grey[700]))
-        ])
-      ]
-    ]);
-  }
-
+  // --- Other Helper Methods (_buildVitalsBlock, etc. remain unchanged) ---
   Widget _buildVitalsBlock(UserModel profile) {
     final List<Widget> vitals = [];
     if (profile.height != null && profile.height!.isNotEmpty) {
@@ -19516,8 +19779,52 @@ class HomeProfileCard extends ConsumerWidget {
           Expanded(
               child: Text(label,
                   style: GoogleFonts.poppins(
-                      fontSize: 15, color: Colors.grey[800])))
+                      fontSize: 15, color: Colors.grey[800]),
+                  overflow: TextOverflow.ellipsis))
         ]));
+  }
+
+  Widget _buildMediaItem(
+      BuildContext context, WidgetRef ref, String url, int index) {
+    bool isVideo = url.toLowerCase().contains('.mp4') ||
+        url.toLowerCase().contains('.mov') ||
+        url.toLowerCase().contains('.avi') ||
+        url.toLowerCase().contains('.webm');
+    return ClipRRect(
+        borderRadius: BorderRadius.circular(10),
+        child: AspectRatio(
+            aspectRatio: 4 / 5.5,
+            child: Container(
+                decoration: BoxDecoration(color: Colors.grey[200]),
+                child: Stack(fit: StackFit.expand, children: [
+                  CachedNetworkImage(
+                      imageUrl: url,
+                      fit: BoxFit.cover,
+                      placeholder: (context, url) => const Center(
+                          child: CircularProgressIndicator(
+                              strokeWidth: 2.0, color: Color(0xAA8B5CF6))),
+                      errorWidget: (context, url, error) => Center(
+                          child: Icon(Icons.broken_image_outlined,
+                              color: Colors.grey[400], size: 40))),
+                  if (isVideo)
+                    Center(
+                        child: Container(
+                            padding: const EdgeInsets.all(10),
+                            decoration: BoxDecoration(
+                                color: Colors.black.withOpacity(0.5),
+                                shape: BoxShape.circle),
+                            child: const Icon(Icons.play_arrow_rounded,
+                                color: Colors.white, size: 30))),
+                  Positioned(
+                      bottom: 10,
+                      right: 10,
+                      child: _buildSmallLikeButton(() => _showInteractionDialog(
+                          context,
+                          ref,
+                          ContentLikeType.media,
+                          index.toString(),
+                          url)))
+                ]))));
   }
 
   Widget _buildPromptItem(BuildContext context, WidgetRef ref, Prompt prompt) {
