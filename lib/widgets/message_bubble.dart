@@ -1,13 +1,14 @@
 // lib/widgets/message_bubble.dart
-// import 'dart:convert'; // No longer needed here unless parsing JSON directly
+// import 'dart:convert'; // Keep if needed elsewhere, not strictly for this file now
 import 'dart:io';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:dtx/models/chat_message.dart';
 import 'package:dtx/providers/audio_player_provider.dart';
+import 'package:dtx/providers/conversation_provider.dart'; // <<<--- ADDED for optimistic update call
+import 'package:dtx/providers/user_provider.dart'; // <<<--- ADDED for current user ID
 import 'package:dtx/providers/service_provider.dart';
 import 'package:dtx/services/chat_service.dart';
-// Removed unused ReactionEmojiPicker import, assuming it's in its own file now
-import 'package:dtx/widgets/reaction_emoji_picker.dart'; // <<<--- ADD this import if picker is in separate file
+import 'package:dtx/widgets/reaction_emoji_picker.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -15,6 +16,55 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:audioplayers/audioplayers.dart';
 import 'package:path/path.dart' as p;
 import 'package:url_launcher/url_launcher.dart';
+
+// --- Simple Emoji Picker (Keep as is) ---
+class SimpleEmojiPicker extends StatelessWidget {
+  final Function(String) onEmojiSelected;
+  final List<String> reactionEmojis = const [
+    '👍',
+    '❤️',
+    '😂',
+    '😮',
+    '😢',
+    '😠'
+  ];
+
+  const SimpleEmojiPicker({Key? key, required this.onEmojiSelected})
+      : super(key: key);
+
+  @override
+  Widget build(BuildContext context) {
+    if (kDebugMode) print("[ReactionEmojiPicker] Building picker widget.");
+    return Material(
+      elevation: 6.0,
+      borderRadius: BorderRadius.circular(25.0),
+      color: Colors.white,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 10.0, vertical: 6.0),
+        child: Wrap(
+          spacing: 6.0,
+          runSpacing: 0.0,
+          alignment: WrapAlignment.center,
+          children: reactionEmojis.map((emoji) {
+            return InkWell(
+              onTap: () {
+                if (kDebugMode)
+                  print("[ReactionEmojiPicker] Emoji selected: $emoji");
+                onEmojiSelected(emoji);
+              },
+              borderRadius: BorderRadius.circular(20),
+              child: Padding(
+                padding: const EdgeInsets.all(7.0),
+                child: Text(emoji, style: const TextStyle(fontSize: 25)),
+              ),
+            );
+          }).toList(),
+        ),
+      ),
+    );
+  }
+}
+// --- End Simple Emoji Picker ---
 
 class MessageBubble extends ConsumerStatefulWidget {
   final ChatMessage message;
@@ -51,6 +101,7 @@ class _MessageBubbleState extends ConsumerState<MessageBubble>
 
   // --- Helpers (Keep as is) ---
   String getFilenameFromUrl(String? url) {
+    /* ... no changes ... */
     if (url == null || url.isEmpty) return "File";
     try {
       final uri = Uri.parse(url);
@@ -72,6 +123,7 @@ class _MessageBubbleState extends ConsumerState<MessageBubble>
   }
 
   Future<void> _openMedia(BuildContext context, String url) async {
+    /* ... no changes ... */
     final Uri uri = Uri.parse(url);
     if (!await canLaunchUrl(uri)) {
       if (context.mounted)
@@ -111,6 +163,7 @@ class _MessageBubbleState extends ConsumerState<MessageBubble>
 
   // --- _buildReplySnippet (Keep as is) ---
   Widget _buildReplySnippet() {
+    /* ... no changes ... */
     final repliedTo = widget.message;
     final textSnippet = repliedTo.repliedMessageTextSnippet;
     final mediaType = repliedTo.repliedMessageMediaType;
@@ -123,11 +176,9 @@ class _MessageBubbleState extends ConsumerState<MessageBubble>
     final Color contentColor =
         widget.isMe ? Colors.white.withOpacity(0.9) : Colors.black54;
     final Color indicatorColor = nameColor;
-
     String contentPreview =
         (textSnippet != null && textSnippet.isNotEmpty) ? textSnippet : '';
     IconData? mediaIcon;
-
     if (contentPreview.isEmpty) {
       if (mediaType?.startsWith('image/') ?? false) {
         contentPreview = "Photo";
@@ -145,7 +196,6 @@ class _MessageBubbleState extends ConsumerState<MessageBubble>
         contentPreview = "Original message";
       }
     }
-
     return Container(
       padding: const EdgeInsets.only(left: 8, right: 8, top: 6, bottom: 6),
       margin: const EdgeInsets.only(bottom: 4, left: 1, right: 1, top: 1),
@@ -194,11 +244,11 @@ class _MessageBubbleState extends ConsumerState<MessageBubble>
   }
   // --- End _buildReplySnippet ---
 
-  // *** --- START: Reaction Methods MODIFIED with Logging --- ***
+  // --- Reaction Methods ---
 
-  // Method to show the emoji picker overlay
   void _showEmojiPicker(BuildContext context, Offset globalPosition) {
-    if (!mounted) return; // Check if widget is still in the tree
+    /* ... keep previous implementation ... */
+    if (!mounted) return;
     if (kDebugMode)
       print(
           "[MessageBubble _showEmojiPicker] Attempting to show picker for message ID: ${widget.message.messageID}");
@@ -207,25 +257,21 @@ class _MessageBubbleState extends ConsumerState<MessageBubble>
     final RenderBox renderBox = context.findRenderObject() as RenderBox;
     final size = renderBox.size;
     final localBubblePosition = renderBox.localToGlobal(Offset.zero);
-
     final screenWidth = MediaQuery.of(context).size.width;
     final screenHeight = MediaQuery.of(context).size.height;
     final safeAreaTop = MediaQuery.of(context).padding.top;
     final safeAreaBottom = MediaQuery.of(context).padding.bottom;
-
     const pickerWidthEstimate = 260.0;
     const pickerHeightEstimate = 60.0;
     const double verticalGap = 8.0;
-
     final spaceAbove = localBubblePosition.dy - safeAreaTop;
     final bool showAbove =
-        spaceAbove >= (pickerHeightEstimate + verticalGap + 10); // Add buffer
+        spaceAbove >= (pickerHeightEstimate + verticalGap + 10);
     double top = showAbove
         ? localBubblePosition.dy - pickerHeightEstimate - verticalGap
         : localBubblePosition.dy + size.height + verticalGap;
     top = top.clamp(safeAreaTop + 5,
         screenHeight - safeAreaBottom - pickerHeightEstimate - 5);
-
     double left =
         localBubblePosition.dx + (size.width / 2) - (pickerWidthEstimate / 2);
     left = left.clamp(10.0, screenWidth - pickerWidthEstimate - 10.0);
@@ -239,7 +285,6 @@ class _MessageBubbleState extends ConsumerState<MessageBubble>
 
     _emojiPickerOverlay = OverlayEntry(
       builder: (overlayContext) {
-        // Use overlayContext
         return Stack(
           children: [
             Positioned.fill(
@@ -257,7 +302,6 @@ class _MessageBubbleState extends ConsumerState<MessageBubble>
             Positioned(
               top: top,
               left: left,
-              // Ensure the picker is built with the correct context if needed
               child: ReactionEmojiPicker(
                 onEmojiSelected: (emoji) {
                   _handleReaction(emoji);
@@ -283,12 +327,10 @@ class _MessageBubbleState extends ConsumerState<MessageBubble>
     }
   }
 
-  // Method to remove the emoji picker overlay
   void _removeEmojiPicker() {
+    /* ... keep previous implementation ... */
     if (_emojiPickerOverlay != null) {
       try {
-        // Check if overlay is still mounted in the tree before removing
-        // This check might not be directly available, rely on try-catch
         _emojiPickerOverlay!.remove();
         if (kDebugMode)
           print(
@@ -298,31 +340,61 @@ class _MessageBubbleState extends ConsumerState<MessageBubble>
           print(
               "[MessageBubble _removeEmojiPicker] Error removing overlay (might have already been removed): $e");
       } finally {
-        // Always set to null, regardless of removal success
         if (_emojiPickerOverlay != null) {
-          // Check again before setting null
           _emojiPickerOverlay = null;
         }
       }
     }
   }
 
-  // Method to handle reaction selection
+  // *** --- START: MODIFIED _handleReaction --- ***
   void _handleReaction(String emoji) {
+    // Basic validation
     if (widget.message.messageID <= 0) {
       if (kDebugMode)
         print(
             "[MessageBubble _handleReaction] Error: Cannot react to unsaved message ID: ${widget.message.messageID}.");
       return;
     }
+    if (!mounted) return; // Check if widget is still mounted
+
     if (kDebugMode)
       print(
-          "[MessageBubble _handleReaction] Reacting to Message ID: ${widget.message.messageID} with Emoji: $emoji");
-    ref.read(chatServiceProvider).sendReaction(widget.message.messageID, emoji);
-  }
+          "[MessageBubble _handleReaction] Optimistically applying & sending reaction: MsgID=${widget.message.messageID}, Emoji=$emoji");
 
-  // Method to build the reaction display area
+    // --- 1. Apply Optimistically ---
+    // Find the other user's ID to get the correct provider instance
+    final currentUserId = ref.read(currentUserIdProvider);
+    if (currentUserId == null) {
+      if (kDebugMode)
+        print(
+            "[MessageBubble _handleReaction] Error: Could not get current user ID for optimistic update.");
+      return; // Should not happen if user is in chat
+    }
+    final otherUserId = widget.message.senderUserID == currentUserId
+        ? widget.message.recipientUserID
+        : widget.message.senderUserID;
+
+    // Call the new optimistic method on the correct ConversationNotifier
+    // IMPORTANT: Ensure ConversationNotifier has the optimisticApplyReaction method
+    ref
+        .read(conversationProvider(otherUserId).notifier)
+        .optimisticallyApplyReaction(widget.message.messageID, emoji);
+    if (kDebugMode)
+      print(
+          "[MessageBubble _handleReaction] Optimistic update called for ConversationNotifier($otherUserId).");
+
+    // --- 2. Send to Backend ---
+    ref.read(chatServiceProvider).sendReaction(widget.message.messageID, emoji);
+    if (kDebugMode)
+      print(
+          "[MessageBubble _handleReaction] Reaction sent to backend via ChatService.");
+  }
+  // *** --- END: MODIFIED _handleReaction --- ***
+
+  // _buildReactionsDisplay (Keep as is)
   Widget _buildReactionsDisplay() {
+    /* ... keep previous implementation ... */
     final reactions = widget.message.reactionsSummary;
     final currentUserReaction = widget.message.currentUserReaction;
     if (reactions == null || reactions.isEmpty) return const SizedBox.shrink();
@@ -332,7 +404,7 @@ class _MessageBubbleState extends ConsumerState<MessageBubble>
     final sortedEntries = reactions.entries.toList()
       ..sort((a, b) => b.value.compareTo(a.value));
     return Positioned(
-      bottom: -8, // Adjusted overlap
+      bottom: -8,
       left: widget.isMe ? null : 12,
       right: widget.isMe ? 12 : null,
       child: Container(
@@ -375,7 +447,7 @@ class _MessageBubbleState extends ConsumerState<MessageBubble>
       ),
     );
   }
-  // *** --- END: Reaction Methods MODIFIED --- ***
+  // --- End Reaction Methods ---
 
   @override
   Widget build(BuildContext context) {
@@ -429,14 +501,13 @@ class _MessageBubbleState extends ConsumerState<MessageBubble>
       final bool isUsingLocalFile =
           displayPath == message.localFilePath && message.localFilePath != null;
       final bool isMediaSent = message.status == ChatMessageStatus.sent;
-
       if (displayPath == null || displayPath.isEmpty) {
         messageContent = Text(
           "[Media Error]",
           style: GoogleFonts.poppins(color: Colors.red, fontSize: 14),
         );
       } else if (mediaType.startsWith('image/')) {
-        Widget imageToShow;
+        /* ... image rendering ... */ Widget imageToShow;
         if (isUsingLocalFile) {
           imageToShow = Image.file(File(displayPath),
               key: ValueKey(displayPath),
@@ -459,7 +530,7 @@ class _MessageBubbleState extends ConsumerState<MessageBubble>
           child: imageToShow,
         );
       } else if (mediaType.startsWith('video/')) {
-        messageContent = InkWell(
+        /* ... video rendering ... */ messageContent = InkWell(
           onTap: isMediaSent && !isUsingLocalFile
               ? () => _openMedia(context, displayPath)
               : null,
@@ -499,7 +570,8 @@ class _MessageBubbleState extends ConsumerState<MessageBubble>
           ),
         );
       } else if (mediaType.startsWith('audio/')) {
-        final audioPlayerState = ref.watch(audioPlayerStateProvider);
+        /* ... audio rendering ... */ final audioPlayerState =
+            ref.watch(audioPlayerStateProvider);
         final currentPlayingUrl = ref.watch(currentAudioUrlProvider);
         final playerNotifier = ref.read(audioPlayerControllerProvider.notifier);
         final bool canPlay = isMediaSent && !isUsingLocalFile;
@@ -554,7 +626,7 @@ class _MessageBubbleState extends ConsumerState<MessageBubble>
           ),
         ]);
       } else {
-        messageContent = InkWell(
+        /* ... generic file rendering ... */ messageContent = InkWell(
           onTap: isMediaSent && !isUsingLocalFile
               ? () => _openMedia(context, displayPath)
               : null,
@@ -584,31 +656,28 @@ class _MessageBubbleState extends ConsumerState<MessageBubble>
       );
     }
 
-    // --- *** MODIFIED Final Bubble Structure *** ---
+    // Final Bubble Structure (Keep as is, uses modified _handleReaction)
     return Align(
       alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
       child: Padding(
-        // Add outer padding for reaction display space
         padding: EdgeInsets.only(
-            bottom: (message.reactionsSummary?.isNotEmpty ?? false)
-                ? 18.0 // More padding if reactions exist
-                : 0.0), // Less/no padding if no reactions
+            bottom:
+                (message.reactionsSummary?.isNotEmpty ?? false) ? 18.0 : 0.0),
         child: Stack(
-          clipBehavior: Clip.none, // Allow reactions to overflow
+          clipBehavior: Clip.none,
           children: [
-            // The main bubble content wrapped in GestureDetector and Dismissible
             Dismissible(
               key: Key(message.messageID.toString() +
                   (message.tempId ?? '') +
-                  '_dismissible'), // Unique key
+                  '_dismissible'),
               direction: DismissDirection.startToEnd,
               confirmDismiss: (direction) async {
-                if (!mounted) return false; // Check mount status
+                if (!mounted) return false;
                 if (kDebugMode)
                   print(
                       "[MessageBubble] Swiped message ID: ${message.messageID}");
                 widget.onReplyInitiated(message);
-                return false; // Don't actually dismiss
+                return false;
               },
               background: Container(
                 decoration: BoxDecoration(
@@ -619,10 +688,7 @@ class _MessageBubbleState extends ConsumerState<MessageBubble>
                 child: const Icon(Icons.reply, color: Colors.blue),
               ),
               child: GestureDetector(
-                // *** Attach Key to GestureDetector if needed, e.g., for finding RenderBox ***
-                // key: ValueKey(message.messageID.toString() + (message.tempId ?? '') + '_gesturedetector'),
                 onLongPressStart: (LongPressStartDetails details) {
-                  // --- Added Check: Prevent reacting on own messages ---
                   if (!widget.isMe) {
                     if (message.status != ChatMessageStatus.sent) {
                       if (kDebugMode)
@@ -639,7 +705,6 @@ class _MessageBubbleState extends ConsumerState<MessageBubble>
                     if (kDebugMode)
                       print(
                           "[MessageBubble onLongPressStart] Long press detected on message ID: ${message.messageID}");
-                    // Pass the BUILD CONTEXT of the bubble, not the overlay context
                     _showEmojiPicker(context, details.globalPosition);
                   } else {
                     if (kDebugMode)
@@ -647,9 +712,7 @@ class _MessageBubbleState extends ConsumerState<MessageBubble>
                           "[MessageBubble onLongPressStart] Ignoring long press on own message.");
                   }
                 },
-                // --- End Check ---
                 child: Container(
-                  // The main visual bubble
                   constraints: BoxConstraints(
                     maxWidth: MediaQuery.of(context).size.width * 0.75,
                   ),
@@ -705,15 +768,12 @@ class _MessageBubbleState extends ConsumerState<MessageBubble>
                     ),
                   ),
                 ),
-              ), // End GestureDetector
-            ), // End Dismissible
-
-            // Reaction Display
+              ),
+            ),
             _buildReactionsDisplay(),
           ],
         ),
       ),
     );
-    // --- *** END MODIFIED Final Bubble Structure *** ---
   }
 }
