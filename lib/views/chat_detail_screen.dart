@@ -956,6 +956,13 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
           }
         }
         final keyId = message.tempId ?? message.messageID.toString();
+        String originalSenderDisplayName = "Unknown"; // Default
+        if (message.isReply && message.repliedMessageSenderID != null) {
+          originalSenderDisplayName =
+              message.repliedMessageSenderID == currentUserId
+                  ? "You"
+                  : widget.matchName; // Use the match name passed to the screen
+        }
 
         // *** ADDED: Pass onReplyInitiated callback ***
         return Padding(
@@ -966,6 +973,8 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
               message: message,
               isMe: isMe,
               showTail: showTail,
+              originalSenderDisplayName:
+                  originalSenderDisplayName, // *** ADDED ***
               // Call startReplying when bubble signals reply initiation
               onReplyInitiated: (messageToReply) {
                 print(

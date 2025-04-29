@@ -5,8 +5,7 @@ import 'package:dtx/models/chat_message.dart';
 import 'package:dtx/providers/audio_player_provider.dart';
 import 'package:dtx/providers/conversation_provider.dart';
 import 'package:dtx/providers/user_provider.dart';
-import 'package:dtx/services/chat_service.dart';
-import 'package:flutter/foundation.dart'; // For kDebugMode
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_fonts/google_fonts.dart';
@@ -19,6 +18,9 @@ class MessageBubble extends ConsumerStatefulWidget {
   final bool isMe;
   final bool showTail;
   final Function(ChatMessage message) onReplyInitiated;
+  // *** ADDED: Parameter for original sender's display name ***
+  final String originalSenderDisplayName;
+  // *** END ADDED ***
 
   const MessageBubble({
     Key? key,
@@ -26,6 +28,7 @@ class MessageBubble extends ConsumerStatefulWidget {
     required this.isMe,
     required this.showTail,
     required this.onReplyInitiated,
+    required this.originalSenderDisplayName, // *** ADDED ***
   }) : super(key: key);
 
   @override
@@ -39,7 +42,6 @@ class _MessageBubbleState extends ConsumerState<MessageBubble>
 
   // --- Helpers (Keep as previously defined) ---
   String getFilenameFromUrl(String? url) {
-    // ... (no changes needed) ...
     if (url == null || url.isEmpty) return "File";
     try {
       final uri = Uri.parse(url);
@@ -61,7 +63,6 @@ class _MessageBubbleState extends ConsumerState<MessageBubble>
   }
 
   Future<void> _openMedia(BuildContext context, String url) async {
-    // ... (no changes needed) ...
     final Uri uri = Uri.parse(url);
     if (!await canLaunchUrl(uri)) {
       if (context.mounted) {
@@ -91,7 +92,6 @@ class _MessageBubbleState extends ConsumerState<MessageBubble>
   }
 
   Widget _buildMediaLoadingPlaceholder({required bool isMe}) {
-    // ... (no changes needed) ...
     return const Center(
       child: Padding(
         padding: EdgeInsets.symmetric(vertical: 40.0, horizontal: 40.0),
@@ -102,7 +102,6 @@ class _MessageBubbleState extends ConsumerState<MessageBubble>
   }
 
   Widget _buildMediaErrorPlaceholder({required bool isMe}) {
-    // ... (no changes needed) ...
     return Container(
       color: Colors.grey[isMe ? 700 : 200]?.withOpacity(0.3),
       child: Center(
@@ -112,41 +111,33 @@ class _MessageBubbleState extends ConsumerState<MessageBubble>
   }
   // --- End Helpers ---
 
-  // --- Helper to build reply snippet UI ---
+  // --- *** MODIFIED: _buildReplySnippet *** ---
   Widget _buildReplySnippet() {
-    // *** ADDED LOG ***
-    print(
-        "[MessageBubble _buildReplySnippet] Building for Msg ID: ${widget.message.messageID}");
-
-    final repliedTo = widget.message; // The current message IS the reply
-    final originalSenderId = repliedTo.repliedMessageSenderID;
+    final repliedTo = widget.message;
     final textSnippet = repliedTo.repliedMessageTextSnippet;
     final mediaType = repliedTo.repliedMessageMediaType;
-    final currentUserId = ref.read(currentUserIdProvider);
 
-    // *** ADDED LOG ***
-    print("  - Original Sender ID: $originalSenderId");
-    print("  - Text Snippet: '$textSnippet'");
-    print("  - Media Type: $mediaType");
-    print("  - Current User ID: $currentUserId");
+    // Use the display name passed from the parent
+    final String originalSenderName = widget.originalSenderDisplayName;
 
-    if (originalSenderId == null) {
-      print("  - Skipping snippet: originalSenderId is null.");
-      return const SizedBox.shrink();
-    }
-
-    final originalSenderName =
-        originalSenderId == currentUserId ? "You" : "Them";
-    final Color snippetColor = widget.isMe ? Colors.white70 : Colors.black54;
-    final Color nameColor =
-        widget.isMe ? Colors.white : const Color(0xFF7C3AED);
+    // Define colors based on who sent the *current* message (the reply)
+    final Color snippetBgColor = widget.isMe
+        ? const Color(0xFF7C3AED)
+            .withOpacity(0.8) // Slightly darker purple for own reply snippet
+        : Colors.grey.shade200; // Light grey for other's reply snippet
+    final Color nameColor = widget.isMe
+        ? Colors.white // White name on purple
+        : const Color(0xFF7C3AED); // Purple name on grey
+    final Color contentColor = widget.isMe
+        ? Colors.white.withOpacity(0.9) // Slightly lighter content on purple
+        : Colors.black54; // Darker grey content on grey
+    final Color indicatorColor = nameColor; // Match indicator to name color
 
     String contentPreview =
         (textSnippet != null && textSnippet.isNotEmpty) ? textSnippet : '';
     IconData? mediaIcon;
 
     if (contentPreview.isEmpty) {
-      print("  - Text snippet empty, checking media type...");
       if (mediaType?.startsWith('image/') ?? false) {
         contentPreview = "Photo";
         mediaIcon = Icons.photo_camera_back_outlined;
@@ -160,28 +151,30 @@ class _MessageBubbleState extends ConsumerState<MessageBubble>
         contentPreview = "File";
         mediaIcon = Icons.attach_file_outlined;
       } else {
-        contentPreview = "Original message"; // Fallback
-        print("  - No media type found, using fallback preview.");
+        contentPreview = "Original message";
       }
-    } else {
-      print("  - Using text snippet for preview.");
     }
-    print("  - Final Content Preview: '$contentPreview', Icon: $mediaIcon");
 
     return Container(
-      // ... (rest of the snippet container decoration - no changes) ...
-      padding: const EdgeInsets.only(left: 8, right: 8, top: 6, bottom: 4),
-      margin: const EdgeInsets.only(bottom: 4), // Space below snippet
+      padding: const EdgeInsets.only(
+          left: 8, right: 8, top: 6, bottom: 6), // Adjusted padding
+      margin: const EdgeInsets.only(
+          bottom: 4,
+          left: 1,
+          right: 1,
+          top: 1), // Add slight margin inside bubble
       decoration: BoxDecoration(
-        color: (widget.isMe ? Colors.white : Colors.black).withOpacity(0.1),
+        color: snippetBgColor, // Use dynamic background
+        // Apply rounding *only* to top corners if it's the first element
         borderRadius: const BorderRadius.only(
-          topLeft: Radius.circular(12),
-          topRight: Radius.circular(12),
+          topLeft: Radius.circular(14), // Slightly less rounded
+          topRight: Radius.circular(14),
         ),
+        // Apply the left border indicator
         border: Border(
           left: BorderSide(
-            color: nameColor.withOpacity(0.7),
-            width: 3,
+            color: indicatorColor, // Use dynamic indicator color
+            width: 4, // Slightly thicker indicator
           ),
         ),
       ),
@@ -189,26 +182,27 @@ class _MessageBubbleState extends ConsumerState<MessageBubble>
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            originalSenderName,
+            originalSenderName, // Use the passed display name
             style: GoogleFonts.poppins(
-              color: nameColor,
+              color: nameColor, // Use dynamic name color
               fontWeight: FontWeight.w600,
-              fontSize: 12,
+              fontSize: 13, // Slightly larger name
             ),
           ),
-          const SizedBox(height: 2),
+          const SizedBox(height: 3), // Adjust spacing
           Row(
             mainAxisSize: MainAxisSize.min,
             children: [
               if (mediaIcon != null)
-                Icon(mediaIcon, size: 14, color: snippetColor),
+                Icon(mediaIcon,
+                    size: 15, color: contentColor), // Slightly larger icon
               if (mediaIcon != null && contentPreview.isNotEmpty)
-                const SizedBox(width: 4),
+                const SizedBox(width: 5),
               Flexible(
                 child: Text(
                   contentPreview,
                   style: GoogleFonts.poppins(
-                    color: snippetColor,
+                    color: contentColor, // Use dynamic content color
                     fontSize: 13,
                   ),
                   maxLines: 1,
@@ -221,7 +215,7 @@ class _MessageBubbleState extends ConsumerState<MessageBubble>
       ),
     );
   }
-  // --- END Reply Snippet Helper ---
+  // --- *** END MODIFIED *** ---
 
   @override
   Widget build(BuildContext context) {
@@ -231,7 +225,7 @@ class _MessageBubbleState extends ConsumerState<MessageBubble>
     final isMe = widget.isMe;
     final showTail = widget.showTail;
 
-    // *** ADDED Detailed Log for Message Data ***
+    // --- Log message data (keep) ---
     if (kDebugMode) {
       print("--- Building MessageBubble ---");
       print("  Msg ID: ${message.messageID}");
@@ -243,22 +237,28 @@ class _MessageBubbleState extends ConsumerState<MessageBubble>
       print("  Media URL: ${message.mediaUrl}");
       print("  Media Type: ${message.mediaType}");
       print("  Status: ${message.status}");
-      print("  Is Reply: ${message.isReply}"); // Log the getter result
+      print("  Is Reply: ${message.isReply}");
       print("  Reply To ID: ${message.replyToMessageID}");
       print("  Replied Sender ID: ${message.repliedMessageSenderID}");
       print("  Replied Snippet: '${message.repliedMessageTextSnippet}'");
       print("  Replied Media Type: ${message.repliedMessageMediaType}");
       print("-----------------------------");
     }
-    // *** END ADDED LOG ***
+    // --- End Log ---
 
     final radius = Radius.circular(18.0);
+    // *** MODIFIED: Adjust borderRadius based on whether it's a reply ***
     final borderRadius = BorderRadius.only(
-      topLeft: radius,
-      topRight: radius,
+      topLeft: message.isReply
+          ? const Radius.circular(8)
+          : radius, // Less rounded if reply
+      topRight: message.isReply
+          ? const Radius.circular(8)
+          : radius, // Less rounded if reply
       bottomLeft: isMe || !showTail ? radius : Radius.zero,
       bottomRight: !isMe || !showTail ? radius : Radius.zero,
     );
+    // *** END MODIFIED ***
 
     Widget messageContent;
     Widget? statusIcon;
@@ -329,8 +329,7 @@ class _MessageBubbleState extends ConsumerState<MessageBubble>
               ? () => _openMedia(context, displayPath)
               : null,
           child: Container(
-            /* ... video placeholder ... */
-            padding: const EdgeInsets.all(10),
+            /* ... video placeholder ... */ padding: const EdgeInsets.all(10),
             constraints: BoxConstraints(
                 maxWidth: MediaQuery.of(context).size.width * 0.65,
                 minHeight: 100),
@@ -379,8 +378,7 @@ class _MessageBubbleState extends ConsumerState<MessageBubble>
             currentPlayingUrl == displayPath &&
             audioPlayerState == AudioPlayerState.paused;
         messageContent = Row(
-            /* ... audio content ... */
-            mainAxisSize: MainAxisSize.min,
+            /* ... audio content ... */ mainAxisSize: MainAxisSize.min,
             children: [
               IconButton(
                 icon: isThisLoading
@@ -429,8 +427,7 @@ class _MessageBubbleState extends ConsumerState<MessageBubble>
               ? () => _openMedia(context, displayPath)
               : null,
           child: Row(
-              /* ... generic file content ... */
-              mainAxisSize: MainAxisSize.min,
+              /* ... generic file content ... */ mainAxisSize: MainAxisSize.min,
               children: [
                 Icon(Icons.insert_drive_file_outlined,
                     color: isMe ? Colors.white70 : Colors.grey[600], size: 30),
@@ -449,7 +446,6 @@ class _MessageBubbleState extends ConsumerState<MessageBubble>
         );
       }
     } else {
-      // --- TEXT MESSAGE ---
       messageContent = Text(
         message.messageText,
         style: GoogleFonts.poppins(
@@ -460,9 +456,6 @@ class _MessageBubbleState extends ConsumerState<MessageBubble>
     }
 
     // --- Build Final Bubble Structure ---
-    // *** ADDED Log before conditional rendering ***
-    if (kDebugMode)
-      print("  - Evaluating condition: message.isReply = ${message.isReply}");
     return Align(
       alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
       child: Dismissible(
@@ -475,7 +468,11 @@ class _MessageBubbleState extends ConsumerState<MessageBubble>
           return false; // Do not actually dismiss
         },
         background: Container(
-          color: Colors.blue.withOpacity(0.1),
+          // Simple background, ensures the bubble decoration shows correctly
+          decoration: BoxDecoration(
+              color: Colors.blue.withOpacity(0.1),
+              borderRadius: borderRadius // Match bubble radius
+              ),
           padding: const EdgeInsets.symmetric(horizontal: 20),
           alignment: Alignment.centerLeft,
           child: const Icon(Icons.reply, color: Colors.blue),
@@ -506,20 +503,27 @@ class _MessageBubbleState extends ConsumerState<MessageBubble>
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                // *** MODIFIED: Conditionally display reply snippet ***
-                if (message.isReply)
-                  _buildReplySnippet(), // Call the helper here
-                // *** END MODIFIED ***
+                // *** Conditionally display reply snippet ***
+                if (message.isReply) _buildReplySnippet(),
 
                 // Original content and status icon
                 Stack(
                   children: [
                     Padding(
+                      // *** MODIFIED: Add extra padding if it's a reply for visual separation ***
                       padding: message.isMedia &&
                               (message.mediaType?.startsWith('image/') ?? false)
-                          ? EdgeInsets.zero
-                          : const EdgeInsets.symmetric(
-                              horizontal: 14.0, vertical: 10.0),
+                          ? EdgeInsets.zero // No padding for images
+                          : EdgeInsets.only(
+                              // Add vertical padding conditionally
+                              left: 14.0,
+                              right: 14.0,
+                              top: message.isReply
+                                  ? 6.0
+                                  : 10.0, // Less top padding if reply
+                              bottom: 10.0,
+                            ),
+                      // *** END MODIFIED ***
                       child: messageContent,
                     ),
                     if (statusIcon != null)
