@@ -1,10 +1,12 @@
-// lib/widgets/match_list_tile.dart
-import 'package:dtx/models/user_model.dart'; // Using UserModel as MatchUser
+// File: lib/widgets/match_list_tile.dart
+import 'package:dtx/models/user_model.dart';
+import 'package:dtx/utils/date_formatter.dart'; // <-- IMPORT ADDED
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:flutter/foundation.dart'; // For kDebugMode
 
 class MatchListTile extends StatelessWidget {
-  final UserModel matchUser; // Use UserModel
+  final UserModel matchUser;
   final VoidCallback onTap;
 
   const MatchListTile({
@@ -15,6 +17,48 @@ class MatchListTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // --- ADDED LOGGING ---
+    if (kDebugMode) {
+      print(
+          "[MatchListTile build] UserID: ${matchUser.id}, Name: ${matchUser.name}, isOnline: ${matchUser.isOnline}, lastOnline: ${matchUser.lastOnline}");
+    }
+    // --- END LOGGING ---
+
+    // Determine subtitle content based on status
+    Widget subtitleWidget;
+    if (matchUser.isOnline) {
+      subtitleWidget = Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(Icons.circle, size: 9, color: Colors.green[600]),
+          const SizedBox(width: 4),
+          Text(
+            'Online',
+            style: GoogleFonts.poppins(
+              color: Colors.green[700],
+              fontSize: 13,
+              fontWeight: FontWeight.w500, // Make 'Online' slightly bolder
+            ),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
+        ],
+      );
+    } else {
+      // Use the formatter function
+      final lastSeenText = formatLastSeen(matchUser.lastOnline, short: true);
+      subtitleWidget = Text(
+        lastSeenText.isNotEmpty ? 'Last seen: $lastSeenText' : '',
+        // Using short format from helper
+        style: GoogleFonts.poppins(
+          color: Colors.grey[600],
+          fontSize: 13,
+        ),
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+      );
+    }
+
     return ListTile(
       contentPadding:
           const EdgeInsets.symmetric(horizontal: 16.0, vertical: 4.0),
@@ -37,15 +81,8 @@ class MatchListTile extends StatelessWidget {
         maxLines: 1,
         overflow: TextOverflow.ellipsis,
       ),
-      subtitle: Text(
-        "Matched with you", // Replace with last message later if needed
-        style: GoogleFonts.poppins(
-          color: Colors.grey[600],
-          fontSize: 13,
-        ),
-        maxLines: 1,
-        overflow: TextOverflow.ellipsis,
-      ),
+      subtitle:
+          subtitleWidget, // <-- USE THE DYNAMIC SUBTITLE WIDGET CREATED ABOVE
       trailing: Icon(Icons.chevron_right_rounded, color: Colors.grey[400]),
       onTap: onTap,
     );

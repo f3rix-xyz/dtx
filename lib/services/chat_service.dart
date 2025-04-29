@@ -1,7 +1,7 @@
-// START OF FILE: lib/services/chat_service.dart
+// File: lib/services/chat_service.dart
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io'; // Keep for potential future use
+import 'dart:io';
 // WebSocket Imports
 import 'package:web_socket_channel/io.dart';
 import 'package:web_socket_channel/status.dart' as WebSocketStatus;
@@ -12,13 +12,17 @@ import 'package:dtx/models/chat_message.dart';
 import 'package:dtx/providers/auth_provider.dart';
 import 'package:dtx/providers/conversation_provider.dart';
 import 'package:dtx/providers/user_provider.dart';
+import 'package:dtx/providers/status_provider.dart'; // <-- IMPORT ADDED
 import 'package:dtx/utils/token_storage.dart';
+import 'package:flutter/foundation.dart'; // <-- IMPORT ADDED (if not already)
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+// --- Keep WebSocketConnectionState enum and webSocketStateProvider ---
 enum WebSocketConnectionState { disconnected, connecting, connected, error }
 
 final webSocketStateProvider = StateProvider<WebSocketConnectionState>(
     (ref) => WebSocketConnectionState.disconnected);
+// ---
 
 class ChatService {
   final Ref _ref;
@@ -38,8 +42,8 @@ class ChatService {
     print("[ChatService] Initialized with URL: $_wsUrl");
   }
 
+  // --- connect logic remains the same ---
   Future<void> connect() async {
-    // --- connect logic remains the same ---
     _isManualDisconnect = false;
     if (_channel != null &&
         _ref.read(webSocketStateProvider) ==
@@ -70,7 +74,7 @@ class ChatService {
       );
       print("[ChatService] WebSocket channel created. Listening...");
       _streamSubscription = _channel!.stream.listen(
-        _onMessageReceived,
+        _onMessageReceived, // <<< Passes messages here
         onDone: _handleDisconnect,
         onError: _handleError,
         cancelOnError: false,
@@ -83,85 +87,121 @@ class ChatService {
       _handleError(e);
     }
   }
+  // --- End connect logic ---
 
   void _onMessageReceived(dynamic message) {
-    // --- _onMessageReceived logic remains the same ---
     print("[ChatService] Message received: $message");
     try {
       final Map<String, dynamic> decodedMessage = jsonDecode(message);
       final type = decodedMessage['type'] as String?;
-      if (type == 'chat_message') {
-        final messageId = decodedMessage['id'] as int?;
-        final senderId = decodedMessage['sender_user_id'] as int?;
-        final recipientId = decodedMessage['recipient_user_id'] as int?;
-        final sentAtString = decodedMessage['sent_at'] as String?;
-        final textContent = decodedMessage['text'] as String?;
-        final mediaUrlContent = decodedMessage['media_url'] as String?;
-        final mediaTypeContent = decodedMessage['media_type'] as String?;
-        if (messageId == null ||
-            messageId <= 0 ||
-            senderId == null ||
-            recipientId == null ||
-            sentAtString == null) {
+
+      switch (type) {
+        case 'chat_message':
+          // --- chat_message handling remains the same ---
+          final messageId = decodedMessage['id'] as int?;
+          final senderId = decodedMessage['sender_user_id'] as int?;
+          final recipientId = decodedMessage['recipient_user_id'] as int?;
+          final sentAtString = decodedMessage['sent_at'] as String?;
+          final textContent = decodedMessage['text'] as String?;
+          final mediaUrlContent = decodedMessage['media_url'] as String?;
+          final mediaTypeContent = decodedMessage['media_type'] as String?;
+          if (messageId == null ||
+              messageId <= 0 ||
+              senderId == null ||
+              recipientId == null ||
+              sentAtString == null) {
+            print(
+                "[ChatService] Received 'chat_message' with invalid/missing essential fields. Msg: $decodedMessage");
+            return;
+          }
+          final currentUserId = _ref.read(currentUserIdProvider);
+          if (currentUserId == null || recipientId != currentUserId) {
+            print(
+                "[ChatService] Received message not intended for current user ($currentUserId). Recipient was $recipientId. Ignoring.");
+            return;
+          }
+          if (senderId == currentUserId) {
+            print(
+                "[ChatService] Received message loopback from self (ID: $messageId). Ignoring.");
+            return;
+          }
+          DateTime sentAt;
+          try {
+            sentAt = DateTime.parse(sentAtString).toLocal();
+          } catch (e) {
+            print(
+                "[ChatService] Error parsing sent_at '$sentAtString': $e. Using local time as fallback.");
+            sentAt = DateTime.now();
+          }
+          final ChatMessage chatMessage = ChatMessage(
+            messageID: messageId,
+            senderUserID: senderId,
+            recipientUserID: recipientId,
+            messageText: textContent ?? '',
+            mediaUrl: mediaUrlContent,
+            mediaType: mediaTypeContent,
+            sentAt: sentAt,
+            status: ChatMessageStatus.sent,
+            isRead: false,
+            readAt: null,
+          );
+          _ref
+              .read(conversationProvider(senderId).notifier)
+              .addReceivedMessage(chatMessage);
           print(
-              "[ChatService] Received 'chat_message' with invalid/missing essential fields. Msg: $decodedMessage");
-          return;
-        }
-        final currentUserId = _ref.read(currentUserIdProvider);
-        if (currentUserId == null || recipientId != currentUserId) {
+              "[ChatService] Added received 'chat_message' (ID: $messageId) to conversation with $senderId");
+          break; // End case 'chat_message'
+
+        case 'message_ack':
+          // --- message_ack handling remains the same ---
+          print("[ChatService] Received message_ack: $decodedMessage");
+          _handleMessageAck(decodedMessage);
+          break; // End case 'message_ack'
+
+        // --- NEW: Handle status_update ---
+        case 'status_update':
+          print("[ChatService] Received status_update: $decodedMessage");
+          final userId = decodedMessage['user_id'] as int?;
+          final status = decodedMessage['status'] as String?;
+
+          if (userId == null || userId <= 0 || status == null) {
+            print(
+                "[ChatService] Invalid status_update message: Missing user_id or status. Data: $decodedMessage");
+            return;
+          }
+
+          final bool isOnline = status.toLowerCase() == 'online';
           print(
-              "[ChatService] Received message not intended for current user ($currentUserId). Recipient was $recipientId. Ignoring.");
-          return;
-        }
-        if (senderId == currentUserId) {
+              "[ChatService] Parsed status_update: UserID=$userId, isOnline=$isOnline");
+
+          // Broadcast the update using the new provider
+          _ref
+              .read(userStatusUpdateProvider.notifier)
+              .updateStatus(userId, isOnline);
+          break; // End case 'status_update'
+        // --- END NEW ---
+
+        case 'error':
           print(
-              "[ChatService] Received message loopback from self (ID: $messageId). Ignoring.");
-          return;
-        }
-        DateTime sentAt;
-        try {
-          sentAt = DateTime.parse(sentAtString).toLocal();
-        } catch (e) {
+              "[ChatService] Received error message from server: ${decodedMessage['content']}");
+          break; // End case 'error'
+
+        case 'info':
           print(
-              "[ChatService] Error parsing sent_at '$sentAtString': $e. Using local time as fallback.");
-          sentAt = DateTime.now();
-        }
-        final ChatMessage chatMessage = ChatMessage(
-          messageID: messageId,
-          senderUserID: senderId,
-          recipientUserID: recipientId,
-          messageText: textContent ?? '',
-          mediaUrl: mediaUrlContent,
-          mediaType: mediaTypeContent,
-          sentAt: sentAt,
-          status: ChatMessageStatus.sent,
-          isRead: false,
-          readAt: null,
-        );
-        _ref
-            .read(conversationProvider(senderId).notifier)
-            .addReceivedMessage(chatMessage);
-        print(
-            "[ChatService] Added received 'chat_message' (ID: $messageId) to conversation with $senderId");
-      } else if (type == 'message_ack') {
-        print("[ChatService] Received message_ack: $decodedMessage");
-        _handleMessageAck(decodedMessage);
-      } else if (type == 'error') {
-        print(
-            "[ChatService] Received error message from server: ${decodedMessage['content']}");
-      } else if (type == 'info') {
-        print(
-            "[ChatService] Received info message from server: ${decodedMessage['content']}");
-      } else {
-        print(
-            "[ChatService] Received unhandled message type '$type': $decodedMessage");
-      }
+              "[ChatService] Received info message from server: ${decodedMessage['content']}");
+          break; // End case 'info'
+
+        default:
+          print(
+              "[ChatService] Received unhandled message type '$type': $decodedMessage");
+      } // End switch (type)
     } catch (e, stacktrace) {
       print("[ChatService] Error processing received message: $e");
       print("[ChatService] Stacktrace: $stacktrace");
     }
   }
 
+  // --- sendMessage logic remains the same ---
   void sendMessage(
     int recipientUserId, {
     String? text,
@@ -169,7 +209,6 @@ class ChatService {
     String? mediaType,
     int? replyToMessageId,
   }) {
-    // --- sendMessage logic remains the same ---
     if (_channel == null ||
         _ref.read(webSocketStateProvider) !=
             WebSocketConnectionState.connected) {
@@ -228,8 +267,7 @@ class ChatService {
           mediaUrl: null,
           mediaType: null,
         );
-        addPendingMessage(
-            optimisticTempId, recipientUserId); // <<< Use public method
+        addPendingMessage(optimisticTempId, recipientUserId);
         _ref
             .read(conversationProvider(recipientUserId).notifier)
             .addSentMessage(sentMessage);
@@ -246,7 +284,7 @@ class ChatService {
       if (optimisticTempId != null) {
         print(
             "[ChatService] Marking optimistic message $optimisticTempId as failed due to sink error.");
-        removePendingMessage(optimisticTempId); // <<< Use public method
+        removePendingMessage(optimisticTempId);
         _ref
             .read(conversationProvider(recipientUserId).notifier)
             .updateMessageStatus(optimisticTempId, ChatMessageStatus.failed,
@@ -256,8 +294,8 @@ class ChatService {
     }
   }
 
+  // --- _handleMessageAck logic remains the same ---
   void _handleMessageAck(Map<String, dynamic> ackData) {
-    // --- _handleMessageAck logic remains the same ---
     final realMessageId = ackData['id'] as int?;
     final ackContent = ackData['content'] as String?;
     final mediaUrlAck = ackData['media_url'] as String?;
@@ -276,11 +314,16 @@ class ChatService {
     String? foundTempId;
     int? foundRecipientId;
     if (_pendingMessages.isNotEmpty) {
+      // Attempt to find the right tempId - simple FIFO for now
+      // IMPORTANT: This simple FIFO approach might fail if multiple messages
+      // are sent rapidly and acks arrive out of order. A more robust
+      // solution would involve matching based on content or a temporary correlation ID.
+      // For now, we proceed with the FIFO assumption.
       foundTempId = _pendingMessages.keys.first;
       foundRecipientId = _pendingMessages.values.first;
       print(
-          "[ChatService _handleMessageAck] Found pending message via map: TempID=$foundTempId for Recipient=$foundRecipientId");
-      removePendingMessage(foundTempId); // <<< Use public method
+          "[ChatService _handleMessageAck] Found pending message via map (FIFO): TempID=$foundTempId for Recipient=$foundRecipientId");
+      removePendingMessage(foundTempId);
     } else {
       print(
           "[ChatService _handleMessageAck] No pending messages found in tracking map.");
@@ -301,22 +344,21 @@ class ChatService {
     }
   }
 
-  // --- Helper methods for tracking pending messages (NOW PUBLIC) ---
+  // --- Public Helper methods for tracking pending messages ---
   void addPendingMessage(String tempId, int recipientId) {
-    // <<< Renamed (Public)
     _pendingMessages[tempId] = recipientId;
     print(
         "[ChatService addPendingMessage] Added TempID: $tempId for Recipient: $recipientId. Count: ${_pendingMessages.length}");
   }
 
   void removePendingMessage(String tempId) {
-    // <<< Renamed (Public)
     if (_pendingMessages.containsKey(tempId)) {
       _pendingMessages.remove(tempId);
       print(
           "[ChatService removePendingMessage] Removed TempID: $tempId. Count: ${_pendingMessages.length}");
     }
   }
+  // --- End Public Helpers ---
 
   // --- WebSocket Lifecycle Handlers (Keep as is) ---
   void _handleDisconnect() {
@@ -380,10 +422,14 @@ class ChatService {
   }
 
   void _updateState(WebSocketConnectionState newState) {
-    if (_ref.read(webSocketStateProvider) != newState) {
-      _ref.read(webSocketStateProvider.notifier).state = newState;
-      print("[ChatService] WebSocket state updated to: $newState");
-    }
+    // Update only if state changes
+    Future.microtask(() {
+      // Use microtask to avoid modifying state during build/notification phase
+      if (_ref.read(webSocketStateProvider) != newState) {
+        _ref.read(webSocketStateProvider.notifier).state = newState;
+        print("[ChatService] WebSocket state updated to: $newState");
+      }
+    });
   }
 }
 
@@ -391,4 +437,4 @@ class ChatService {
 final currentUserIdProvider = Provider<int?>((ref) {
   return ref.watch(userProvider.select((user) => user.id));
 });
-// END OF FILE: lib/services/chat_service.dart
+// ---
