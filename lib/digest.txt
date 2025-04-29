@@ -27,6 +27,7 @@ Directory structure:
     │   ├── media_upload_provider.dart
     │   ├── recieved_likes_provider.dart
     │   ├── service_provider.dart
+    │   ├── status_provider.dart
     │   └── user_provider.dart
     ├── repositories/
     │   ├── auth_repository.dart
@@ -43,6 +44,8 @@ Directory structure:
     │   └── http_service.dart
     ├── utils/
     │   ├── app_enums.dart
+    │   ├── date_formatter.dart
+    │   ├── datetime_formatter.dart
     │   ├── env_config.dart
     │   └── token_storage.dart
     ├── views/
@@ -1225,10 +1228,11 @@ File: models/user_model.dart
 ================================================
 // File: lib/models/user_model.dart
 import 'dart:convert';
-
+import 'package:flutter/foundation.dart'; // For kDebugMode
+import 'package:intl/intl.dart'; // For date formatting if needed
 import 'package:dtx/utils/app_enums.dart';
 
-// --- Prompt Class --- (No changes needed from previous correct version)
+// --- Prompt Class --- (No changes needed)
 class Prompt {
   final PromptCategory category;
   final PromptType question;
@@ -1250,19 +1254,17 @@ class Prompt {
     PromptCategory category = PromptCategory.values
         .firstWhere((e) => e.value == json['category'], orElse: () {
       print(
-          "Warning: Unknown prompt category '${json['category']}', defaulting to storyTime.");
+          "[Prompt fromJson] Warning: Unknown prompt category '${json['category']}', defaulting to storyTime.");
       return PromptCategory.storyTime;
     });
     PromptType question = PromptType.values
         .firstWhere((e) => e.value == json['question'], orElse: () {
       print(
-          "Warning: Unknown prompt question '${json['question']}' for category '${category.value}', defaulting.");
-      // Ensure the default question belongs to the determined category or provide a universal fallback
+          "[Prompt fromJson] Warning: Unknown prompt question '${json['question']}' for category '${category.value}', defaulting.");
       List<PromptType> categoryPrompts = category.getPrompts();
       return categoryPrompts.isNotEmpty
-          ? categoryPrompts.first // Default to the first prompt of the category
-          : PromptType
-              .twoTruthsAndALie; // Universal fallback if category has no prompts (shouldn't happen)
+          ? categoryPrompts.first
+          : PromptType.twoTruthsAndALie;
     });
 
     return Prompt(
@@ -1286,24 +1288,22 @@ class Prompt {
   }
 }
 
-// --- AudioPromptModel Class --- (No changes needed from previous correct version)
+// --- AudioPromptModel Class --- (No changes needed)
 class AudioPromptModel {
   final AudioPrompt prompt;
-  final String audioUrl; // Renamed from answer for clarity
+  final String audioUrl;
 
   AudioPromptModel({
     required this.prompt,
-    required this.audioUrl, // Renamed
+    required this.audioUrl,
   });
 
-  // toJson for PATCH
   Map<String, dynamic> toJson() => {
-        'question': prompt.value, // Key expected by PATCH
-        'answer_url': audioUrl, // Key expected by PATCH
+        'question': prompt.value,
+        'answer_url': audioUrl,
       };
 
   factory AudioPromptModel.fromJson(Map<String, dynamic> json) {
-    // Parse Question (assuming it's always a map)
     final promptValue =
         json['audio_prompt_question']?['AudioPrompt'] as String?;
     final bool isPromptValid =
@@ -1317,11 +1317,10 @@ class AudioPromptModel {
     AudioPrompt prompt = AudioPrompt.values
         .firstWhere((e) => e.value == promptValue, orElse: () {
       print(
-          "Warning: Unknown audio prompt '$promptValue', defaulting to aBoundaryOfMineIs.");
+          "[AudioPromptModel fromJson] Warning: Unknown audio prompt '$promptValue', defaulting to aBoundaryOfMineIs.");
       return AudioPrompt.aBoundaryOfMineIs;
     });
 
-    // Parse Answer (handle both String and Map)
     String? audioUrlValue;
     dynamic answerField = json['audio_prompt_answer'];
 
@@ -1340,7 +1339,7 @@ class AudioPromptModel {
 
     return AudioPromptModel(
       prompt: prompt,
-      audioUrl: audioUrlValue, // Use renamed field
+      audioUrl: audioUrlValue,
     );
   }
 }
@@ -1357,7 +1356,7 @@ class UserModel {
   final double? longitude;
   final Gender? gender;
   final DatingIntention? datingIntention;
-  final String? height; // Store as string e.g., "5' 11\""
+  final String? height;
   final String? hometown;
   final String? jobTitle;
   final String? education;
@@ -1371,6 +1370,9 @@ class UserModel {
   final String? verificationPic;
   final String? role;
   final bool mediaChangedDuringEdit;
+  // --- NEW FIELDS ---
+  final bool isOnline; // Directly store bool
+  final DateTime? lastOnline; // Store as DateTime?
 
   UserModel({
     this.id,
@@ -1397,6 +1399,9 @@ class UserModel {
     this.verificationPic,
     this.role,
     this.mediaChangedDuringEdit = false,
+    // --- INITIALIZE NEW FIELDS ---
+    this.isOnline = false, // Default to false
+    this.lastOnline,
   });
 
   int? get age {
@@ -1419,7 +1424,6 @@ class UserModel {
     return null;
   }
 
-  // toJson (General Purpose)
   Map<String, dynamic> toJson() => {
         'id': id,
         'name': name,
@@ -1431,7 +1435,7 @@ class UserModel {
         'longitude': longitude,
         'gender': gender?.value,
         'dating_intention': datingIntention?.value,
-        'height': height, // Send height string as is
+        'height': height,
         'hometown': hometown,
         'job_title': jobTitle,
         'education': education,
@@ -1440,13 +1444,15 @@ class UserModel {
         'smoking_habit': smokingHabit?.value,
         'media_urls': mediaUrls,
         'prompts': prompts.map((prompt) => prompt.toJson()).toList(),
-        'audio_prompt': audioPrompt?.toJson(), // Uses AudioPromptModel's toJson
+        'audio_prompt': audioPrompt?.toJson(),
         'verification_status': verificationStatus,
         'verification_pic': verificationPic,
         'role': role,
+        // --- ADD TO JSON (Optional, depends if you ever send this full model back) ---
+        'is_online': isOnline,
+        'last_online': lastOnline?.toUtc().toIso8601String(),
       };
 
-  // toJsonForProfileUpdate (For Onboarding Step 2 POST)
   Map<String, dynamic> toJsonForProfileUpdate() {
     String? formattedDate(DateTime? dt) {
       if (dt == null) return null;
@@ -1459,7 +1465,7 @@ class UserModel {
     if (dateOfBirth != null) data['date_of_birth'] = formattedDate(dateOfBirth);
     if (datingIntention != null)
       data['dating_intention'] = datingIntention!.value;
-    if (height != null) data['height'] = height; // Send height string as is
+    if (height != null) data['height'] = height;
     if (hometown != null) data['hometown'] = hometown;
     if (jobTitle != null) data['job_title'] = jobTitle;
     if (education != null) data['education'] = education;
@@ -1469,14 +1475,11 @@ class UserModel {
     if (smokingHabit != null) data['smoking_habit'] = smokingHabit!.value;
     if (prompts.isNotEmpty)
       data['prompts'] = prompts.map((p) => p.toJson()).toList();
-    // Audio/Media handled separately during onboarding POSTs
     return data;
   }
 
-  // toJsonForEdit (For Profile Edit PATCH)
   Map<String, dynamic> toJsonForEdit() {
     final Map<String, dynamic> data = {};
-    // Only include editable fields with values
     if (datingIntention != null)
       data['dating_intention'] = datingIntention!.value;
     if (height != null && height!.isNotEmpty) data['height'] = height;
@@ -1488,57 +1491,38 @@ class UserModel {
       data['religious_beliefs'] = religiousBeliefs!.value;
     if (drinkingHabit != null) data['drinking_habit'] = drinkingHabit!.value;
     if (smokingHabit != null) data['smoking_habit'] = smokingHabit!.value;
-
-    // Handle optional fields where null means "remove"
     if (hometown == null) data['hometown'] = null;
     if (jobTitle == null) data['job_title'] = null;
     if (education == null) data['education'] = null;
-
-    // Always include prompts (even if empty)
     data['prompts'] = prompts.map((p) => p.toJson()).toList();
-
-    // Handle audio prompt (null to remove)
     if (audioPrompt != null) {
       data['audio_prompt'] = audioPrompt!.toJson();
     } else {
       data['audio_prompt'] = null;
     }
-
-    // Always include media_urls (even if empty after edit)
     data['media_urls'] = mediaUrls ?? [];
-
     return data;
   }
 
-  // fromJson Factory
   factory UserModel.fromJson(Map<String, dynamic> json) {
-    // --- Helper Functions ---
+    if (kDebugMode) {
+      print(
+          "[UserModel fromJson] START Parsing User ID: ${json['id'] ?? json['ID']}");
+    }
+
+    // --- Helper Functions --- (keep existing helpers)
     String? getString(dynamic field) {
-      // Handle direct strings first
-      if (field is String) {
-        return field.isNotEmpty ? field : null;
-      }
-      // Handle pgtype.Text map structure
-      if (field is Map && field['Valid'] == true && field['String'] is String) {
+      if (field is String) return field.isNotEmpty ? field : null;
+      if (field is Map && field['Valid'] == true && field['String'] is String)
         return field['String'];
-      }
-      // Handle other types (e.g., if backend sends numbers unexpectedly)
-      if (field is num) {
-        return field.toString();
-      }
-      return null; // Default to null if not a valid string or valid pgtype.Text
+      if (field is num) return field.toString();
+      return null;
     }
 
     String? getHeight(dynamic field) {
-      // Prioritize direct string (e.g., "5' 11\"")
-      if (field is String && field.isNotEmpty) {
-        return field;
-      }
-      // Handle pgtype.Text for height (might be used if nullable)
-      if (field is Map && field['Valid'] == true && field['String'] is String) {
+      if (field is String && field.isNotEmpty) return field;
+      if (field is Map && field['Valid'] == true && field['String'] is String)
         return field['String'];
-      }
-      // Handle pgtype.Float8 (inches) - convert TO string format
       if (field is Map && field['Valid'] == true && field['Float64'] is num) {
         double totalInches = (field['Float64'] as num).toDouble();
         if (totalInches <= 0) return null;
@@ -1550,7 +1534,6 @@ class UserModel {
         }
         return "$feet' $inches\"";
       }
-      // Handle direct number (assume inches) - convert TO string format
       if (field is num) {
         double totalInches = field.toDouble();
         if (totalInches <= 0) return null;
@@ -1562,58 +1545,43 @@ class UserModel {
         }
         return "$feet' $inches\"";
       }
-      return null; // Default to null
+      return null;
     }
 
     String? getEnumString(dynamic field, String key) {
-      // Prefer direct string
-      if (field is String) {
-        return field;
-      }
-      // Handle pgtype map structure
-      if (field is Map && field['Valid'] == true && field[key] != null) {
+      if (field is String) return field;
+      if (field is Map && field['Valid'] == true && field[key] != null)
         return field[key] as String?;
-      }
       return null;
     }
 
     DateTime? getDate(dynamic field) {
       String? dateStr;
-      // Prefer direct string
       if (field is String) {
         dateStr = field;
-      }
-      // Handle pgtype map structure
-      else if (field is Map &&
+      } else if (field is Map &&
           field['Valid'] == true &&
           field['Time'] != null) {
         dateStr = field['Time'] as String?;
       }
-
       if (dateStr != null) {
         try {
-          // Handle YYYY-MM-DD or YYYY-MM-DDTHH:MM:SSZ format
-          if (dateStr.contains('T')) {
+          if (dateStr.contains('T'))
             return DateTime.parse(dateStr.split('T').first).toLocal();
-          } else if (RegExp(r'^\d{4}-\d{2}-\d{2}$').hasMatch(dateStr)) {
+          else if (RegExp(r'^\d{4}-\d{2}-\d{2}$').hasMatch(dateStr))
             return DateTime.parse(dateStr).toLocal();
-          }
         } catch (e) {
-          print("[UserModel fromJson] Error parsing date: $e, value: $field");
+          print(
+              "[UserModel fromJson] Error parsing date: $e, value: '$dateStr'");
         }
       }
       return null;
     }
 
     double? getDouble(dynamic field) {
-      // Prefer direct number
-      if (field is num) {
-        return field.toDouble();
-      }
-      // Handle pgtype map structure
-      if (field is Map && field['Valid'] == true && field['Float64'] != null) {
+      if (field is num) return field.toDouble();
+      if (field is Map && field['Valid'] == true && field['Float64'] != null)
         return (field['Float64'] as num?)?.toDouble();
-      }
       return null;
     }
 
@@ -1622,24 +1590,20 @@ class UserModel {
       if (valueStr != null) {
         for (final enumValue in enumValues) {
           try {
-            if ((enumValue as dynamic).value.toString() == valueStr) {
+            if ((enumValue as dynamic).value.toString() == valueStr)
               return enumValue;
-            }
           } catch (e) {
-            // Fallback for enums without .value (less reliable)
-            if (enumValue.toString().split('.').last == valueStr) {
+            if (enumValue.toString().split('.').last == valueStr)
               return enumValue;
-            }
           }
         }
         print(
-            "[UserModel fromJson] Warning: Enum value '$valueStr' not found in ${T.toString()}.");
+            "[UserModel fromJson] Warning: Enum value '$valueStr' not found in ${T.toString()}. Field: $field");
       }
       return null;
     }
 
     List<String>? getMediaUrls(dynamic field) {
-      // Expecting a List<String> after repository transformation
       if (field is List) {
         final urls = field
             .where((item) => item is String && item.isNotEmpty)
@@ -1647,44 +1611,29 @@ class UserModel {
             .toList();
         return urls.isNotEmpty ? urls : null;
       }
-      return null; // Default to null if not a list
+      return null;
     }
 
     int? getId(dynamic idField) {
-      // Prioritize direct int
-      if (idField is int) {
-        return idField;
-      }
-      // Handle string representation
-      if (idField is String) {
-        return int.tryParse(idField);
-      }
-      // Handle potential pgtype structures if backend might send them
+      if (idField is int) return idField;
+      if (idField is String) return int.tryParse(idField);
       if (idField is Map && idField['Valid'] == true) {
-        if (idField['Int64'] is num) {
-          return (idField['Int64'] as num).toInt();
-        }
-        if (idField['Int32'] is num) {
-          return (idField['Int32'] as num).toInt();
-        }
+        if (idField['Int64'] is num) return (idField['Int64'] as num).toInt();
+        if (idField['Int32'] is num) return (idField['Int32'] as num).toInt();
       }
-      return null; // Default to null
+      return null;
     }
 
     List<Prompt> getPrompts(Map<String, dynamic> json) {
       List<Prompt> parsedPrompts = [];
-      // Expect 'prompts' key based on GetHomeFeedRow and ProfileResponseUser
       final promptsField = json['prompts'];
-
       if (promptsField is List) {
-        // If it's a list (likely from ProfileResponseUser)
         for (var promptData in promptsField) {
           if (promptData is Map<String, dynamic>) {
             try {
               final parsedPrompt = Prompt.fromJson(promptData);
-              if (parsedPrompt.answer.trim().isNotEmpty) {
+              if (parsedPrompt.answer.trim().isNotEmpty)
                 parsedPrompts.add(parsedPrompt);
-              }
             } catch (e) {
               print(
                   "[UserModel fromJson] Error parsing prompt from list: $e, data: $promptData");
@@ -1692,16 +1641,14 @@ class UserModel {
           }
         }
       } else if (promptsField is String) {
-        // If it's a string (likely JSONB from GetHomeFeedRow)
         try {
           final List<dynamic> decodedList = jsonDecode(promptsField);
           for (var promptData in decodedList) {
             if (promptData is Map<String, dynamic>) {
               try {
                 final parsedPrompt = Prompt.fromJson(promptData);
-                if (parsedPrompt.answer.trim().isNotEmpty) {
+                if (parsedPrompt.answer.trim().isNotEmpty)
                   parsedPrompts.add(parsedPrompt);
-                }
               } catch (e) {
                 print(
                     "[UserModel fromJson] Error parsing prompt from JSON string: $e, data: $promptData");
@@ -1710,20 +1657,17 @@ class UserModel {
           }
         } catch (e) {
           print(
-              "[UserModel fromJson] Error decoding prompts JSON string: $e, value: $promptsField");
+              "[UserModel fromJson] Error decoding prompts JSON string: $e, value: '$promptsField'");
         }
       }
       return parsedPrompts;
     }
 
     AudioPromptModel? getAudioPrompt(Map<String, dynamic> json, int? userId) {
-      // Check for potential keys (direct or from pgtype)
       final questionData =
           json['audio_prompt_question'] ?? json['AudioPromptQuestion'];
       final answerData =
           json['audio_prompt_answer'] ?? json['AudioPromptAnswer'];
-
-      // Check Question Validity
       bool isQuestionValid = false;
       String? questionValue;
       if (questionData is Map &&
@@ -1732,10 +1676,7 @@ class UserModel {
         questionValue = questionData['AudioPrompt'] as String;
         isQuestionValid = questionValue.isNotEmpty;
       }
-
       if (!isQuestionValid) return null;
-
-      // Check Answer Validity
       String? audioUrlValue;
       if (answerData is String && answerData.isNotEmpty) {
         audioUrlValue = answerData;
@@ -1744,17 +1685,13 @@ class UserModel {
           answerData['String'] is String) {
         audioUrlValue = answerData['String'] as String?;
         if (audioUrlValue != null && audioUrlValue.isEmpty)
-          audioUrlValue = null; // Treat empty string as invalid
+          audioUrlValue = null;
       }
-
       if (audioUrlValue == null) return null;
-
-      // If both are valid, create the model
       try {
         AudioPrompt promptEnum = AudioPrompt.values.firstWhere(
             (e) => e.value == questionValue,
-            orElse: () => AudioPrompt.aBoundaryOfMineIs // Fallback
-            );
+            orElse: () => AudioPrompt.aBoundaryOfMineIs);
         return AudioPromptModel(prompt: promptEnum, audioUrl: audioUrlValue);
       } catch (e) {
         print(
@@ -1763,17 +1700,101 @@ class UserModel {
       }
     }
 
+    // --- NEW: Helper for is_online ---
+    bool getIsOnline(Map<String, dynamic> json) {
+      // Check for Go backend keys first
+      final goKey = json['is_online']; // From GetUserByID, SetUserOnline etc.
+      final matchKey = json['matched_user_is_online']; // From GetMatches...
+
+      if (goKey is bool) {
+        if (kDebugMode)
+          print("[UserModel fromJson] getIsOnline: Found bool 'is_online'");
+        return goKey;
+      }
+      if (matchKey is bool) {
+        if (kDebugMode)
+          print(
+              "[UserModel fromJson] getIsOnline: Found bool 'matched_user_is_online'");
+        return matchKey;
+      }
+      // Fallback checks for other potential types
+      if (goKey is int) return goKey == 1;
+      if (matchKey is int) return matchKey == 1;
+      if (goKey is String) return goKey.toLowerCase() == 'true';
+      if (matchKey is String) return matchKey.toLowerCase() == 'true';
+
+      if (kDebugMode)
+        print(
+            "[UserModel fromJson] getIsOnline: Could not parse is_online or matched_user_is_online. Defaulting to false.");
+      return false; // Default to false if not found or invalid type
+    }
+    // --- END NEW HELPER ---
+
+    // --- NEW: Helper for last_online ---
+    DateTime? getLastOnline(Map<String, dynamic> json) {
+      // Check for Go backend keys first
+      final goKeyData = json['last_online'];
+      final matchKeyData = json['matched_user_last_online'];
+
+      // Prioritize Go key
+      dynamic dataToParse = goKeyData ?? matchKeyData;
+
+      if (dataToParse == null) {
+        if (kDebugMode)
+          print(
+              "[UserModel fromJson] getLastOnline: Both last_online fields are null.");
+        return null;
+      }
+
+      // Handle pgtype.Timestamptz map structure
+      if (dataToParse is Map &&
+          dataToParse['Valid'] == true &&
+          dataToParse['Time'] != null) {
+        final timeStr = dataToParse['Time'] as String?;
+        if (timeStr != null) {
+          try {
+            final parsedTime = DateTime.parse(timeStr).toLocal();
+            if (kDebugMode)
+              print(
+                  "[UserModel fromJson] getLastOnline: Parsed from Map: $parsedTime");
+            return parsedTime;
+          } catch (e) {
+            print(
+                "[UserModel fromJson] getLastOnline: Error parsing timestamp from Map: $e, value: '$timeStr'");
+          }
+        }
+      }
+      // Handle direct string (ISO 8601)
+      else if (dataToParse is String) {
+        try {
+          final parsedTime = DateTime.parse(dataToParse).toLocal();
+          if (kDebugMode)
+            print(
+                "[UserModel fromJson] getLastOnline: Parsed from String: $parsedTime");
+          return parsedTime;
+        } catch (e) {
+          print(
+              "[UserModel fromJson] getLastOnline: Error parsing timestamp from String: $e, value: '$dataToParse'");
+        }
+      } else {
+        if (kDebugMode)
+          print(
+              "[UserModel fromJson] getLastOnline: Unhandled data type for last_online: ${dataToParse.runtimeType}");
+      }
+
+      return null; // Return null if parsing failed or type was unexpected
+    }
+    // --- END NEW HELPER ---
+
     // --- Parse using helpers ---
-    // Primarily use lowercase keys ('id', 'name', 'media_urls') expected after repository transformation
-    // Include fallback checks for original backend keys (e.g., 'Name', 'MediaUrls') if needed for other sources
-    final int? currentUserId =
-        getId(json['id'] ?? json['ID']); // Check 'id' first
+    final int? currentUserId = getId(json['id'] ?? json['ID']);
+    if (kDebugMode)
+      print("[UserModel fromJson ID: $currentUserId] Parsing core fields...");
     final parsedUser = UserModel(
       id: currentUserId,
       name: getString(json['name'] ?? json['Name']),
       lastName: getString(json['last_name'] ?? json['LastName']),
-      email: json['email'] as String? ??
-          json['Email'] as String?, // Assuming direct string
+      email: json['email'] as String? ?? json['Email'] as String?,
       phoneNumber: getString(json['phone_number'] ?? json['PhoneNumber']),
       dateOfBirth: getDate(json['date_of_birth'] ?? json['DateOfBirth']),
       latitude: getDouble(json['latitude'] ?? json['Latitude']),
@@ -1798,21 +1819,26 @@ class UserModel {
           DrinkingSmokingHabits.values,
           json['smoking_habit'] ?? json['SmokingHabit'],
           'DrinkingSmokingHabits'),
-      mediaUrls: getMediaUrls(
-          json['media_urls'] ?? json['MediaUrls']), // Check 'media_urls' first
+      mediaUrls: getMediaUrls(json['media_urls'] ?? json['MediaUrls']),
       verificationStatus: json['verification_status'] as String? ??
           json['VerificationStatus'] as String?,
       verificationPic:
           getString(json['verification_pic'] ?? json['VerificationPic']),
       role: json['role'] as String? ?? json['Role'] as String?,
       audioPrompt: getAudioPrompt(json, currentUserId),
-      prompts: getPrompts(json), // Use the combined prompt parsing
+      prompts: getPrompts(json),
+      // --- PARSE NEW FIELDS ---
+      isOnline: getIsOnline(json),
+      lastOnline: getLastOnline(json),
     );
+    if (kDebugMode) {
+      print(
+          "[UserModel fromJson ID: $currentUserId] END Parsing. Result: isOnline=${parsedUser.isOnline}, lastOnline=${parsedUser.lastOnline}");
+    }
 
     return parsedUser;
   }
 
-  // copyWith method
   UserModel copyWith({
     int? Function()? id,
     String? Function()? name,
@@ -1838,6 +1864,9 @@ class UserModel {
     String? Function()? verificationPic,
     String? Function()? role,
     bool? mediaChangedDuringEdit,
+    // --- ADD TO COPYWITH ---
+    bool? isOnline,
+    DateTime? Function()? lastOnline,
   }) {
     return UserModel(
       id: id != null ? id() : this.id,
@@ -1861,7 +1890,7 @@ class UserModel {
           drinkingHabit != null ? drinkingHabit() : this.drinkingHabit,
       smokingHabit: smokingHabit != null ? smokingHabit() : this.smokingHabit,
       mediaUrls: mediaUrls != null ? mediaUrls() : this.mediaUrls,
-      prompts: prompts ?? List.from(this.prompts), // Ensure deep copy if needed
+      prompts: prompts ?? List.from(this.prompts),
       audioPrompt: audioPrompt != null ? audioPrompt() : this.audioPrompt,
       verificationStatus: verificationStatus != null
           ? verificationStatus()
@@ -1871,10 +1900,12 @@ class UserModel {
       role: role != null ? role() : this.role,
       mediaChangedDuringEdit:
           mediaChangedDuringEdit ?? this.mediaChangedDuringEdit,
+      // --- ASSIGN IN COPYWITH ---
+      isOnline: isOnline ?? this.isOnline,
+      lastOnline: lastOnline != null ? lastOnline() : this.lastOnline,
     );
   }
 
-  // isProfileValid for onboarding step 2 POST
   bool isProfileValid() {
     final dobValid = dateOfBirth != null &&
         DateTime.now().difference(dateOfBirth!).inDays >= (18 * 365.25);
@@ -1885,7 +1916,6 @@ class UserModel {
         datingIntention != null;
   }
 
-  // isLocationValid (used in onboarding step 1)
   bool isLocationValid() {
     return latitude != null &&
         longitude != null &&
@@ -2669,72 +2699,150 @@ class AuthNotifier extends StateNotifier<AuthState> {
 ================================================
 File: providers/conversation_provider.dart
 ================================================
-// lib/providers/conversation_provider.dart
+// File: lib/providers/conversation_provider.dart
 import 'dart:async';
 import 'package:dtx/models/chat_message.dart';
 import 'package:dtx/models/error_model.dart';
 import 'package:dtx/providers/service_provider.dart';
+// Removed unused service_provider import
+import 'package:dtx/providers/status_provider.dart';
 import 'package:dtx/repositories/chat_repository.dart';
 import 'package:dtx/services/api_service.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:flutter/foundation.dart'; // Import foundation for list identity check
+import 'package:flutter/foundation.dart';
 
+// --- ConversationData Class (Keep as is) ---
+class ConversationData {
+  final List<ChatMessage> messages;
+  final bool otherUserIsOnline;
+  final DateTime? otherUserLastOnline;
+  ConversationData(
+      {required this.messages,
+      required this.otherUserIsOnline,
+      this.otherUserLastOnline});
+}
+// ---
+
+// --- ConversationState Class (Keep as is) ---
 class ConversationState {
   final bool isLoading;
   final List<ChatMessage> messages;
   final AppError? error;
+  final bool otherUserIsOnline;
+  final DateTime? otherUserLastOnline;
 
   const ConversationState({
     this.isLoading = false,
     this.messages = const [],
     this.error,
+    this.otherUserIsOnline = false,
+    this.otherUserLastOnline,
   });
 
   ConversationState copyWith({
     bool? isLoading,
     List<ChatMessage>? messages,
     AppError? Function()? error,
+    bool? otherUserIsOnline,
+    DateTime? Function()? otherUserLastOnline,
   }) {
     return ConversationState(
       isLoading: isLoading ?? this.isLoading,
       messages: messages ?? this.messages,
       error: error != null ? error() : this.error,
+      otherUserIsOnline: otherUserIsOnline ?? this.otherUserIsOnline,
+      otherUserLastOnline: otherUserLastOnline != null
+          ? otherUserLastOnline()
+          : this.otherUserLastOnline,
     );
   }
 }
+// ---
 
 class ConversationNotifier extends StateNotifier<ConversationState> {
   final ChatRepository _chatRepository;
   final int _otherUserId;
+  // No longer need Ref or explicit subscription here
 
   ConversationNotifier(this._chatRepository, this._otherUserId)
       : super(const ConversationState()) {
+    // Initial fetch is still good here
     print("[Provider Init: $_otherUserId] Fetching initial messages...");
     fetchMessages();
   }
 
+  // No need for _listenToStatusUpdates here, handled by provider definition
+
+  // --- Keep _updateOtherUserStatus ---
+  // This method is now called directly by the listener in the provider definition
+  void updateOtherUserStatus(bool isOnline, DateTime eventTimestamp) {
+    if (!mounted) {
+      print(
+          "[Provider UpdateStatus WS: $_otherUserId] Not mounted, ignoring update.");
+      return;
+    }
+
+    if (state.otherUserIsOnline != isOnline) {
+      print(
+          "[Provider UpdateStatus WS: $_otherUserId] Updating status from ${state.otherUserIsOnline} to $isOnline via WebSocket event.");
+
+      final newLastOnline = isOnline ? null : eventTimestamp;
+
+      state = state.copyWith(
+        otherUserIsOnline: isOnline,
+        otherUserLastOnline: () => newLastOnline,
+      );
+      print(
+          "[Provider UpdateStatus WS: $_otherUserId] State updated: isOnline=$isOnline, lastOnline=$newLastOnline");
+    } else {
+      if (kDebugMode)
+        print(
+            "[Provider UpdateStatus WS: $_otherUserId] Received status update, but otherUserIsOnline ($isOnline) is already the same. No state change needed.");
+    }
+  }
+  // ---
+
+  // --- fetchMessages (Keep as is, including logging) ---
   Future<void> fetchMessages() async {
-    // (fetchMessages remains the same)
-    if (state.isLoading) return;
-    print("[Provider Fetch: $_otherUserId] Fetching ALL messages...");
+    if (state.isLoading) {
+      print(
+          "[Provider Fetch: $_otherUserId] Skipping fetch: isLoading=${state.isLoading}");
+      return;
+    }
+
+    print(
+        "[Provider Fetch: $_otherUserId] Fetching ALL messages and status via API...");
     state = state.copyWith(isLoading: true, error: () => null);
 
     try {
-      final messagesFromRepo = await _chatRepository.fetchConversation(
-        otherUserId: _otherUserId,
-      );
+      final ConversationData conversationData =
+          await _chatRepository.fetchConversation(otherUserId: _otherUserId);
 
       if (mounted) {
+        bool statusBeforeAPISet = state.otherUserIsOnline;
+        DateTime? lastOnlineBeforeAPISet = state.otherUserLastOnline;
+
         final oldMessagesHashCode = state.messages.hashCode;
+        final reversedMessages = conversationData.messages.reversed.toList();
+
         state = state.copyWith(
           isLoading: false,
-          // Messages from API are ASC, no need to reverse anymore?
-          // If they ARE ASC and you want latest at bottom, keep as is.
-          // If they are DESC and you want latest at bottom, use reversed.
-          messages: messagesFromRepo,
+          messages: reversedMessages,
+          // Set status based on API result during fetch
+          otherUserIsOnline: conversationData.otherUserIsOnline,
+          otherUserLastOnline: () => conversationData.otherUserLastOnline,
         );
+
         print(
-            "[Provider Fetch: $_otherUserId] Fetched ${messagesFromRepo.length} messages (ASC order). List hashCode changed: ${state.messages.hashCode != oldMessagesHashCode}");
+            "[Provider Fetch: $_otherUserId] API Fetch completed. Fetched ${conversationData.messages.length} messages. Stored ${reversedMessages.length} (Newest first). API Status Set: isOnline=${state.otherUserIsOnline}, lastOnline=${state.otherUserLastOnline}. List hashCode changed: ${state.messages.hashCode != oldMessagesHashCode}");
+
+        // Log if API fetch potentially overwrote a very recent WS update
+        if (kDebugMode &&
+            (statusBeforeAPISet != state.otherUserIsOnline ||
+                lastOnlineBeforeAPISet != state.otherUserLastOnline)) {
+          print(
+              "[Provider Fetch: $_otherUserId] Note: API status set. If a WS update occurred during fetch, it might be momentarily overwritten until the *next* WS event.");
+        }
       }
     } on ApiException catch (e) {
       print(
@@ -2744,9 +2852,8 @@ class ConversationNotifier extends StateNotifier<ConversationState> {
             isLoading: false, error: () => AppError.server(e.message));
       }
     } catch (e, stacktrace) {
-      // Added stacktrace logging
       print("[Provider Fetch Error: $_otherUserId] Unexpected Error: $e");
-      print(stacktrace); // Log stacktrace
+      print(stacktrace);
       if (mounted) {
         state = state.copyWith(
             isLoading: false,
@@ -2755,59 +2862,52 @@ class ConversationNotifier extends StateNotifier<ConversationState> {
     }
   }
 
+  // --- addSentMessage (Keep as is) ---
   void addSentMessage(ChatMessage message) {
-    // (addSentMessage remains the same - adds to end)
     if (!mounted) return;
     print(
-        "[Provider AddSent: $_otherUserId] Adding message: TempID=${message.tempId}, RealID=${message.messageID}, Status=${message.status}, Type=${message.isMedia ? message.mediaType : 'text'}");
+        "[Provider AddSent: $_otherUserId] Adding message to START: TempID=${message.tempId}, RealID=${message.messageID}, Status=${message.status}, Type=${message.isMedia ? message.mediaType : 'text'}");
     final oldMessagesHashCode = state.messages.hashCode;
-    // Add new messages to the END of the list (assuming chronological order)
-    state = state.copyWith(messages: [...state.messages, message]);
+    state = state.copyWith(messages: [message, ...state.messages]);
     print(
-        "[Provider AddSent: $_otherUserId] Message added to end. List hashCode changed: ${state.messages.hashCode != oldMessagesHashCode}. New count: ${state.messages.length}");
+        "[Provider AddSent: $_otherUserId] Message added to start. List hashCode changed: ${state.messages.hashCode != oldMessagesHashCode}. New count: ${state.messages.length}");
   }
 
+  // --- addReceivedMessage (Keep as is) ---
   void addReceivedMessage(ChatMessage message) {
-    // (addReceivedMessage remains the same - adds to end)
     if (!mounted) return;
     print(
-        "[Provider AddRcvd: $_otherUserId] Adding received message: RealID=${message.messageID}, Type=${message.isMedia ? message.mediaType : 'text'}");
+        "[Provider AddRcvd: $_otherUserId] Adding received message to START: RealID=${message.messageID}, Type=${message.isMedia ? message.mediaType : 'text'}");
     final oldMessagesHashCode = state.messages.hashCode;
-    // Add new messages to the END of the list
-    state = state.copyWith(messages: [...state.messages, message]);
+    state = state.copyWith(messages: [message, ...state.messages]);
     print(
-        "[Provider AddRcvd: $_otherUserId] Message added to end. List hashCode changed: ${state.messages.hashCode != oldMessagesHashCode}. New count: ${state.messages.length}");
+        "[Provider AddRcvd: $_otherUserId] Message added to start. List hashCode changed: ${state.messages.hashCode != oldMessagesHashCode}. New count: ${state.messages.length}");
   }
 
-  // --- CORRECTED: updateMessageStatus ---
+  // --- updateMessageStatus (Keep as is) ---
   void updateMessageStatus(String tempOrRealId, ChatMessageStatus newStatus,
       {int? finalMessageId, String? finalMediaUrl, String? errorMessage}) {
     if (!mounted) return;
     print(
-        "[Provider UpdateStatus: $_otherUserId] Attempting update: ID=$tempOrRealId, NewStatus=$newStatus, FinalMsgID=$finalMessageId, FinalURL=${finalMediaUrl != null}, Error=${errorMessage != null}");
+        "[Provider UpdateStatus API: $_otherUserId] Attempting update: ID=$tempOrRealId, NewStatus=$newStatus, FinalMsgID=$finalMessageId, FinalURL=${finalMediaUrl != null}, Error=${errorMessage != null}");
 
     final currentMessages = state.messages;
-    // Find message by tempId (for optimistic messages) OR by real messageID
     final messageIndex = currentMessages.indexWhere((msg) =>
         (msg.tempId != null && msg.tempId == tempOrRealId) ||
-        (msg.messageID != 0 &&
-            msg.messageID.toString() ==
-                tempOrRealId)); // Compare string representation of ID
+        (msg.messageID != 0 && msg.messageID.toString() == tempOrRealId));
 
     if (messageIndex != -1) {
       final messageToUpdate = currentMessages[messageIndex];
       print(
-          "[Provider UpdateStatus: $_otherUserId] Found message at index $messageIndex. Current Status=${messageToUpdate.status}");
+          "[Provider UpdateStatus API: $_otherUserId] Found message at index $messageIndex (Newest=0). Current Status=${messageToUpdate.status}");
 
       final updatedMessage = messageToUpdate.copyWith(
         status: newStatus,
-        messageID: finalMessageId,
-        // --- FIX: Pass String? directly ---
+        messageID: finalMessageId ?? messageToUpdate.messageID,
         mediaUrl: finalMediaUrl,
         errorMessage: errorMessage,
-        // --- END FIX ---
         clearErrorMessage: errorMessage == null,
-        clearLocalFilePath: false, // Keep local path as needed
+        clearLocalFilePath: false,
       );
 
       final updatedMessages = List<ChatMessage>.from(currentMessages);
@@ -2820,22 +2920,42 @@ class ConversationNotifier extends StateNotifier<ConversationState> {
 
       final newListIdentityHashCode = identityHashCode(state.messages);
       print(
-          "[Provider UpdateStatus: $_otherUserId] Status updated for ID $tempOrRealId. RealID: ${updatedMessage.messageID} Final URL: ${updatedMessage.mediaUrl}. Local Path Kept: ${updatedMessage.localFilePath}. Error: ${updatedMessage.errorMessage}. List hashCode changed: ${state.messages.hashCode != oldMessagesHashCode}. List instance changed: ${oldListIdentityHashCode != newListIdentityHashCode}");
+          "[Provider UpdateStatus API: $_otherUserId] Status updated for ID $tempOrRealId. RealID: ${updatedMessage.messageID}, NewStatus: ${updatedMessage.status}. List hashCode changed: ${state.messages.hashCode != oldMessagesHashCode}. List instance changed: ${oldListIdentityHashCode != newListIdentityHashCode}");
     } else {
       print(
-          "[Provider UpdateStatus: $_otherUserId] WARNING: Could not find message with Temp/Real ID $tempOrRealId to update status.");
+          "[Provider UpdateStatus API: $_otherUserId] WARNING: Could not find message with Temp/Real ID $tempOrRealId to update status.");
     }
   }
-  // --- END CORRECTION ---
+
+  // No explicit dispose needed here anymore, autoDispose handles it
 }
 
-// Provider definition remains the same
-final conversationProvider =
-    StateNotifierProvider.family<ConversationNotifier, ConversationState, int>(
+// --- UPDATED Provider Definition ---
+final conversationProvider = StateNotifierProvider.family
+    .autoDispose<ConversationNotifier, ConversationState, int>(
         (ref, otherUserId) {
   final repo = ref.watch(chatRepositoryProvider);
-  return ConversationNotifier(repo, otherUserId);
+  final notifier = ConversationNotifier(repo, otherUserId);
+
+  // Listen to the global status updates provider
+  final statusSubscription =
+      ref.listen<UserStatusUpdate?>(userStatusUpdateProvider, (prev, next) {
+    if (next != null && next.userId == otherUserId) {
+      // If the update is for this conversation's user, call the notifier's method
+      notifier.updateOtherUserStatus(next.isOnline, next.timestamp);
+    }
+  });
+
+  // Ensure the subscription is cancelled when the provider is disposed
+  ref.onDispose(() {
+    print(
+        "[Provider Dispose Hook: $otherUserId] Cancelling status listener subscription.");
+    statusSubscription.close(); // Use close() on the subscription object
+  });
+
+  return notifier;
 });
+// --- END UPDATED ---
 
 
 
@@ -3396,17 +3516,21 @@ class LocationNotifier extends StateNotifier<LocationState> {
 ================================================
 File: providers/matches_provider.dart
 ================================================
-// lib/providers/matches_provider.dart
+// File: lib/providers/matches_provider.dart
+import 'dart:async';
 import 'package:dtx/models/error_model.dart';
 import 'package:dtx/models/user_model.dart'; // Using UserModel as MatchUser
 import 'package:dtx/providers/service_provider.dart';
+import 'package:dtx/providers/status_provider.dart'; // <-- IMPORT ADDED
 import 'package:dtx/repositories/match_repository.dart';
 import 'package:dtx/services/api_service.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter/foundation.dart'; // <-- IMPORT ADDED
 
+// --- MatchesState remains the same ---
 class MatchesState {
   final bool isLoading;
-  final List<UserModel> matches; // Use UserModel
+  final List<UserModel> matches;
   final AppError? error;
 
   const MatchesState({
@@ -3427,16 +3551,86 @@ class MatchesState {
     );
   }
 }
+// --- End MatchesState ---
 
 class MatchesNotifier extends StateNotifier<MatchesState> {
   final MatchRepository _matchRepository;
+  final Ref _ref; // <-- REF ADDED
+  StreamSubscription? _statusSubscription; // <-- Listener Subscription
 
-  MatchesNotifier(this._matchRepository) : super(const MatchesState());
+  MatchesNotifier(this._matchRepository, this._ref) // <-- REF ADDED
+      : super(const MatchesState()) {
+    _listenToStatusUpdates(); // <-- Start listening on creation
+  }
 
+  // --- CORRECTED: Listen for status updates ---
+  void _listenToStatusUpdates() {
+    print("[MatchesNotifier] Initializing status update listener.");
+    // Use ref.listen, NOT listenManual
+    _ref.listen<UserStatusUpdate?>(userStatusUpdateProvider, (prev, next) {
+      // Listener callback receives previous and next state
+      if (next != null) {
+        if (kDebugMode)
+          print(
+              "[MatchesNotifier Listener Callback] Received status update: UserID=${next.userId}, isOnline=${next.isOnline}");
+        _updateMatchStatus(next.userId, next.isOnline);
+      }
+    });
+  }
+  // --- END CORRECTION ---
+
+  // --- NEW: Update status in the list ---
+  void _updateMatchStatus(int userId, bool isOnline) {
+    if (!mounted) {
+      print(
+          "[MatchesNotifier _updateMatchStatus] Not mounted, ignoring update for UserID: $userId");
+      return;
+    }
+
+    final currentMatches = state.matches;
+    final matchIndex = currentMatches.indexWhere((match) => match.id == userId);
+
+    if (matchIndex != -1) {
+      final matchToUpdate = currentMatches[matchIndex];
+
+      // Only update if the status has actually changed
+      if (matchToUpdate.isOnline != isOnline) {
+        print(
+            "[MatchesNotifier _updateMatchStatus] Found match UserID: $userId at index $matchIndex. Updating status from ${matchToUpdate.isOnline} to $isOnline.");
+
+        // Create updated user model
+        // CORRECTED: Pass function for nullable lastOnline
+        final updatedMatch = matchToUpdate.copyWith(
+          isOnline: isOnline,
+          // Pass a function returning the value for nullable fields in copyWith
+          lastOnline: () => matchToUpdate.lastOnline,
+        );
+
+        // Create new list with updated model
+        final updatedMatches = List<UserModel>.from(currentMatches);
+        updatedMatches[matchIndex] = updatedMatch;
+
+        // Update state
+        state = state.copyWith(matches: updatedMatches);
+        print(
+            "[MatchesNotifier _updateMatchStatus] State updated for UserID: $userId.");
+      } else {
+        if (kDebugMode)
+          print(
+              "[MatchesNotifier _updateMatchStatus] Match UserID: $userId found, but isOnline status ($isOnline) is already the same. No state change needed.");
+      }
+    } else {
+      if (kDebugMode)
+        print(
+            "[MatchesNotifier _updateMatchStatus] Received status update for UserID: $userId, but they are not in the current matches list.");
+    }
+  }
+  // --- END NEW ---
+
+  // --- fetchMatches remains the same ---
   Future<void> fetchMatches({bool forceRefresh = false}) async {
     if (state.isLoading) return;
-    if (state.matches.isNotEmpty && !forceRefresh)
-      return; // Don't refetch if already loaded unless forced
+    if (state.matches.isNotEmpty && !forceRefresh) return;
 
     print("[MatchesNotifier] Fetching matches...");
     state = state.copyWith(isLoading: true, error: () => null);
@@ -3455,8 +3649,9 @@ class MatchesNotifier extends StateNotifier<MatchesState> {
           error: () => AppError.server(e.message),
         );
       }
-    } catch (e) {
-      print("[MatchesNotifier] Unexpected Error: ${e.toString()}");
+    } catch (e, stacktrace) {
+      print("[MatchesNotifier] Unexpected Error: $e");
+      print("[MatchesNotifier] Stacktrace: $stacktrace");
       if (mounted) {
         state = state.copyWith(
           isLoading: false,
@@ -3465,13 +3660,30 @@ class MatchesNotifier extends StateNotifier<MatchesState> {
       }
     }
   }
+
+  // --- ADDED dispose ---
+  // Note: We don't need to manually cancel the subscription created with ref.listen.
+  // Riverpod handles the lifecycle automatically when the provider is disposed.
+  // However, explicitly overriding dispose is fine for logging or other cleanup.
+  @override
+  void dispose() {
+    print("[MatchesNotifier] Disposing.");
+    // _statusSubscription?.cancel(); // Cancellation handled by Riverpod for ref.listen
+    super.dispose();
+  }
+  // --- END ADDED ---
 }
 
+// --- UPDATED Provider Definition ---
 final matchesProvider =
     StateNotifierProvider<MatchesNotifier, MatchesState>((ref) {
   final repo = ref.watch(matchRepositoryProvider);
-  return MatchesNotifier(repo);
+  // Pass the ref to the notifier's constructor
+  final notifier = MatchesNotifier(repo, ref);
+  // The listener is now started inside the constructor.
+  return notifier;
 });
+// --- END UPDATED ---
 
 
 
@@ -3939,6 +4151,80 @@ final chatServiceProvider = Provider<ChatService>((ref) {
 
 
 ================================================
+File: providers/status_provider.dart
+================================================
+// File: lib/providers/status_provider.dart
+import 'package:flutter/foundation.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+
+/// Represents a single user status update event.
+@immutable // Ensures the state object is immutable
+class UserStatusUpdate {
+  final int userId;
+  final bool isOnline;
+  final DateTime timestamp; // To differentiate events
+
+  const UserStatusUpdate({
+    required this.userId,
+    required this.isOnline,
+    required this.timestamp,
+  });
+
+  // Optional: Override == and hashCode if needed for complex comparisons,
+  // but timestamp usually suffices for differentiation.
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is UserStatusUpdate &&
+          runtimeType == other.runtimeType &&
+          userId == other.userId &&
+          isOnline == other.isOnline &&
+          timestamp == other.timestamp;
+
+  @override
+  int get hashCode => userId.hashCode ^ isOnline.hashCode ^ timestamp.hashCode;
+
+  @override
+  String toString() {
+    return 'UserStatusUpdate(userId: $userId, isOnline: $isOnline, timestamp: $timestamp)';
+  }
+}
+
+// --- StateNotifier ---
+class UserStatusNotifier extends StateNotifier<UserStatusUpdate?> {
+  // Initialize with null state, meaning no update has occurred yet.
+  UserStatusNotifier() : super(null);
+
+  /// Updates the state with the latest status change.
+  void updateStatus(int userId, bool isOnline) {
+    final newStatus = UserStatusUpdate(
+      userId: userId,
+      isOnline: isOnline,
+      timestamp: DateTime.now(), // Use current time for the event
+    );
+    if (kDebugMode) {
+      print("[UserStatusNotifier] Broadcasting status update: $newStatus");
+    }
+    // Only update if it's different from the last state to avoid unnecessary rebuilds
+    // (though timestamp makes it always different, good practice)
+    if (state != newStatus) {
+      state = newStatus;
+    }
+  }
+}
+
+// --- StateNotifierProvider ---
+/// Provider that broadcasts the latest user status update event received via WebSocket.
+/// Other providers (like MatchesNotifier, ConversationNotifier) can watch this
+/// to react to real-time status changes.
+final userStatusUpdateProvider =
+    StateNotifierProvider<UserStatusNotifier, UserStatusUpdate?>((ref) {
+  return UserStatusNotifier();
+});
+
+
+
+================================================
 File: providers/user_provider.dart
 ================================================
 // File: providers/user_provider.dart
@@ -4384,23 +4670,30 @@ File: repositories/chat_repository.dart
 ================================================
 // lib/repositories/chat_repository.dart
 import 'package:dtx/models/chat_message.dart';
+import 'package:dtx/providers/conversation_provider.dart'; // Import ConversationData
 import 'package:dtx/services/api_service.dart';
 import 'package:dtx/utils/token_storage.dart';
+import 'package:flutter/foundation.dart'; // For kDebugMode
+import 'dart:convert'; // For jsonDecode if needed for raw logging
 
 class ChatRepository {
   final ApiService _apiService;
 
   ChatRepository(this._apiService);
 
-  Future<List<ChatMessage>> fetchConversation({
+  // --- UPDATED Return Type and Logic ---
+  Future<ConversationData> fetchConversation({
     required int otherUserId,
   }) async {
     final String methodName = 'fetchConversation';
     print(
-        '[ChatRepository $methodName] Fetching conversation with $otherUserId');
+        '[ChatRepository $methodName] Fetching conversation WITH STATUS for user $otherUserId');
     try {
       final token = await TokenStorage.getToken();
-      if (token == null) throw ApiException('Authentication token missing');
+      if (token == null) {
+        print("[ChatRepository $methodName] Auth token missing.");
+        throw ApiException('Authentication token missing');
+      }
       final headers = {'Authorization': 'Bearer $token'};
 
       final endpoint = '/api/conversation';
@@ -4414,43 +4707,74 @@ class ChatRepository {
         body: body,
         headers: headers,
       );
-      // print('[ChatRepository $methodName] Raw API Response Map: $response'); // Uncomment if needed, but can be large
+      if (kDebugMode) {
+        // Log raw response only in debug mode
+        try {
+          print(
+              '[ChatRepository $methodName] Raw API Response Map: ${jsonEncode(response)}');
+        } catch (e) {
+          print(
+              '[ChatRepository $methodName] Raw API Response Map: (Could not encode, likely large or complex)');
+        }
+      }
 
       if (response['success'] == true) {
+        // --- PARSE MESSAGES ---
         final List<dynamic> messagesData = response['messages'] as List? ?? [];
         print(
-            '[ChatRepository $methodName] API Success. Raw messagesData length: ${messagesData.length}'); // Log length
+            '[ChatRepository $methodName] API Success. Raw messagesData length: ${messagesData.length}');
 
         final messages = messagesData
             .map((data) {
-              // <<< --- ADDED LOGGING HERE --- >>>
-              print(
-                  "[ChatRepository map] Processing raw message data item: $data");
-              // <<< --- END ADDED LOGGING --- >>>
+              if (kDebugMode)
+                print(
+                    "[ChatRepository $methodName map] Processing raw message data item: $data");
               try {
                 if (data is Map<String, dynamic>) {
                   return ChatMessage.fromJson(data);
                 } else {
                   print(
-                      "[ChatRepository map] Warning: Invalid item type in messages list: ${data.runtimeType}");
+                      "[ChatRepository $methodName map] Warning: Invalid item type in messages list: ${data.runtimeType}");
                   return null;
                 }
               } catch (e, stacktrace) {
-                // Add stacktrace
-                print("[ChatRepository map] Error parsing chat message: $e");
                 print(
-                    "[ChatRepository map] Stacktrace: $stacktrace"); // Log stacktrace
+                    "[ChatRepository $methodName map] Error parsing chat message: $e");
                 print(
-                    "[ChatRepository map] Faulty Data: $data"); // Log faulty data
+                    "[ChatRepository $methodName map] Stacktrace: $stacktrace");
+                print("[ChatRepository $methodName map] Faulty Data: $data");
                 return null;
               }
             })
             .whereType<ChatMessage>()
             .toList();
-
         print(
-            '[ChatRepository $methodName] Parsed successfully. Final Message Count: ${messages.length}');
-        return messages;
+            '[ChatRepository $methodName] Parsed Messages Count: ${messages.length}');
+
+        // --- PARSE STATUS ---
+        final bool isOnline = response['other_user_is_online'] as bool? ??
+            false; // Default to false
+        final String? lastOnlineStr =
+            response['other_user_last_online'] as String?;
+        DateTime? lastOnline;
+        if (lastOnlineStr != null) {
+          try {
+            lastOnline = DateTime.parse(lastOnlineStr)
+                .toLocal(); // Parse and convert to local time
+          } catch (e) {
+            print(
+                "[ChatRepository $methodName] Error parsing lastOnline timestamp '$lastOnlineStr': $e");
+          }
+        }
+        print(
+            '[ChatRepository $methodName] Parsed Status: isOnline=$isOnline, lastOnline=$lastOnline');
+
+        // --- RETURN ConversationData ---
+        return ConversationData(
+          messages: messages,
+          otherUserIsOnline: isOnline,
+          otherUserLastOnline: lastOnline,
+        );
       } else {
         final message =
             response['message']?.toString() ?? 'Failed to fetch conversation.';
@@ -4463,10 +4787,8 @@ class ChatRepository {
           '[ChatRepository $methodName] API Exception: ${e.message}, Status: ${e.statusCode}');
       rethrow;
     } catch (e, stacktrace) {
-      // Add stacktrace
       print('[ChatRepository $methodName] Unexpected Error: $e');
-      print(
-          "[ChatRepository $methodName] Stacktrace: $stacktrace"); // Log stacktrace
+      print("[ChatRepository $methodName] Stacktrace: $stacktrace");
       throw ApiException(
           'An unexpected error occurred while fetching conversation: ${e.toString()}');
     }
@@ -5678,25 +6000,31 @@ class ApiException implements Exception {
 ================================================
 File: services/chat_service.dart
 ================================================
-// lib/services/chat_service.dart
+// File: lib/services/chat_service.dart
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+// WebSocket Imports
 import 'package:web_socket_channel/io.dart';
 import 'package:web_socket_channel/status.dart' as WebSocketStatus;
 import 'package:web_socket_channel/web_socket_channel.dart';
 
+// App-specific Imports
 import 'package:dtx/models/chat_message.dart';
 import 'package:dtx/providers/auth_provider.dart';
 import 'package:dtx/providers/conversation_provider.dart';
 import 'package:dtx/providers/user_provider.dart';
+import 'package:dtx/providers/status_provider.dart'; // <-- IMPORT ADDED
 import 'package:dtx/utils/token_storage.dart';
+import 'package:flutter/foundation.dart'; // <-- IMPORT ADDED (if not already)
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+// --- Keep WebSocketConnectionState enum and webSocketStateProvider ---
 enum WebSocketConnectionState { disconnected, connecting, connected, error }
 
 final webSocketStateProvider = StateProvider<WebSocketConnectionState>(
     (ref) => WebSocketConnectionState.disconnected);
+// ---
 
 class ChatService {
   final Ref _ref;
@@ -5709,13 +6037,16 @@ class ChatService {
   static const int _maxReconnectAttempts = 5;
   static const Duration _initialReconnectDelay = Duration(seconds: 2);
 
+  // Map to track optimistic messages (No Lock Needed)
+  final Map<String, int> _pendingMessages = {};
+
   ChatService(this._ref, this._wsUrl) {
     print("[ChatService] Initialized with URL: $_wsUrl");
   }
 
+  // --- connect logic remains the same ---
   Future<void> connect() async {
-    // ... (connect logic remains the same) ...
-    _isManualDisconnect = false; // Reset flag on connect attempt
+    _isManualDisconnect = false;
     if (_channel != null &&
         _ref.read(webSocketStateProvider) ==
             WebSocketConnectionState.connected) {
@@ -5727,19 +6058,15 @@ class ChatService {
       print("[ChatService] Connection attempt already in progress.");
       return;
     }
-
     print("[ChatService] Attempting to connect to $_wsUrl...");
     _updateState(WebSocketConnectionState.connecting);
-
     String? token =
         _ref.read(authProvider).jwtToken ?? await TokenStorage.getToken();
-
     if (token == null) {
       print("[ChatService] Connection failed: Auth token not found.");
-      _updateState(WebSocketConnectionState.error); // Or disconnected
+      _updateState(WebSocketConnectionState.error);
       return;
     }
-
     try {
       final headers = {'Authorization': 'Bearer $token'};
       _channel = IOWebSocketChannel.connect(
@@ -5747,16 +6074,13 @@ class ChatService {
         headers: headers,
         pingInterval: const Duration(seconds: 15),
       );
-
       print("[ChatService] WebSocket channel created. Listening...");
-
       _streamSubscription = _channel!.stream.listen(
-        _onMessageReceived,
+        _onMessageReceived, // <<< Passes messages here
         onDone: _handleDisconnect,
         onError: _handleError,
         cancelOnError: false,
       );
-
       _updateState(WebSocketConnectionState.connected);
       _reconnectAttempts = 0;
       print("[ChatService] Connection established successfully.");
@@ -5765,84 +6089,127 @@ class ChatService {
       _handleError(e);
     }
   }
+  // --- End connect logic ---
 
   void _onMessageReceived(dynamic message) {
     print("[ChatService] Message received: $message");
     try {
       final Map<String, dynamic> decodedMessage = jsonDecode(message);
       final type = decodedMessage['type'] as String?;
-      final senderId = decodedMessage['sender_user_id'] as int?;
-      final currentUserId = _ref.read(currentUserIdProvider);
 
-      if (currentUserId == null) {
-        print("[ChatService] Cannot process message: Current User ID is null.");
-        return;
-      }
+      switch (type) {
+        case 'chat_message':
+          // --- chat_message handling remains the same ---
+          final messageId = decodedMessage['id'] as int?;
+          final senderId = decodedMessage['sender_user_id'] as int?;
+          final recipientId = decodedMessage['recipient_user_id'] as int?;
+          final sentAtString = decodedMessage['sent_at'] as String?;
+          final textContent = decodedMessage['text'] as String?;
+          final mediaUrlContent = decodedMessage['media_url'] as String?;
+          final mediaTypeContent = decodedMessage['media_type'] as String?;
+          if (messageId == null ||
+              messageId <= 0 ||
+              senderId == null ||
+              recipientId == null ||
+              sentAtString == null) {
+            print(
+                "[ChatService] Received 'chat_message' with invalid/missing essential fields. Msg: $decodedMessage");
+            return;
+          }
+          final currentUserId = _ref.read(currentUserIdProvider);
+          if (currentUserId == null || recipientId != currentUserId) {
+            print(
+                "[ChatService] Received message not intended for current user ($currentUserId). Recipient was $recipientId. Ignoring.");
+            return;
+          }
+          if (senderId == currentUserId) {
+            print(
+                "[ChatService] Received message loopback from self (ID: $messageId). Ignoring.");
+            return;
+          }
+          DateTime sentAt;
+          try {
+            sentAt = DateTime.parse(sentAtString).toLocal();
+          } catch (e) {
+            print(
+                "[ChatService] Error parsing sent_at '$sentAtString': $e. Using local time as fallback.");
+            sentAt = DateTime.now();
+          }
+          final ChatMessage chatMessage = ChatMessage(
+            messageID: messageId,
+            senderUserID: senderId,
+            recipientUserID: recipientId,
+            messageText: textContent ?? '',
+            mediaUrl: mediaUrlContent,
+            mediaType: mediaTypeContent,
+            sentAt: sentAt,
+            status: ChatMessageStatus.sent,
+            isRead: false,
+            readAt: null,
+          );
+          _ref
+              .read(conversationProvider(senderId).notifier)
+              .addReceivedMessage(chatMessage);
+          print(
+              "[ChatService] Added received 'chat_message' (ID: $messageId) to conversation with $senderId");
+          break; // End case 'chat_message'
 
-      // --- MODIFIED: Handle different message types ---
-      ChatMessage chatMessage;
-      if (type == 'text' && senderId != null) {
-        chatMessage = ChatMessage(
-          messageID: 0, // Not provided by WS
-          senderUserID: senderId,
-          recipientUserID: currentUserId,
-          messageText: decodedMessage['text'] as String? ?? '',
-          sentAt: DateTime.now().toUtc(), // Use UTC time from WS
-          isRead: false,
-          readAt: null,
-          // Media fields will be null for text
-          mediaUrl: null,
-          mediaType: null,
-        );
-      } else if (['image', 'video', 'audio', 'file'].contains(type) &&
-          senderId != null) {
-        chatMessage = ChatMessage(
-          messageID: 0, // Not provided by WS
-          senderUserID: senderId,
-          recipientUserID: currentUserId,
-          messageText: '', // Text is empty for media
-          sentAt: DateTime.now().toUtc(),
-          isRead: false,
-          readAt: null,
-          // Populate media fields
-          mediaUrl: decodedMessage['media_url'] as String?,
-          mediaType: decodedMessage['media_type'] as String?,
-        );
-      } else if (type == 'error') {
-        print(
-            "[ChatService] Received error message: ${decodedMessage['content']}");
-        // Optionally show error to user
-        return; // Don't add error messages to conversation
-      } else if (type == 'info') {
-        print(
-            "[ChatService] Received info message: ${decodedMessage['content']}");
-        // Optionally show info to user
-        return; // Don't add info messages to conversation
-      } else {
-        print(
-            "[ChatService] Received unknown message structure: $decodedMessage");
-        return; // Ignore unknown types
-      }
+        case 'message_ack':
+          // --- message_ack handling remains the same ---
+          print("[ChatService] Received message_ack: $decodedMessage");
+          _handleMessageAck(decodedMessage);
+          break; // End case 'message_ack'
 
-      // Add the parsed message to the correct conversation provider
-      _ref
-          .read(conversationProvider(senderId!)
-              .notifier) // Use senderId! as it's checked above
-          .addReceivedMessage(chatMessage);
-      print(
-          "[ChatService] Added received message (type: $type) to conversation with $senderId");
-      // --- END MODIFICATION ---
-    } catch (e) {
+        // --- NEW: Handle status_update ---
+        case 'status_update':
+          print("[ChatService] Received status_update: $decodedMessage");
+          final userId = decodedMessage['user_id'] as int?;
+          final status = decodedMessage['status'] as String?;
+
+          if (userId == null || userId <= 0 || status == null) {
+            print(
+                "[ChatService] Invalid status_update message: Missing user_id or status. Data: $decodedMessage");
+            return;
+          }
+
+          final bool isOnline = status.toLowerCase() == 'online';
+          print(
+              "[ChatService] Parsed status_update: UserID=$userId, isOnline=$isOnline");
+
+          // Broadcast the update using the new provider
+          _ref
+              .read(userStatusUpdateProvider.notifier)
+              .updateStatus(userId, isOnline);
+          break; // End case 'status_update'
+        // --- END NEW ---
+
+        case 'error':
+          print(
+              "[ChatService] Received error message from server: ${decodedMessage['content']}");
+          break; // End case 'error'
+
+        case 'info':
+          print(
+              "[ChatService] Received info message from server: ${decodedMessage['content']}");
+          break; // End case 'info'
+
+        default:
+          print(
+              "[ChatService] Received unhandled message type '$type': $decodedMessage");
+      } // End switch (type)
+    } catch (e, stacktrace) {
       print("[ChatService] Error processing received message: $e");
+      print("[ChatService] Stacktrace: $stacktrace");
     }
   }
 
-  // --- MODIFIED: sendMessage signature and payload ---
+  // --- sendMessage logic remains the same ---
   void sendMessage(
     int recipientUserId, {
     String? text,
     String? mediaUrl,
     String? mediaType,
+    int? replyToMessageId,
   }) {
     if (_channel == null ||
         _ref.read(webSocketStateProvider) !=
@@ -5850,90 +6217,160 @@ class ChatService {
       print("[ChatService] Cannot send message: Not connected.");
       return;
     }
-
     final currentUserId = _ref.read(currentUserIdProvider);
     if (currentUserId == null) {
       print("[ChatService] Cannot send message: Current User ID is null.");
       return;
     }
-
-    // Determine message type and build payload
     Map<String, dynamic> payload = {
+      'type': "chat_message",
       'recipient_user_id': recipientUserId,
     };
-    String messageType = "text"; // Default
-
-    if (mediaUrl != null && mediaType != null) {
-      // Basic check for media type validity
-      if (mediaType.startsWith('image/')) {
-        messageType = "image";
-      } else if (mediaType.startsWith('video/')) {
-        messageType = "video";
-      } else if (mediaType.startsWith('audio/')) {
-        messageType = "audio";
-      } else {
-        messageType = "file"; // Generic file type
-      }
-      payload['type'] = messageType;
+    bool isMediaMessage = false;
+    String? optimisticTempId;
+    if (mediaUrl != null &&
+        mediaUrl.isNotEmpty &&
+        mediaType != null &&
+        mediaType.isNotEmpty) {
       payload['media_url'] = mediaUrl;
       payload['media_type'] = mediaType;
-      payload['text'] = null; // Explicitly null for media
+      payload['text'] = null;
+      isMediaMessage = true;
+      print("[ChatService] Preparing media message payload.");
     } else if (text != null && text.trim().isNotEmpty) {
-      messageType = "text";
-      payload['type'] = messageType;
       payload['text'] = text.trim();
       payload['media_url'] = null;
       payload['media_type'] = null;
+      isMediaMessage = false;
+      print("[ChatService] Preparing text message payload.");
     } else {
       print("[ChatService] Cannot send: Message must have text or media.");
-      return; // Nothing to send
+      return;
     }
-
+    if (replyToMessageId != null && replyToMessageId > 0) {
+      payload['reply_to_message_id'] = replyToMessageId;
+      print("[ChatService] Adding replyToMessageId: $replyToMessageId");
+    }
     final messageJson = jsonEncode(payload);
-    print("[ChatService] Sending message (Type: $messageType): $messageJson");
-
+    print("[ChatService] Sending message (Type: chat_message): $messageJson");
     try {
-      _channel!.sink.add(messageJson);
-
-      // Optimistic UI Update (only for text messages for now)
-      if (messageType == "text") {
+      if (!isMediaMessage) {
+        optimisticTempId = DateTime.now().millisecondsSinceEpoch.toString();
         final sentMessage = ChatMessage(
-          messageID: 0, // Temporary ID
+          tempId: optimisticTempId,
+          messageID: 0,
           senderUserID: currentUserId,
           recipientUserID: recipientUserId,
-          messageText: text!, // Use the original text
+          messageText: text!,
           sentAt: DateTime.now(),
+          status: ChatMessageStatus.pending,
           isRead: false,
           readAt: null,
           mediaUrl: null,
           mediaType: null,
         );
+        addPendingMessage(optimisticTempId, recipientUserId);
         _ref
             .read(conversationProvider(recipientUserId).notifier)
             .addSentMessage(sentMessage);
         print(
-            "[ChatService] Added sent TEXT message optimistically to conversation with $recipientUserId");
+            "[ChatService] Added optimistic TEXT message (TempID: $optimisticTempId) to conversation with $recipientUserId");
       } else {
-        // Optional: Add optimistic UI for media upload/sent status later
         print(
-            "[ChatService] Media message sent to WebSocket. Optimistic UI not implemented yet.");
+            "[ChatService] Media message payload prepared. Optimistic message added by ChatDetailScreen.");
       }
+      _channel!.sink.add(messageJson);
+      print("[ChatService] Message added to WebSocket sink.");
     } catch (e) {
-      print("[ChatService] Error sending message: $e");
+      print("[ChatService] Error adding message to WebSocket sink: $e");
+      if (optimisticTempId != null) {
+        print(
+            "[ChatService] Marking optimistic message $optimisticTempId as failed due to sink error.");
+        removePendingMessage(optimisticTempId);
+        _ref
+            .read(conversationProvider(recipientUserId).notifier)
+            .updateMessageStatus(optimisticTempId, ChatMessageStatus.failed,
+                errorMessage: "Failed to send message.");
+      }
       _handleError(e);
     }
   }
-  // --- END MODIFICATION ---
 
-  // ... (_handleDisconnect, _handleError, _scheduleReconnect, disconnect, _updateState remain the same) ...
+  // --- _handleMessageAck logic remains the same ---
+  void _handleMessageAck(Map<String, dynamic> ackData) {
+    final realMessageId = ackData['id'] as int?;
+    final ackContent = ackData['content'] as String?;
+    final mediaUrlAck = ackData['media_url'] as String?;
+    print(
+        "[ChatService _handleMessageAck] Received: RealID=$realMessageId, Content='$ackContent', MediaURL='$mediaUrlAck'");
+    if (realMessageId == null) {
+      print("[ChatService _handleMessageAck] Invalid ack: Missing real ID.");
+      return;
+    }
+    final currentUserId = _ref.read(currentUserIdProvider);
+    if (currentUserId == null) {
+      print(
+          "[ChatService _handleMessageAck] Cannot process ack: Current User ID is null.");
+      return;
+    }
+    String? foundTempId;
+    int? foundRecipientId;
+    if (_pendingMessages.isNotEmpty) {
+      // Attempt to find the right tempId - simple FIFO for now
+      // IMPORTANT: This simple FIFO approach might fail if multiple messages
+      // are sent rapidly and acks arrive out of order. A more robust
+      // solution would involve matching based on content or a temporary correlation ID.
+      // For now, we proceed with the FIFO assumption.
+      foundTempId = _pendingMessages.keys.first;
+      foundRecipientId = _pendingMessages.values.first;
+      print(
+          "[ChatService _handleMessageAck] Found pending message via map (FIFO): TempID=$foundTempId for Recipient=$foundRecipientId");
+      removePendingMessage(foundTempId);
+    } else {
+      print(
+          "[ChatService _handleMessageAck] No pending messages found in tracking map.");
+    }
+    if (foundTempId != null && foundRecipientId != null) {
+      print(
+          "[ChatService _handleMessageAck] Updating message (TempID: $foundTempId) for ack (Real ID: $realMessageId). Status -> Sent.");
+      final conversationNotifier =
+          _ref.read(conversationProvider(foundRecipientId).notifier);
+      conversationNotifier.updateMessageStatus(
+          foundTempId, ChatMessageStatus.sent,
+          finalMessageId: realMessageId, finalMediaUrl: mediaUrlAck);
+      print(
+          "[ChatService _handleMessageAck] Message status updated successfully.");
+    } else {
+      print(
+          "[ChatService _handleMessageAck] WARNING: Received message_ack for Real ID $realMessageId, but couldn't find a matching tracked pending message.");
+    }
+  }
+
+  // --- Public Helper methods for tracking pending messages ---
+  void addPendingMessage(String tempId, int recipientId) {
+    _pendingMessages[tempId] = recipientId;
+    print(
+        "[ChatService addPendingMessage] Added TempID: $tempId for Recipient: $recipientId. Count: ${_pendingMessages.length}");
+  }
+
+  void removePendingMessage(String tempId) {
+    if (_pendingMessages.containsKey(tempId)) {
+      _pendingMessages.remove(tempId);
+      print(
+          "[ChatService removePendingMessage] Removed TempID: $tempId. Count: ${_pendingMessages.length}");
+    }
+  }
+  // --- End Public Helpers ---
+
+  // --- WebSocket Lifecycle Handlers (Keep as is) ---
   void _handleDisconnect() {
     print("[ChatService] WebSocket disconnected.");
     _channel = null;
     _streamSubscription?.cancel();
     _streamSubscription = null;
+    _pendingMessages.clear();
+    print("[ChatService _handleDisconnect] Cleared pending messages map.");
     _updateState(WebSocketConnectionState.disconnected);
-
-    // Attempt to reconnect if it wasn't a manual disconnect
     if (!_isManualDisconnect) {
       _scheduleReconnect();
     }
@@ -5941,46 +6378,44 @@ class ChatService {
 
   void _handleError(dynamic error) {
     print("[ChatService] WebSocket error: $error");
-    _channel = null; // Assume connection is lost on error
-    _streamSubscription?.cancel(); // Cancel listener on error
+    _channel = null;
+    _streamSubscription?.cancel();
     _streamSubscription = null;
+    _pendingMessages.clear();
+    print("[ChatService _handleError] Cleared pending messages map.");
     _updateState(WebSocketConnectionState.error);
-
-    // Attempt to reconnect if it wasn't a manual disconnect
     if (!_isManualDisconnect) {
       _scheduleReconnect();
     }
   }
 
   void _scheduleReconnect() {
-    if (_reconnectTimer?.isActive ?? false) return; // Already scheduled
+    if (_reconnectTimer?.isActive ?? false) return;
     if (_reconnectAttempts >= _maxReconnectAttempts) {
       print("[ChatService] Max reconnect attempts reached.");
-      _updateState(WebSocketConnectionState.disconnected); // Stay disconnected
+      _updateState(WebSocketConnectionState.disconnected);
       return;
     }
-
     _reconnectAttempts++;
-    // *** FIX: Use bit-shift for power calculation ***
     final delayMilliseconds =
         _initialReconnectDelay.inMilliseconds * (1 << (_reconnectAttempts - 1));
     final delay = Duration(milliseconds: delayMilliseconds);
-
     print(
         "[ChatService] Scheduling reconnect attempt $_reconnectAttempts/$_maxReconnectAttempts in $delay...");
-
     _reconnectTimer = Timer(delay, () {
       print("[ChatService] Attempting reconnect...");
-      connect(); // Try connecting again
+      connect();
     });
   }
 
   void disconnect() {
     print("[ChatService] Manual disconnect initiated.");
-    _isManualDisconnect = true; // Set flag to prevent auto-reconnect
-    _reconnectTimer?.cancel(); // Cancel any pending reconnect
-    _reconnectAttempts = 0; // Reset attempts on manual disconnect
+    _isManualDisconnect = true;
+    _reconnectTimer?.cancel();
+    _reconnectAttempts = 0;
     _streamSubscription?.cancel();
+    _pendingMessages.clear();
+    print("[ChatService disconnect] Cleared pending messages map.");
     _channel?.sink.close(WebSocketStatus.normalClosure);
     _channel = null;
     _streamSubscription = null;
@@ -5989,18 +6424,22 @@ class ChatService {
   }
 
   void _updateState(WebSocketConnectionState newState) {
-    // Update provider only if state changes
-    if (_ref.read(webSocketStateProvider) != newState) {
-      _ref.read(webSocketStateProvider.notifier).state = newState;
-      print("[ChatService] WebSocket state updated to: $newState");
-    }
+    // Update only if state changes
+    Future.microtask(() {
+      // Use microtask to avoid modifying state during build/notification phase
+      if (_ref.read(webSocketStateProvider) != newState) {
+        _ref.read(webSocketStateProvider.notifier).state = newState;
+        print("[ChatService] WebSocket state updated to: $newState");
+      }
+    });
   }
 }
 
-// Helper to get current user ID (remains the same)
+// --- currentUserIdProvider remains the same ---
 final currentUserIdProvider = Provider<int?>((ref) {
   return ref.watch(userProvider.select((user) => user.id));
 });
+// ---
 
 
 
@@ -6012,6 +6451,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'package:http/http.dart' as http;
 import 'api_service.dart';
+import 'dart:developer' as developer; // Import developer for log function
 
 /// Implementation of ApiService using the http package
 class HttpService implements ApiService {
@@ -6020,30 +6460,71 @@ class HttpService implements ApiService {
 
   HttpService({required this.baseUrl});
 
+  // Helper function for logging
+  void _log(String method, String url,
+      {Object? body, Map<String, String>? headers}) {
+    final logMessage = StringBuffer();
+    logMessage.writeln("--------- HTTP Request ---------");
+    logMessage.writeln("Method: $method");
+    logMessage.writeln("URL: $url");
+    if (headers != null) {
+      // Avoid logging sensitive headers like Authorization directly in production logs if possible
+      final sanitizedHeaders = Map<String, String>.from(headers);
+      if (sanitizedHeaders.containsKey('Authorization')) {
+        sanitizedHeaders['Authorization'] = 'Bearer [REDACTED]';
+      }
+      logMessage.writeln("Headers: $sanitizedHeaders");
+    }
+    if (body != null) {
+      try {
+        // Try to encode body for pretty printing, limit length
+        String bodyString = json.encode(body);
+        if (bodyString.length > 500) {
+          bodyString = '${bodyString.substring(0, 500)}... [TRUNCATED]';
+        }
+        logMessage.writeln("Body: $bodyString");
+      } catch (e) {
+        logMessage.writeln("Body: (Could not encode body for logging: $e)");
+      }
+    }
+    logMessage.write("--------------------------------");
+    developer.log(logMessage.toString(),
+        name: 'HttpService'); // Use developer.log
+  }
+
   @override
   Map<String, String> addAuthToken(Map<String, String>? headers, String token) {
     final updatedHeaders = {...(headers ?? {})};
     updatedHeaders['Authorization'] = 'Bearer $token';
-    print(updatedHeaders);
+    // Avoid logging the token directly here if possible, logged sanitized in _log
     return updatedHeaders;
   }
 
   @override
   Future<Map<String, dynamic>> get(String endpoint,
       {Map<String, String>? headers}) async {
+    final url = '$baseUrl$endpoint';
+    _log('GET', url, headers: headers); // Log request
     try {
       final response = await http.get(
-        Uri.parse('$baseUrl$endpoint'),
+        Uri.parse(url),
         headers: {
-          'Content-Type': 'application/json',
+          'Content-Type':
+              'application/json', // Still specify expected request type
+          // 'Accept-Charset': 'utf-8', // Tell server we prefer UTF-8
           ...?headers,
         },
       );
-
-      return _handleResponse(response);
-    } on SocketException {
-      throw ApiException('No internet connection');
+      // Pass the raw response to _handleResponse
+      return _handleResponse(response, 'GET', url);
+    } on SocketException catch (e) {
+      developer.log('SocketException on GET $url: $e',
+          name: 'HttpService', error: e);
+      throw ApiException('No internet connection or server unavailable.');
     } catch (e) {
+      developer.log('Error performing GET $url: $e',
+          name: 'HttpService', error: e);
+      if (e is ApiException) rethrow;
       throw ApiException('Failed to perform GET request: ${e.toString()}');
     }
   }
@@ -6054,20 +6535,29 @@ class HttpService implements ApiService {
     required Map<String, dynamic> body,
     Map<String, String>? headers,
   }) async {
+    final url = '$baseUrl$endpoint';
+    _log('POST', url, body: body, headers: headers); // Log request
     try {
       final response = await http.post(
-        Uri.parse('$baseUrl$endpoint'),
+        Uri.parse(url),
         headers: {
-          'Content-Type': 'application/json',
+          'Content-Type':
+              'application/json; charset=utf-8', // Specify UTF-8 in request
+          // 'Accept-Charset': 'utf-8', // And accept it
           ...?headers,
         },
+        // json.encode naturally handles UTF-8
         body: json.encode(body),
       );
-
-      return _handleResponse(response);
-    } on SocketException {
-      throw ApiException('No internet connection');
+      // Pass the raw response to _handleResponse
+      return _handleResponse(response, 'POST', url);
+    } on SocketException catch (e) {
+      developer.log('SocketException on POST $url: $e',
+          name: 'HttpService', error: e);
+      throw ApiException('No internet connection or server unavailable.');
     } catch (e) {
+      developer.log('Error performing POST $url: $e',
+          name: 'HttpService', error: e);
       if (e is ApiException) rethrow;
       throw ApiException('Failed to perform POST request: ${e.toString()}');
     }
@@ -6079,50 +6569,61 @@ class HttpService implements ApiService {
     required Map<String, dynamic> body,
     Map<String, String>? headers,
   }) async {
+    final url = '$baseUrl$endpoint';
+    _log('PUT', url, body: body, headers: headers); // Log request
     try {
       final response = await http.put(
-        Uri.parse('$baseUrl$endpoint'),
+        Uri.parse(url),
         headers: {
-          'Content-Type': 'application/json',
+          'Content-Type': 'application/json; charset=utf-8',
+          // 'Accept-Charset': 'utf-8',
           ...?headers,
         },
         body: json.encode(body),
       );
-
-      return _handleResponse(response);
-    } on SocketException {
-      throw ApiException('No internet connection');
+      return _handleResponse(response, 'PUT', url);
+    } on SocketException catch (e) {
+      developer.log('SocketException on PUT $url: $e',
+          name: 'HttpService', error: e);
+      throw ApiException('No internet connection or server unavailable.');
     } catch (e) {
+      developer.log('Error performing PUT $url: $e',
+          name: 'HttpService', error: e);
       if (e is ApiException) rethrow;
       throw ApiException('Failed to perform PUT request: ${e.toString()}');
     }
   }
 
-  // --- ADDED PATCH METHOD ---
   @override
   Future<Map<String, dynamic>> patch(
     String endpoint, {
     required Map<String, dynamic> body,
     Map<String, String>? headers,
   }) async {
+    final url = '$baseUrl$endpoint';
+    _log('PATCH', url, body: body, headers: headers); // Log request
     try {
       final response = await http.patch(
-        Uri.parse('$baseUrl$endpoint'),
+        Uri.parse(url),
         headers: {
-          'Content-Type': 'application/json',
+          'Content-Type': 'application/json; charset=utf-8',
+          // 'Accept-Charset': 'utf-8',
           ...?headers,
         },
         body: json.encode(body),
       );
-      return _handleResponse(response);
-    } on SocketException {
-      throw ApiException('No internet connection');
+      return _handleResponse(response, 'PATCH', url);
+    } on SocketException catch (e) {
+      developer.log('SocketException on PATCH $url: $e',
+          name: 'HttpService', error: e);
+      throw ApiException('No internet connection or server unavailable.');
     } catch (e) {
+      developer.log('Error performing PATCH $url: $e',
+          name: 'HttpService', error: e);
       if (e is ApiException) rethrow;
       throw ApiException('Failed to perform PATCH request: ${e.toString()}');
     }
   }
-  // --- END ADDED PATCH METHOD ---
 
   @override
   Future<Map<String, dynamic>> delete(
@@ -6130,11 +6631,14 @@ class HttpService implements ApiService {
     Map<String, dynamic>? body,
     Map<String, String>? headers,
   }) async {
+    final url = '$baseUrl$endpoint';
+    _log('DELETE', url, body: body, headers: headers); // Log request
     try {
-      final request = http.Request('DELETE', Uri.parse('$baseUrl$endpoint'));
+      final request = http.Request('DELETE', Uri.parse(url));
 
       request.headers.addAll({
-        'Content-Type': 'application/json',
+        'Content-Type': 'application/json; charset=utf-8',
+        // 'Accept-Charset': 'utf-8',
         ...?headers,
       });
 
@@ -6145,62 +6649,106 @@ class HttpService implements ApiService {
       final streamedResponse = await request.send();
       final response = await http.Response.fromStream(streamedResponse);
 
-      return _handleResponse(response);
-    } on SocketException {
-      throw ApiException('No internet connection');
+      return _handleResponse(response, 'DELETE', url);
+    } on SocketException catch (e) {
+      developer.log('SocketException on DELETE $url: $e',
+          name: 'HttpService', error: e);
+      throw ApiException('No internet connection or server unavailable.');
     } catch (e) {
+      developer.log('Error performing DELETE $url: $e',
+          name: 'HttpService', error: e);
       if (e is ApiException) rethrow;
       throw ApiException('Failed to perform DELETE request: ${e.toString()}');
     }
   }
 
-  /// Handle the HTTP response and convert to a standardized format
-  Map<String, dynamic> _handleResponse(http.Response response) {
+  /// Handle the HTTP response, decode it, and convert to a standardized format
+  Map<String, dynamic> _handleResponse(
+      http.Response response, String method, String url) {
+    final logResponse = StringBuffer();
+    logResponse.writeln("--------- HTTP Response ---------");
+    logResponse.writeln("URL: $method $url");
+    logResponse.writeln("Status Code: ${response.statusCode}");
+    logResponse.writeln("Headers: ${response.headers}");
+    // Log raw bytes (truncated) - useful for seeing if corruption happened before decoding
+    final bytesLength = response.bodyBytes.length;
+    final truncatedBytes =
+        response.bodyBytes.sublist(0, (bytesLength > 200 ? 200 : bytesLength));
+    logResponse.writeln(
+        "Raw Body Bytes (first ${truncatedBytes.length}): $truncatedBytes");
+
+    String responseBody = ''; // Store decoded body
+
     try {
-      // Allow empty body for success codes like 204 No Content
+      // *** Explicitly decode response body as UTF-8 ***
+      // Use allowMalformed: true to prevent crashing if bytes are truly invalid
+      // Although if they are invalid, the source is likely the server or proxy.
+      responseBody = utf8.decode(response.bodyBytes, allowMalformed: true);
+      logResponse.writeln(
+          "Decoded Body (UTF-8, truncated): ${responseBody.substring(0, (responseBody.length > 500 ? 500 : responseBody.length))}...");
+      logResponse.write("--------------------------------");
+      developer.log(logResponse.toString(),
+          name: 'HttpService'); // Log before JSON decode attempt
+
+      // --- Process based on Status Code ---
       if (response.statusCode >= 200 && response.statusCode < 300) {
-        if (response.body.isEmpty) {
+        if (responseBody.isEmpty) {
+          developer.log(
+              'Success (Status ${response.statusCode}) with empty body.',
+              name: 'HttpService');
           return {'success': true, 'message': 'Operation successful'};
         }
-        final responseData = json.decode(response.body) as Map<String, dynamic>;
-        return responseData;
+        // Attempt to decode the JSON from the UTF-8 string
+        final responseData = json.decode(responseBody) as Map<String, dynamic>;
+        developer.log('Success (Status ${response.statusCode}) with JSON body.',
+            name: 'HttpService');
+        return responseData; // Assuming server sends success field if applicable
       } else {
-        // Attempt to decode body even for errors, as it might contain error details
+        // --- Handle Error Status Codes ---
+        developer.log('Error Status Code: ${response.statusCode}',
+            name: 'HttpService');
         Map<String, dynamic>? responseData;
+        String errorMessage =
+            'Request failed: ${response.statusCode} ${response.reasonPhrase ?? ''}'; // Default error
+
         try {
-          if (response.body.isNotEmpty) {
-            responseData = json.decode(response.body) as Map<String, dynamic>;
+          if (responseBody.isNotEmpty) {
+            // Try to parse error details from the body
+            responseData = json.decode(responseBody) as Map<String, dynamic>;
+            if (responseData.containsKey('message')) {
+              errorMessage = responseData['message'].toString();
+            } else if (responseData.containsKey('error')) {
+              errorMessage = responseData['error'].toString();
+            }
+            developer.log('Parsed error response body: $responseData',
+                name: 'HttpService');
           }
         } on FormatException {
-          // Ignore format exception if body isn't valid JSON
-          print("Warning: Non-JSON error response body: ${response.body}");
+          developer.log('Warning: Non-JSON error response body received.',
+              name: 'HttpService');
+          // Use the default errorMessage from status code/reason phrase
         }
 
-        // Extract only the actual error message from the API response
-        String errorMessage;
-
-        if (responseData != null && responseData.containsKey('message')) {
-          // Use the message directly from the response
-          errorMessage = responseData['message'].toString();
-        } else if (responseData != null && responseData.containsKey('error')) {
-          // Some APIs use 'error' property
-          errorMessage = responseData['error'].toString();
-        } else {
-          // Fallback error message including status code and reason phrase
-          errorMessage =
-              'Request failed: ${response.statusCode} ${response.reasonPhrase ?? ''}';
-        }
-
+        // Throw the specific error
         throw ApiException(errorMessage, statusCode: response.statusCode);
       }
-    } on FormatException {
-      // This catches JSON decoding errors for successful responses (shouldn't happen often)
-      throw ApiException('Invalid response format received from server.',
+    } on FormatException catch (e) {
+      // Catch errors during json.decode()
+      final bodyStart = responseBody.substring(
+          0, (responseBody.length > 200 ? 200 : responseBody.length));
+      developer.log(
+          'JSON FormatException: $e. Decoded body started with: "$bodyStart"',
+          name: 'HttpService',
+          error: e);
+      throw ApiException('Invalid JSON format received from server.',
           statusCode: response.statusCode);
     } catch (e) {
-      // Catch other errors like network issues during response handling
-      if (e is ApiException)
-        rethrow; // Re-throw if it's already an ApiException
+      // Catch other errors during response handling (e.g., UTF-8 decode if malformed bytes were strict)
+      developer.log('Error processing response: $e',
+          name: 'HttpService', error: e);
+      // Re-throw specific ApiException if it came from the error handling block above
+      if (e is ApiException) rethrow;
+      // Otherwise, wrap in a generic ApiException
       throw ApiException('Failed to process response: ${e.toString()}',
           statusCode: response.statusCode);
     }
@@ -6473,6 +7021,153 @@ enum ReportReason {
   const ReportReason(this.value, this.label);
 }
 // --- END ADDED ---
+
+
+
+================================================
+File: utils/date_formatter.dart
+================================================
+// File: lib/utils/date_formatter.dart
+import 'package:intl/intl.dart'; // Add intl package to pubspec.yaml if not already there
+import 'package:flutter/foundation.dart';
+
+String formatLastSeen(DateTime? lastSeen, {bool short = false}) {
+  final methodName = 'formatLastSeen';
+  if (lastSeen == null) {
+    if (kDebugMode) print("[$methodName] Input DateTime is null.");
+    return short ? '' : 'Last seen: unavailable';
+  }
+
+  final now = DateTime.now();
+  final difference = now.difference(lastSeen);
+
+  if (kDebugMode)
+    print(
+        "[$methodName] Formatting: Now=$now, LastSeen=$lastSeen, Diff=$difference");
+
+  if (difference.inSeconds < 60) {
+    return short ? 'just now' : 'Last seen: just now';
+  } else if (difference.inMinutes < 60) {
+    final minutes = difference.inMinutes;
+    return short
+        ? '${minutes}m ago'
+        : 'Last seen: $minutes minute${minutes > 1 ? 's' : ''} ago';
+  } else if (difference.inHours < 24 && now.day == lastSeen.day) {
+    final hours = difference.inHours;
+    return short
+        ? '${hours}h ago'
+        : 'Last seen: $hours hour${hours > 1 ? 's' : ''} ago';
+  } else if (difference.inDays == 1 ||
+      (difference.inHours < 48 && now.day == lastSeen.day + 1)) {
+    return short ? 'Yesterday' : 'Last seen: Yesterday';
+  } else if (difference.inDays < 7) {
+    // Within the last week, show day name
+    final formatter = DateFormat('EEEE'); // e.g., 'Monday'
+    final dayName = formatter.format(lastSeen);
+    return short ? dayName : 'Last seen: $dayName';
+  } else {
+    // Older than a week, show date
+    final formatter = DateFormat('MMM d, yyyy'); // e.g., 'Apr 29, 2025'
+    final dateStr = formatter.format(lastSeen);
+    return short ? dateStr : 'Last seen: $dateStr';
+  }
+}
+
+
+
+================================================
+File: utils/datetime_formatter.dart
+================================================
+// File: lib/utils/date_formatter.dart
+import 'package:intl/intl.dart';
+import 'package:flutter/foundation.dart'; // For kDebugMode
+
+class DateFormatter {
+  // Static function to format the last seen timestamp
+  static String formatLastSeen(DateTime? lastSeenUtc) {
+    if (kDebugMode) {
+      print("[DateFormatter formatLastSeen] Input (UTC?): $lastSeenUtc");
+    }
+    if (lastSeenUtc == null) {
+      if (kDebugMode) {
+        print("[DateFormatter formatLastSeen] Input is null, returning empty.");
+      }
+      return ""; // Return empty or maybe "Last seen: unavailable"
+    }
+
+    // Ensure we are comparing local times
+    final DateTime lastSeenLocal = lastSeenUtc.toLocal();
+    final DateTime now = DateTime.now();
+    final Duration difference = now.difference(lastSeenLocal);
+
+    if (kDebugMode) {
+      print(
+          "[DateFormatter formatLastSeen] Last Seen Local: $lastSeenLocal, Now: $now, Difference: ${difference.inMinutes} mins");
+    }
+
+    if (difference.isNegative) {
+      // Timestamp is in the future? Should not happen, maybe due to clock skew.
+      // Return a safe default.
+      if (kDebugMode) {
+        print(
+            "[DateFormatter formatLastSeen] WARNING: Timestamp is in the future!");
+      }
+      return "Last seen: ${DateFormat.yMd().add_jm().format(lastSeenLocal)}";
+    }
+
+    if (difference.inSeconds < 60) {
+      return "Last seen: just now";
+    } else if (difference.inMinutes < 60) {
+      return "Last seen: ${difference.inMinutes}m ago";
+    } else if (difference.inHours < 24) {
+      // Check if it was today but more than an hour ago
+      if (lastSeenLocal.year == now.year &&
+          lastSeenLocal.month == now.month &&
+          lastSeenLocal.day == now.day) {
+        return "Last seen: ${difference.inHours}h ago";
+      } else {
+        // If it crossed midnight but is less than 24 hours ago, show 'Yesterday'
+        return "Last seen: Yesterday at ${DateFormat.jm().format(lastSeenLocal)}";
+      }
+    } else if (difference.inDays == 1 ||
+        (difference.inHours < 48 &&
+            (now.day - lastSeenLocal.day == 1 ||
+                (now.day == 1 && lastSeenLocal.day >= 28)))) {
+      // Handle 'Yesterday' specifically, accounting for day changes
+      return "Last seen: Yesterday at ${DateFormat.jm().format(lastSeenLocal)}";
+    } else if (difference.inDays < 7) {
+      // Within the last week, show day name
+      return "Last seen: ${DateFormat('EEEE').format(lastSeenLocal)} at ${DateFormat.jm().format(lastSeenLocal)}";
+    } else {
+      // Older than a week, show date
+      return "Last seen: ${DateFormat.yMd().format(lastSeenLocal)}";
+    }
+  }
+
+  // --- Keep your existing formatChatMessageTimestamp if you have it ---
+  static String formatChatMessageTimestamp(DateTime timestamp) {
+    final now = DateTime.now();
+    final localTimestamp = timestamp.toLocal();
+
+    if (now.year == localTimestamp.year &&
+        now.month == localTimestamp.month &&
+        now.day == localTimestamp.day) {
+      // Today: Show time only
+      return DateFormat.jm().format(localTimestamp);
+    } else if (now.year == localTimestamp.year &&
+        now.month == localTimestamp.month &&
+        now.day - localTimestamp.day == 1) {
+      // Yesterday: Show "Yesterday"
+      return "Yesterday";
+    } else if (now.difference(localTimestamp).inDays < 7) {
+      // Within the last week: Show day name (e.g., "Tuesday")
+      return DateFormat('EEEE').format(localTimestamp);
+    } else {
+      // Older than a week: Show date (e.g., "4/15/2024")
+      return DateFormat.yMd().format(localTimestamp);
+    }
+  }
+}
 
 
 
@@ -7459,7 +8154,7 @@ class AudioSelectPromptScreen extends ConsumerWidget {
 ================================================
 File: views/chat_detail_screen.dart
 ================================================
-// lib/views/chat_detail_screen.dart
+// File: lib/views/chat_detail_screen.dart
 import 'dart:async';
 import 'dart:io';
 import 'dart:typed_data';
@@ -7468,16 +8163,17 @@ import 'package:dtx/models/chat_message.dart';
 import 'package:dtx/models/media_upload_model.dart';
 import 'package:dtx/providers/conversation_provider.dart';
 import 'package:dtx/providers/error_provider.dart';
-import 'package:dtx/providers/matches_provider.dart'; // Added
+import 'package:dtx/providers/matches_provider.dart';
 import 'package:dtx/providers/service_provider.dart';
 import 'package:dtx/providers/user_provider.dart';
-import 'package:dtx/repositories/like_repository.dart'; // Added
+import 'package:dtx/repositories/like_repository.dart';
 import 'package:dtx/repositories/media_repository.dart';
 import 'package:dtx/services/api_service.dart';
 import 'package:dtx/services/chat_service.dart';
-import 'package:dtx/utils/app_enums.dart'; // Added
+import 'package:dtx/utils/app_enums.dart';
+import 'package:dtx/utils/date_formatter.dart'; // <-- IMPORT ADDED
 import 'package:dtx/widgets/message_bubble.dart';
-import 'package:dtx/widgets/report_reason_dialog.dart'; // Added
+import 'package:dtx/widgets/report_reason_dialog.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -7488,6 +8184,7 @@ import 'package:image_picker/image_picker.dart';
 import 'package:mime/mime.dart';
 import 'package:path/path.dart' as p;
 
+// ... (Keep existing ChatDetailScreen class signature and state variables) ...
 class ChatDetailScreen extends ConsumerStatefulWidget {
   final int matchUserId;
   final String matchName;
@@ -7509,45 +8206,48 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
   final ScrollController _scrollController = ScrollController();
   final FocusNode _inputFocusNode = FocusNode();
   bool _isUploadingMedia = false;
-  bool _isInteracting = false; // Added for unmatch/report actions
+  bool _isInteracting = false;
 
-  // --- Constants (Keep as is) ---
-  static const int _maxImageSizeBytes = 10 * 1024 * 1024;
-  static const int _maxVideoSizeBytes = 50 * 1024 * 1024;
-  static const int _maxAudioSizeBytes = 10 * 1024 * 1024;
-  static const int _maxFileSizeBytes = 25 * 1024 * 1024;
+  static const int _maxImageSizeBytes = 10 * 1024 * 1024; // 10 MB
+  static const int _maxVideoSizeBytes = 50 * 1024 * 1024; // 50 MB
+  static const int _maxAudioSizeBytes = 10 * 1024 * 1024; // 10 MB
+  static const int _maxFileSizeBytes = 25 * 1024 * 1024; // 25 MB
   static final Set<String> _allowedMimeTypes = {
+    // Images
     'image/jpeg',
     'image/png',
     'image/gif',
     'image/webp',
+    // Videos
     'video/mp4',
-    'video/quicktime',
+    'video/quicktime', // .mov
     'video/webm',
-    'video/x-msvideo',
+    'video/x-msvideo', // .avi (might be large)
     'video/mpeg',
-    'audio/mpeg',
+    // Audio
+    'audio/mpeg', // .mp3
     'audio/ogg',
     'audio/wav',
     'audio/aac',
     'audio/opus',
     'audio/webm',
-    'audio/mp4',
+    'audio/mp4', // m4a
     'audio/x-m4a',
+    // Documents
     'application/pdf',
-    'application/msword',
-    'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-    'application/vnd.ms-excel',
-    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-    'application/vnd.ms-powerpoint',
-    'application/vnd.openxmlformats-officedocument.presentationml.presentation',
-    'text/plain',
+    'application/msword', // .doc
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document', // .docx
+    'application/vnd.ms-excel', // .xls
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', // .xlsx
+    'application/vnd.ms-powerpoint', // .ppt
+    'application/vnd.openxmlformats-officedocument.presentationml.presentation', // .pptx
+    'text/plain', // .txt
   };
-
+  // --- END ADDED BACK ---
   @override
   void initState() {
     super.initState();
-    // ... (keep existing initState logic) ...
+    // ... (Keep existing initState logic) ...
     print("[ChatDetailScreen Init: ${widget.matchUserId}] Initializing...");
     _inputFocusNode.addListener(_handleFocusChange);
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -7558,12 +8258,16 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
             "[ChatDetailScreen Init: ${widget.matchUserId}] Connecting WebSocket...");
         chatService.connect();
       }
+      // Fetch initial state which includes status
+      ref
+          .read(conversationProvider(widget.matchUserId).notifier)
+          .fetchMessages();
     });
   }
 
   @override
   void dispose() {
-    // ... (keep existing dispose logic) ...
+    // ... (Keep existing dispose logic) ...
     print("[ChatDetailScreen Dispose: ${widget.matchUserId}] Disposing...");
     _messageController.dispose();
     _scrollController.dispose();
@@ -7576,8 +8280,8 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
     // Optional: Add logic if needed when focus changes
   }
 
-  // --- Existing methods: _readHeaderBytes, _sendMessage, _scrollToBottom, _showAttachmentOptions, _handleFileSelection, _handleMediaSelection, _initiateMediaSend, _uploadAndSendMediaInBackground, _showSnackbar, _showErrorSnackbar ---
-  // ... (Keep these methods as they are) ...
+  // --- Keep ALL existing helper methods (_readHeaderBytes, _sendMessage, _scrollToBottom, _showAttachmentOptions, etc.) ---
+  // ...
   Future<Uint8List?> _readHeaderBytes(File file, [int length = 1024]) async {
     try {
       final stream = file.openRead(0, length);
@@ -7607,7 +8311,8 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
       chatService.sendMessage(widget.matchUserId, text: text);
       _messageController.clear();
       ref.read(messageInputProvider.notifier).state = false;
-      FocusScope.of(context).requestFocus(_inputFocusNode);
+      // Don't refocus immediately, let keyboard manage itself
+      // FocusScope.of(context).requestFocus(_inputFocusNode);
     } else {
       _showErrorSnackbar("Cannot send message. Not connected.");
       chatService.connect();
@@ -7776,6 +8481,9 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
     final conversationNotifier =
         ref.read(conversationProvider(widget.matchUserId).notifier);
     final currentUserId = ref.read(currentUserIdProvider);
+    final chatService =
+        ref.read(chatServiceProvider); // Get chat service instance
+
     if (currentUserId == null) {
       _showErrorSnackbar("Cannot send media: User not identified.");
       return;
@@ -7797,23 +8505,30 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
     );
     print(
         "[ChatDetailScreen _initiateMediaSend: ${widget.matchUserId}] Adding optimistic media message TempID: $tempId");
+
+    // *** Call public method ***
+    chatService.addPendingMessage(tempId, widget.matchUserId);
+    // *** END ***
+
     conversationNotifier.addSentMessage(optimisticMessage);
     setState(() => _isUploadingMedia = true);
+
     _uploadAndSendMediaInBackground(file, fileName, mimeType, tempId).then((_) {
       if (mounted) {
-        final stillUploading = ref
+        final stillProcessing = ref
             .read(conversationProvider(widget.matchUserId))
             .messages
             .any((m) =>
-                m.status == ChatMessageStatus.uploading ||
-                m.status == ChatMessageStatus.pending);
-        if (!stillUploading) {
+                m.senderUserID == currentUserId &&
+                (m.status == ChatMessageStatus.uploading ||
+                    m.status == ChatMessageStatus.pending));
+        if (!stillProcessing) {
           print(
-              "[ChatDetailScreen _initiateMediaSend: ${widget.matchUserId}] Last upload finished. Re-enabling input.");
+              "[ChatDetailScreen _initiateMediaSend: ${widget.matchUserId}] All uploads/acks seem finished for current user. Re-enabling input.");
           setState(() => _isUploadingMedia = false);
         } else {
           print(
-              "[ChatDetailScreen _initiateMediaSend: ${widget.matchUserId}] Upload for $tempId finished, but others are pending. Input remains disabled.");
+              "[ChatDetailScreen _initiateMediaSend: ${widget.matchUserId}] Background task for $tempId finished, but others might be pending/uploading. Input remains disabled.");
         }
       }
     });
@@ -7826,6 +8541,7 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
     final mediaRepo = ref.read(mediaRepositoryProvider);
     final chatService = ref.read(chatServiceProvider);
     final bool isImage = mimeType.startsWith('image/');
+
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) {
         print("[ChatBG Task $tempId] Updating status to Uploading");
@@ -7833,6 +8549,7 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
             tempId, ChatMessageStatus.uploading);
       }
     });
+
     String? objectUrl;
     try {
       print("[ChatBG Task $tempId] Getting chat presigned URL...");
@@ -7842,6 +8559,7 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
       if (presignedUrl == null || objectUrl == null) {
         throw ApiException("Failed to get upload URLs from server.");
       }
+
       print("[ChatBG Task $tempId] Uploading to S3...");
       final uploadModel = MediaUploadModel(
           file: file,
@@ -7849,47 +8567,46 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
           fileType: mimeType,
           presignedUrl: presignedUrl);
       bool uploadSuccess = await mediaRepo.retryUpload(uploadModel);
+
       if (!uploadSuccess) {
         throw ApiException("Failed to upload media to storage.");
       }
+
       if (isImage && objectUrl != null) {
         print("[ChatBG Task $tempId] Pre-caching image: $objectUrl");
         try {
           await DefaultCacheManager().downloadFile(objectUrl);
-          print(
-              "[ChatBG Task $tempId] Image pre-caching completed for $objectUrl");
+          print("[ChatBG Task $tempId] Image pre-caching completed");
         } catch (cacheErr) {
           print(
               "[ChatBG Task $tempId] WARNING: Image pre-caching failed: $cacheErr");
         }
       }
+
       print(
           "[ChatBG Task $tempId] Upload successful. Sending WebSocket message...");
       chatService.sendMessage(widget.matchUserId,
           mediaUrl: objectUrl, mediaType: mimeType);
-      if (mounted) {
-        print(
-            "[ChatBG Task $tempId] Updating status to Sent, Final URL: $objectUrl");
-        conversationNotifier.updateMessageStatus(tempId, ChatMessageStatus.sent,
-            finalMediaUrl: objectUrl);
-      }
-      print("[ChatBG Task $tempId] Message marked as SENT locally.");
+
+      print("[ChatBG Task $tempId] WebSocket message sent. Awaiting ack...");
     } on ApiException catch (e) {
       print("[ChatBG Task $tempId] API Error: ${e.message}");
       if (mounted) {
         print("[ChatBG Task $tempId] Updating status to Failed (API Error)");
         conversationNotifier.updateMessageStatus(
             tempId, ChatMessageStatus.failed,
-            errorMessage: e.message);
+            errorMessage: e.message, finalMediaUrl: objectUrl);
       }
-    } catch (e) {
+    } catch (e, stacktrace) {
       print("[ChatBG Task $tempId] General Error: $e");
+      print("[ChatBG Task $tempId] Stacktrace: $stacktrace");
       if (mounted) {
         print(
             "[ChatBG Task $tempId] Updating status to Failed (General Error)");
         conversationNotifier.updateMessageStatus(
             tempId, ChatMessageStatus.failed,
-            errorMessage: "Upload/Send failed: ${e.toString()}");
+            errorMessage: "Upload/Send failed: ${e.toString()}",
+            finalMediaUrl: objectUrl);
       }
     }
   }
@@ -7907,11 +8624,9 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
   void _showErrorSnackbar(String message) {
     _showSnackbar(message, isError: true);
   }
-  // --- End Existing Methods ---
 
-  // --- ADDED: _showMoreOptions ---
   void _showMoreOptions() {
-    if (_isInteracting) return; // Don't show if another action is processing
+    if (_isInteracting) return;
     showModalBottomSheet(
       context: context,
       shape: const RoundedRectangleBorder(
@@ -7927,7 +8642,7 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
                 title: Text('Unmatch',
                     style: GoogleFonts.poppins(color: Colors.redAccent)),
                 onTap: () {
-                  Navigator.pop(context); // Close bottom sheet
+                  Navigator.pop(context);
                   _confirmAndUnmatch();
                 },
               ),
@@ -7936,14 +8651,14 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
                 title: Text('Report',
                     style: GoogleFonts.poppins(color: Colors.orange)),
                 onTap: () {
-                  Navigator.pop(context); // Close bottom sheet
+                  Navigator.pop(context);
                   _reportUser();
                 },
               ),
               ListTile(
                 leading: const Icon(Icons.cancel_outlined, color: Colors.grey),
                 title: Text('Cancel', style: GoogleFonts.poppins()),
-                onTap: () => Navigator.pop(context), // Close bottom sheet
+                onTap: () => Navigator.pop(context),
               ),
               const SizedBox(height: 10),
             ],
@@ -7952,9 +8667,7 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
       },
     );
   }
-  // --- END ADDED ---
 
-  // --- ADDED: _confirmAndUnmatch ---
   Future<void> _confirmAndUnmatch() async {
     final confirm = await showDialog<bool>(
       context: context,
@@ -8002,12 +8715,10 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
       if (mounted) setState(() => _isInteracting = false);
     }
   }
-  // --- END ADDED ---
 
-  // --- ADDED: _reportUser ---
   Future<void> _reportUser() async {
     final selectedReason = await showReportReasonDialog(context);
-    if (selectedReason == null) return; // User cancelled
+    if (selectedReason == null) return;
 
     if (!mounted) return;
     setState(() => _isInteracting = true);
@@ -8021,11 +8732,7 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
 
       if (success && mounted) {
         _showSnackbar("Report submitted. Thank you.", isError: false);
-        // Decide if you want to unmatch after reporting from chat
-        // Option 1: Unmatch automatically after report
-        await _confirmAndUnmatch(); // Re-use the unmatch flow (will ask for confirmation again)
-        // Option 2: Don't unmatch, just show success message
-        // _showSnackbar("Report submitted. Thank you.", isError: false);
+        await _confirmAndUnmatch();
       } else if (!success && mounted) {
         _showErrorSnackbar("Failed to submit report.");
       }
@@ -8034,23 +8741,26 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
     } catch (e) {
       _showErrorSnackbar("An unexpected error occurred during report.");
     } finally {
-      // Reset interaction flag ONLY IF NOT unmatching automatically
-      // If unmatching, the unmatch finally block will handle it.
-      // if (mounted && !<UNMATCH_AFTER_REPORT_FLAG>) setState(() => _isInteracting = false);
-      if (mounted)
-        setState(() => _isInteracting = false); // Reset if not unmatching here
+      if (mounted) setState(() => _isInteracting = false);
     }
   }
-  // --- END ADDED ---
+  // --- END ---
 
   @override
   Widget build(BuildContext context) {
-    // ... (keep existing build setup) ...
     print(
         "[ChatDetailScreen Build: ${widget.matchUserId}] Rebuilding Widget... IsUploading: $_isUploadingMedia, IsInteracting: $_isInteracting");
     final state = ref.watch(conversationProvider(widget.matchUserId));
     final currentUserId = ref.watch(currentUserIdProvider);
-    final wsState = ref.watch(webSocketStateProvider);
+    // final wsState = ref.watch(webSocketStateProvider); // No longer needed for status here
+
+    // --- ADDED LOGGING for Status ---
+    if (kDebugMode) {
+      print(
+          "[ChatDetailScreen Build: ${widget.matchUserId}] State status: otherUserIsOnline=${state.otherUserIsOnline}, otherUserLastOnline=${state.otherUserLastOnline}");
+    }
+    // --- END LOGGING ---
+
     ref.listen<ConversationState>(conversationProvider(widget.matchUserId),
         (prev, next) {
       // ... (keep existing scroll listener logic) ...
@@ -8093,6 +8803,21 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
       }
     });
 
+    // --- STATUS TEXT LOGIC ---
+    String statusText;
+    Color statusColor;
+    if (state.isLoading && state.messages.isEmpty) {
+      statusText = 'Loading...'; // Initial loading state
+      statusColor = Colors.grey;
+    } else if (state.otherUserIsOnline) {
+      statusText = 'Online';
+      statusColor = Colors.green;
+    } else {
+      statusText = formatLastSeen(state.otherUserLastOnline, short: true);
+      statusColor = Colors.grey;
+    }
+    // --- END STATUS TEXT LOGIC ---
+
     return Scaffold(
       backgroundColor: Colors.grey[100],
       appBar: AppBar(
@@ -8104,6 +8829,7 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
               Icon(Icons.arrow_back_ios_new, size: 20, color: Colors.grey[700]),
           onPressed: () => Navigator.of(context).pop(),
         ),
+        // --- UPDATED TITLE ---
         title: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
@@ -8119,38 +8845,56 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
             ),
             const SizedBox(width: 10),
             Flexible(
-              child: Text(
-                widget.matchName,
-                style: GoogleFonts.poppins(
-                    fontSize: 17, fontWeight: FontWeight.w600),
-                overflow: TextOverflow.ellipsis,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Text(
+                    widget.matchName,
+                    style: GoogleFonts.poppins(
+                        fontSize: 16, // Slightly smaller name
+                        fontWeight: FontWeight.w600),
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  // --- Display Status Text ---
+                  if (statusText.isNotEmpty) // Only show if status is available
+                    Text(
+                      statusText,
+                      style: GoogleFonts.poppins(
+                        fontSize: 12, // Smaller font for status
+                        fontWeight: FontWeight.w400,
+                        color: statusColor, // Dynamic color
+                      ),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                ],
               ),
             ),
           ],
         ),
+        // --- END UPDATED TITLE ---
         titleSpacing: 0,
         actions: [
-          // --- ADDED: More Options Button ---
           IconButton(
             icon: Icon(Icons.more_vert_rounded, color: Colors.grey[600]),
             tooltip: "More Options",
-            onPressed: _showMoreOptions,
-            disabledColor: Colors.grey[300], // Disable if interacting
+            onPressed: _isInteracting ? null : _showMoreOptions,
+            disabledColor: Colors.grey[300],
           ),
-          // --- END ADDED ---
-          // Existing status indicator (keep as is)
-          Padding(
-            padding: const EdgeInsets.only(right: 16.0),
-            child: Icon(
-              Icons.circle,
-              size: 10,
-              color: wsState == WebSocketConnectionState.connected
-                  ? Colors.green
-                  : (wsState == WebSocketConnectionState.connecting
-                      ? Colors.orange
-                      : Colors.red),
-            ),
-          ),
+          // --- REMOVED redundant WebSocket status dot ---
+          // Padding(
+          //   padding: const EdgeInsets.only(right: 16.0),
+          //   child: Icon(
+          //     Icons.circle,
+          //     size: 10,
+          //     color: wsState == WebSocketConnectionState.connected
+          //         ? Colors.green
+          //         : (wsState == WebSocketConnectionState.connecting
+          //             ? Colors.orange
+          //             : Colors.red),
+          //   ),
+          // ),
+          // --- END REMOVED ---
         ],
       ),
       body: Column(
@@ -8161,7 +8905,6 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
               child: _buildMessagesList(state, currentUserId),
             ),
           ),
-          // --- ADDED: Interaction Overlay ---
           if (_isInteracting)
             Container(
               padding: const EdgeInsets.symmetric(vertical: 8.0),
@@ -8170,16 +8913,14 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
                   child: CircularProgressIndicator(color: Color(0xFF8B5CF6))),
             )
           else
-            _buildMessageInputArea(), // Show input only if not interacting
-          // --- END ADDED ---
+            _buildMessageInputArea(),
         ],
       ),
     );
   }
 
-  // --- _buildMessagesList (Keep as is) ---
+  // --- Keep _buildMessagesList ---
   Widget _buildMessagesList(ConversationState state, int? currentUserId) {
-    // ... (keep existing implementation) ...
     print(
         "[ChatDetailScreen _buildMessagesList: ${widget.matchUserId}] Building message list. Count: ${state.messages.length}");
     if (state.isLoading && state.messages.isEmpty) {
@@ -8235,11 +8976,10 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
     );
   }
 
-  // --- _buildMessageInputArea (Disable if interacting) ---
+  // --- Keep _buildMessageInputArea ---
   Widget _buildMessageInputArea() {
     final canSendText = ref.watch(messageInputProvider);
-    final bool allowInput = !_isUploadingMedia &&
-        !_isInteracting; // Disable if uploading OR interacting
+    final bool allowInput = !_isUploadingMedia && !_isInteracting;
 
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12.0, vertical: 8.0),
@@ -8292,11 +9032,12 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
                     },
                     onSubmitted: (_) =>
                         canSendText && allowInput ? _sendMessage() : null,
-                    minLines: 1, maxLines: 5,
+                    minLines: 1,
+                    maxLines: 5,
                     keyboardType: TextInputType.multiline,
                     style: GoogleFonts.poppins(
                         color: Colors.black87, fontSize: 15),
-                    enabled: allowInput, // Disable text field
+                    enabled: allowInput,
                   ),
                 ),
               ),
@@ -8305,9 +9046,7 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
             IconButton(
               icon: const Icon(Icons.send_rounded),
               color: const Color(0xFF8B5CF6),
-              onPressed: canSendText && allowInput
-                  ? _sendMessage
-                  : null, // Disable send button
+              onPressed: canSendText && allowInput ? _sendMessage : null,
               tooltip: "Send Message",
               disabledColor: Colors.grey[400],
             ),
@@ -8318,7 +9057,7 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
   }
 }
 
-// Provider to track if text input field has text (Keep as is)
+// --- Keep messageInputProvider ---
 final messageInputProvider = StateProvider<bool>((ref) => false);
 
 
@@ -20003,13 +20742,15 @@ class HomeProfileCard extends ConsumerWidget {
 ================================================
 File: widgets/match_list_tile.dart
 ================================================
-// lib/widgets/match_list_tile.dart
-import 'package:dtx/models/user_model.dart'; // Using UserModel as MatchUser
+// File: lib/widgets/match_list_tile.dart
+import 'package:dtx/models/user_model.dart';
+import 'package:dtx/utils/date_formatter.dart'; // <-- IMPORT ADDED
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:flutter/foundation.dart'; // For kDebugMode
 
 class MatchListTile extends StatelessWidget {
-  final UserModel matchUser; // Use UserModel
+  final UserModel matchUser;
   final VoidCallback onTap;
 
   const MatchListTile({
@@ -20020,6 +20761,48 @@ class MatchListTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // --- ADDED LOGGING ---
+    if (kDebugMode) {
+      print(
+          "[MatchListTile build] UserID: ${matchUser.id}, Name: ${matchUser.name}, isOnline: ${matchUser.isOnline}, lastOnline: ${matchUser.lastOnline}");
+    }
+    // --- END LOGGING ---
+
+    // Determine subtitle content based on status
+    Widget subtitleWidget;
+    if (matchUser.isOnline) {
+      subtitleWidget = Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(Icons.circle, size: 9, color: Colors.green[600]),
+          const SizedBox(width: 4),
+          Text(
+            'Online',
+            style: GoogleFonts.poppins(
+              color: Colors.green[700],
+              fontSize: 13,
+              fontWeight: FontWeight.w500, // Make 'Online' slightly bolder
+            ),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
+        ],
+      );
+    } else {
+      // Use the formatter function
+      final lastSeenText = formatLastSeen(matchUser.lastOnline, short: true);
+      subtitleWidget = Text(
+        lastSeenText.isNotEmpty ? 'Last seen: $lastSeenText' : '',
+        // Using short format from helper
+        style: GoogleFonts.poppins(
+          color: Colors.grey[600],
+          fontSize: 13,
+        ),
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+      );
+    }
+
     return ListTile(
       contentPadding:
           const EdgeInsets.symmetric(horizontal: 16.0, vertical: 4.0),
@@ -20042,15 +20825,8 @@ class MatchListTile extends StatelessWidget {
         maxLines: 1,
         overflow: TextOverflow.ellipsis,
       ),
-      subtitle: Text(
-        "Matched with you", // Replace with last message later if needed
-        style: GoogleFonts.poppins(
-          color: Colors.grey[600],
-          fontSize: 13,
-        ),
-        maxLines: 1,
-        overflow: TextOverflow.ellipsis,
-      ),
+      subtitle:
+          subtitleWidget, // <-- USE THE DYNAMIC SUBTITLE WIDGET CREATED ABOVE
       trailing: Icon(Icons.chevron_right_rounded, color: Colors.grey[400]),
       onTap: onTap,
     );

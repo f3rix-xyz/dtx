@@ -2,26 +2,35 @@
 import 'dart:io';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:dtx/models/chat_message.dart';
-import 'package:dtx/providers/audio_player_provider.dart'; // Ensure this is correct
+import 'package:dtx/providers/audio_player_provider.dart';
+// *** ADDED: Import ConversationProvider for starting reply ***
+import 'package:dtx/providers/conversation_provider.dart';
+// *** ADDED: Import UserProvider to check if replied message sender is 'You' ***
+import 'package:dtx/providers/user_provider.dart';
+// *** END ADDED ***
+import 'package:flutter/foundation.dart'; // For kDebugMode
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_fonts/google_fonts.dart';
-import 'package:audioplayers/audioplayers.dart'; // Ensure this is correct
+import 'package:audioplayers/audioplayers.dart';
 import 'package:path/path.dart' as p;
 import 'package:url_launcher/url_launcher.dart';
 
-// Convert to ConsumerStatefulWidget and add AutomaticKeepAliveClientMixin
 class MessageBubble extends ConsumerStatefulWidget {
   final ChatMessage message;
   final bool isMe;
   final bool showTail;
+  // *** ADDED: Callback for initiating reply ***
+  final Function(ChatMessage message) onReplyInitiated;
+  // *** END ADDED ***
 
   const MessageBubble({
-    Key? key, // Use Key? key
+    Key? key,
     required this.message,
     required this.isMe,
     required this.showTail,
-  }) : super(key: key); // Pass key to super
+    required this.onReplyInitiated, // *** ADDED ***
+  }) : super(key: key);
 
   @override
   ConsumerState<MessageBubble> createState() => _MessageBubbleState();
@@ -29,10 +38,8 @@ class MessageBubble extends ConsumerStatefulWidget {
 
 class _MessageBubbleState extends ConsumerState<MessageBubble>
     with AutomaticKeepAliveClientMixin {
-  // Add mixin
-
   @override
-  bool get wantKeepAlive => true; // Keep the state alive
+  bool get wantKeepAlive => true;
 
   // --- Helpers (Keep as previously defined) ---
   String getFilenameFromUrl(String? url) {
@@ -86,11 +93,9 @@ class _MessageBubbleState extends ConsumerState<MessageBubble>
   }
 
   Widget _buildMediaLoadingPlaceholder({required bool isMe}) {
-    // Simple centered spinner without a surrounding box
     return const Center(
       child: Padding(
-        padding: EdgeInsets.symmetric(
-            vertical: 40.0, horizontal: 40.0), // Give spinner some space
+        padding: EdgeInsets.symmetric(vertical: 40.0, horizontal: 40.0),
         child:
             CircularProgressIndicator(strokeWidth: 2, color: Color(0xFF8B5CF6)),
       ),
@@ -98,7 +103,6 @@ class _MessageBubbleState extends ConsumerState<MessageBubble>
   }
 
   Widget _buildMediaErrorPlaceholder({required bool isMe}) {
-    // Keep error placeholder visually distinct
     return Container(
       color: Colors.grey[isMe ? 700 : 200]?.withOpacity(0.3),
       child: Center(
@@ -108,14 +112,109 @@ class _MessageBubbleState extends ConsumerState<MessageBubble>
   }
   // --- End Helpers ---
 
+  // *** ADDED: Helper to build reply snippet UI ***
+  Widget _buildReplySnippet() {
+    final repliedTo = widget.message; // Actually, message *is* the reply
+    final originalSenderId = repliedTo.repliedMessageSenderID;
+    final textSnippet = repliedTo.repliedMessageTextSnippet;
+    final mediaType = repliedTo.repliedMessageMediaType;
+    final currentUserId = ref.read(currentUserIdProvider); // Check current user
+
+    if (originalSenderId == null)
+      return const SizedBox.shrink(); // Safety check
+
+    final originalSenderName =
+        originalSenderId == currentUserId ? "You" : "Them"; // Basic name logic
+    final Color snippetColor = widget.isMe ? Colors.white70 : Colors.black54;
+    final Color nameColor =
+        widget.isMe ? Colors.white : const Color(0xFF7C3AED); // Highlight name
+
+    String contentPreview = textSnippet ?? '';
+    IconData? mediaIcon;
+
+    if (contentPreview.isEmpty) {
+      if (mediaType?.startsWith('image/') ?? false) {
+        contentPreview = "Photo";
+        mediaIcon = Icons.photo_camera_back_outlined;
+      } else if (mediaType?.startsWith('video/') ?? false) {
+        contentPreview = "Video";
+        mediaIcon = Icons.videocam_outlined;
+      } else if (mediaType?.startsWith('audio/') ?? false) {
+        contentPreview = "Audio";
+        mediaIcon = Icons.headphones_outlined;
+      } else if (mediaType != null) {
+        contentPreview = "File"; // Generic file
+        mediaIcon = Icons.attach_file_outlined;
+      } else {
+        contentPreview = "Original message"; // Fallback
+      }
+    }
+
+    return Container(
+      padding: const EdgeInsets.only(left: 8, right: 8, top: 6, bottom: 4),
+      margin: const EdgeInsets.only(bottom: 4), // Space below snippet
+      decoration: BoxDecoration(
+        color: (widget.isMe ? Colors.white : Colors.black).withOpacity(0.1),
+        // Slightly transparent background
+        borderRadius: const BorderRadius.only(
+          topLeft: Radius.circular(12), // Slightly less rounded than bubble
+          topRight: Radius.circular(12),
+        ),
+        // Add a subtle left border for visual connection
+        border: Border(
+          left: BorderSide(
+            color: nameColor.withOpacity(0.7),
+            width: 3,
+          ),
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            originalSenderName,
+            style: GoogleFonts.poppins(
+              color: nameColor,
+              fontWeight: FontWeight.w600,
+              fontSize: 12,
+            ),
+          ),
+          const SizedBox(height: 2),
+          Row(
+            mainAxisSize: MainAxisSize.min, // Row takes minimum space
+            children: [
+              if (mediaIcon != null)
+                Icon(mediaIcon, size: 14, color: snippetColor),
+              if (mediaIcon != null && contentPreview.isNotEmpty)
+                const SizedBox(width: 4),
+              Flexible(
+                // Allow text to wrap if needed
+                child: Text(
+                  contentPreview,
+                  style: GoogleFonts.poppins(
+                    color: snippetColor,
+                    fontSize: 13,
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+  // *** END ADDED ***
+
   @override
   Widget build(BuildContext context) {
-    super.build(context);
+    super.build(context); // Needed for AutomaticKeepAliveClientMixin
 
     final message = widget.message;
     final isMe = widget.isMe;
     final showTail = widget.showTail;
-    final keyId = message.tempId ?? message.messageID.toString();
+    // final keyId = message.tempId ?? message.messageID.toString(); // Key not needed directly here anymore
 
     final radius = Radius.circular(18.0);
     final borderRadius = BorderRadius.only(
@@ -124,6 +223,7 @@ class _MessageBubbleState extends ConsumerState<MessageBubble>
       bottomLeft: isMe || !showTail ? radius : Radius.zero,
       bottomRight: !isMe || !showTail ? radius : Radius.zero,
     );
+
     Widget messageContent;
     Widget? statusIcon;
 
@@ -147,7 +247,7 @@ class _MessageBubbleState extends ConsumerState<MessageBubble>
       }
     }
 
-    // Content Rendering Logic
+    // Content Rendering Logic (no change needed inside this block)
     if (message.isMedia) {
       final mediaType = message.mediaType?.toLowerCase() ?? '';
       final String? displayPath =
@@ -163,14 +263,11 @@ class _MessageBubbleState extends ConsumerState<MessageBubble>
           "[Media Error]",
           style: GoogleFonts.poppins(color: Colors.red, fontSize: 14),
         );
-      }
-      // --- IMAGE ---
-      else if (mediaType.startsWith('image/')) {
+      } else if (mediaType.startsWith('image/')) {
         Widget imageToShow;
         if (isUsingLocalFile) {
           imageToShow = Image.file(File(displayPath),
               key: ValueKey(displayPath),
-              // Use contain to respect aspect ratio within available width
               fit: BoxFit.contain,
               errorBuilder: (_, __, ___) =>
                   _buildMediaErrorPlaceholder(isMe: isMe));
@@ -178,7 +275,6 @@ class _MessageBubbleState extends ConsumerState<MessageBubble>
           imageToShow = CachedNetworkImage(
             key: ValueKey(displayPath),
             imageUrl: displayPath,
-            // Use contain to respect aspect ratio within available width
             fit: BoxFit.contain,
             placeholder: (context, url) =>
                 _buildMediaLoadingPlaceholder(isMe: isMe),
@@ -186,28 +282,20 @@ class _MessageBubbleState extends ConsumerState<MessageBubble>
                 _buildMediaErrorPlaceholder(isMe: isMe),
           );
         }
-        // --- *** REMOVE ConstrainedBox *** ---
-        // Wrap directly in ClipRRect if needed for rounding corners *of the image itself*
-        // The outer bubble already clips. You might not need this inner ClipRRect unless
-        // you want different rounding for the image than the bubble.
         messageContent = ClipRRect(
-          borderRadius: BorderRadius.circular(
-              8.0), // Round corners for image content if desired
-          child: imageToShow, // No ConstrainedBox wrapper
+          borderRadius: BorderRadius.circular(8.0),
+          child: imageToShow,
         );
-        // --- *** END REMOVAL *** ---
-      }
-      // --- VIDEO (no change needed) ---
-      else if (mediaType.startsWith('video/')) {
+      } else if (mediaType.startsWith('video/')) {
         messageContent = InkWell(
           onTap: isMediaSent && !isUsingLocalFile
               ? () => _openMedia(context, displayPath)
               : null,
           child: Container(
+            /* ... video placeholder ... */
             padding: const EdgeInsets.all(10),
             constraints: BoxConstraints(
-                maxWidth: MediaQuery.of(context).size.width *
-                    0.65, // Still constrain width
+                maxWidth: MediaQuery.of(context).size.width * 0.65,
                 minHeight: 100),
             decoration: BoxDecoration(
                 color: Colors.grey[isMe ? 700 : 300],
@@ -239,9 +327,7 @@ class _MessageBubbleState extends ConsumerState<MessageBubble>
             ),
           ),
         );
-      }
-      // --- AUDIO (no change needed) ---
-      else if (mediaType.startsWith('audio/')) {
+      } else if (mediaType.startsWith('audio/')) {
         final audioPlayerState = ref.watch(audioPlayerStateProvider);
         final currentPlayingUrl = ref.watch(currentAudioUrlProvider);
         final playerNotifier = ref.read(audioPlayerControllerProvider.notifier);
@@ -255,73 +341,77 @@ class _MessageBubbleState extends ConsumerState<MessageBubble>
         final bool isThisPaused = canPlay &&
             currentPlayingUrl == displayPath &&
             audioPlayerState == AudioPlayerState.paused;
-
-        messageContent = Row(mainAxisSize: MainAxisSize.min, children: [
-          IconButton(
-            icon: isThisLoading
-                ? SizedBox(
-                    width: 24,
-                    height: 24,
-                    child: CircularProgressIndicator(
-                        strokeWidth: 2,
-                        color: isMe ? Colors.white : Color(0xFF8B5CF6)))
-                : Icon(isThisPlaying
-                    ? Icons.pause_circle_filled_rounded
-                    : Icons.play_circle_fill_rounded),
-            color: isMe
-                ? Colors.white
-                : (canPlay ? const Color(0xFF8B5CF6) : Colors.grey[400]),
-            iconSize: 36,
-            padding: EdgeInsets.zero,
-            constraints: const BoxConstraints(),
-            tooltip: canPlay ? (isThisPlaying ? 'Pause' : 'Play') : 'Audio',
-            onPressed: isThisLoading || !canPlay
-                ? null
-                : () {
-                    if (isThisPlaying)
-                      playerNotifier.pause();
-                    else if (isThisPaused)
-                      playerNotifier.resume();
-                    else
-                      playerNotifier.play(displayPath!);
-                  },
-          ),
-          const SizedBox(width: 8),
-          Expanded(
-            child: Text(
-              getFilenameFromUrl(displayPath),
-              style: GoogleFonts.poppins(
-                  fontSize: 13, color: isMe ? Colors.white : Colors.black87),
-              overflow: TextOverflow.ellipsis,
-              maxLines: 2,
-            ),
-          ),
-        ]);
-      }
-      // --- GENERIC FILE (no change needed) ---
-      else {
+        messageContent = Row(
+            /* ... audio content ... */
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              IconButton(
+                icon: isThisLoading
+                    ? SizedBox(
+                        width: 24,
+                        height: 24,
+                        child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: isMe ? Colors.white : Color(0xFF8B5CF6)))
+                    : Icon(isThisPlaying
+                        ? Icons.pause_circle_filled_rounded
+                        : Icons.play_circle_fill_rounded),
+                color: isMe
+                    ? Colors.white
+                    : (canPlay ? const Color(0xFF8B5CF6) : Colors.grey[400]),
+                iconSize: 36,
+                padding: EdgeInsets.zero,
+                constraints: const BoxConstraints(),
+                tooltip: canPlay ? (isThisPlaying ? 'Pause' : 'Play') : 'Audio',
+                onPressed: isThisLoading || !canPlay
+                    ? null
+                    : () {
+                        if (isThisPlaying)
+                          playerNotifier.pause();
+                        else if (isThisPaused)
+                          playerNotifier.resume();
+                        else
+                          playerNotifier.play(displayPath!);
+                      },
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  getFilenameFromUrl(displayPath),
+                  style: GoogleFonts.poppins(
+                      fontSize: 13,
+                      color: isMe ? Colors.white : Colors.black87),
+                  overflow: TextOverflow.ellipsis,
+                  maxLines: 2,
+                ),
+              ),
+            ]);
+      } else {
         messageContent = InkWell(
           onTap: isMediaSent && !isUsingLocalFile
               ? () => _openMedia(context, displayPath)
               : null,
-          child: Row(mainAxisSize: MainAxisSize.min, children: [
-            Icon(Icons.insert_drive_file_outlined,
-                color: isMe ? Colors.white70 : Colors.grey[600], size: 30),
-            const SizedBox(width: 10),
-            Expanded(
-              child: Text(
-                getFilenameFromUrl(displayPath),
-                style: GoogleFonts.poppins(
-                    fontSize: 13, color: isMe ? Colors.white : Colors.black87),
-                overflow: TextOverflow.ellipsis,
-                maxLines: 2,
-              ),
-            ),
-          ]),
+          child: Row(
+              /* ... generic file content ... */
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(Icons.insert_drive_file_outlined,
+                    color: isMe ? Colors.white70 : Colors.grey[600], size: 30),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    getFilenameFromUrl(displayPath),
+                    style: GoogleFonts.poppins(
+                        fontSize: 13,
+                        color: isMe ? Colors.white : Colors.black87),
+                    overflow: TextOverflow.ellipsis,
+                    maxLines: 2,
+                  ),
+                ),
+              ]),
         );
       }
     } else {
-      // --- TEXT MESSAGE ---
       messageContent = Text(
         message.messageText,
         style: GoogleFonts.poppins(
@@ -334,56 +424,81 @@ class _MessageBubbleState extends ConsumerState<MessageBubble>
     // --- Build Final Bubble ---
     return Align(
       alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
-      child: Container(
-        // *** This Container provides the main width constraint ***
-        constraints: BoxConstraints(
-          maxWidth: MediaQuery.of(context).size.width * 0.75,
+      // *** MODIFIED: Wrap bubble content in Dismissible for swipe gesture ***
+      child: Dismissible(
+        key: Key(message.messageID.toString()), // Unique key for dismissible
+        direction: DismissDirection.startToEnd, // Swipe right to reply
+        confirmDismiss: (direction) async {
+          print("[MessageBubble] Swiped message ID: ${message.messageID}");
+          widget.onReplyInitiated(message); // Trigger the callback
+          return false; // Do not actually dismiss the widget
+        },
+        background: Container(
+          // Visual feedback during swipe (optional)
+          color: Colors.blue.withOpacity(0.1),
+          padding: const EdgeInsets.symmetric(horizontal: 20),
+          alignment: Alignment.centerLeft,
+          child: const Icon(Icons.reply, color: Colors.blue),
         ),
-        margin: EdgeInsets.only(
-          top: 4.0,
-          bottom: 4.0,
-          left: isMe ? 0 : (showTail ? 0 : 10.0),
-          right: isMe ? (showTail ? 0 : 10.0) : 0,
-        ),
-        decoration: BoxDecoration(
-          color: isMe ? const Color(0xFF8B5CF6) : Colors.white,
-          borderRadius: borderRadius,
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withOpacity(0.05),
-              blurRadius: 3,
-              offset: const Offset(0, 1),
-            )
-          ],
-        ),
-        // --- *** Outer ClipRRect ensures bubble shape *** ---
-        child: ClipRRect(
-          borderRadius: borderRadius,
-          child: Stack(
-            // Stack allows overlaying status icon if needed
-            children: [
-              Padding(
-                // Padding for non-image content
-                padding: message.isMedia &&
-                        (message.mediaType?.startsWith('image/') ?? false)
-                    ? EdgeInsets
-                        .zero // No padding needed around image widget itself
-                    : const EdgeInsets.symmetric(
-                        horizontal: 14.0, vertical: 10.0),
-                child:
-                    messageContent, // The actual content (text, image, video placeholder, etc.)
-              ),
-              if (statusIcon != null)
-                Positioned(
-                  bottom: 4,
-                  right: isMe ? 4 : null,
-                  left: isMe ? null : 4,
-                  child: statusIcon,
-                ),
+        child: Container(
+          // The original message bubble container
+          constraints: BoxConstraints(
+            maxWidth: MediaQuery.of(context).size.width * 0.75,
+          ),
+          margin: EdgeInsets.only(
+            top: 4.0,
+            bottom: 4.0,
+            left: isMe ? 0 : (showTail ? 0 : 10.0),
+            right: isMe ? (showTail ? 0 : 10.0) : 0,
+          ),
+          decoration: BoxDecoration(
+            color: isMe ? const Color(0xFF8B5CF6) : Colors.white,
+            borderRadius: borderRadius,
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withOpacity(0.05),
+                blurRadius: 3,
+                offset: const Offset(0, 1),
+              )
             ],
+          ),
+          child: ClipRRect(
+            borderRadius: borderRadius,
+            child: Column(
+              // Use Column to stack reply snippet and content
+              crossAxisAlignment:
+                  CrossAxisAlignment.start, // Align content left/right
+              children: [
+                // *** ADDED: Conditionally display reply snippet ***
+                if (message.isReply) _buildReplySnippet(),
+                // *** END ADDED ***
+
+                // Original content padding and stack
+                Stack(
+                  children: [
+                    Padding(
+                      padding: message.isMedia &&
+                              (message.mediaType?.startsWith('image/') ?? false)
+                          ? EdgeInsets.zero
+                          : const EdgeInsets.symmetric(
+                              horizontal: 14.0, vertical: 10.0),
+                      child: messageContent,
+                    ),
+                    if (statusIcon != null)
+                      Positioned(
+                        bottom: 4,
+                        right: isMe ? 4 : null,
+                        left: isMe ? null : 4,
+                        child: statusIcon,
+                      ),
+                  ],
+                ),
+              ],
+            ),
           ),
         ),
       ),
+      // *** END MODIFIED ***
     );
   }
 }

@@ -11,7 +11,7 @@ class ChatRepository {
 
   ChatRepository(this._apiService);
 
-  // --- UPDATED Return Type and Logic ---
+  // --- MODIFIED Logic ---
   Future<ConversationData> fetchConversation({
     required int otherUserId,
   }) async {
@@ -38,7 +38,6 @@ class ChatRepository {
         headers: headers,
       );
       if (kDebugMode) {
-        // Log raw response only in debug mode
         try {
           print(
               '[ChatRepository $methodName] Raw API Response Map: ${jsonEncode(response)}');
@@ -56,11 +55,14 @@ class ChatRepository {
 
         final messages = messagesData
             .map((data) {
-              if (kDebugMode)
+              if (kDebugMode) {
+                // Log raw data *before* parsing attempt
                 print(
                     "[ChatRepository $methodName map] Processing raw message data item: $data");
+              }
               try {
                 if (data is Map<String, dynamic>) {
+                  // *** The ChatMessage.fromJson factory now handles parsing all fields, including reply info ***
                   return ChatMessage.fromJson(data);
                 } else {
                   print(
@@ -77,11 +79,11 @@ class ChatRepository {
               }
             })
             .whereType<ChatMessage>()
-            .toList();
+            .toList(); // Filter out any nulls resulting from parsing errors
         print(
             '[ChatRepository $methodName] Parsed Messages Count: ${messages.length}');
 
-        // --- PARSE STATUS ---
+        // --- PARSE STATUS (No change needed here) ---
         final bool isOnline = response['other_user_is_online'] as bool? ??
             false; // Default to false
         final String? lastOnlineStr =
@@ -123,4 +125,5 @@ class ChatRepository {
           'An unexpected error occurred while fetching conversation: ${e.toString()}');
     }
   }
+  // --- END MODIFIED Logic ---
 }
