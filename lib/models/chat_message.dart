@@ -12,10 +12,10 @@ enum ChatMessageStatus {
 
 class ChatMessage {
   final String? tempId;
-  final int messageID; // Real ID from backend (0 or negative for optimistic)
+  final int messageID;
   final int senderUserID;
   final int recipientUserID;
-  final String messageText; // Final text content
+  final String messageText;
   final String? mediaUrl;
   final String? mediaType;
   final DateTime sentAt;
@@ -28,7 +28,7 @@ class ChatMessage {
   final String? initialLocalPath;
   final String? errorMessage;
 
-  // *** ADDED: Reply fields ***
+  // *** Reply fields (Keep as is) ***
   final int? replyToMessageID;
   final int? repliedMessageSenderID;
   final String? repliedMessageTextSnippet;
@@ -40,7 +40,7 @@ class ChatMessage {
     required this.messageID,
     required this.senderUserID,
     required this.recipientUserID,
-    required this.messageText, // Use the final parsed text
+    required this.messageText,
     this.mediaUrl,
     this.mediaType,
     required this.sentAt,
@@ -50,7 +50,7 @@ class ChatMessage {
     this.localFilePath,
     this.initialLocalPath,
     this.errorMessage,
-    // *** ADDED: Reply fields to constructor ***
+    // *** Reply fields to constructor (Keep as is) ***
     this.replyToMessageID,
     this.repliedMessageSenderID,
     this.repliedMessageTextSnippet,
@@ -60,7 +60,7 @@ class ChatMessage {
 
   bool isMe(int currentUserId) => senderUserID == currentUserId;
 
-  // *** ADDED: isReply getter ***
+  // *** isReply getter (Keep as is) ***
   bool get isReply => replyToMessageID != null && replyToMessageID! > 0;
   // *** END ADDED ***
 
@@ -83,9 +83,9 @@ class ChatMessage {
     }
   }
 
-  // --- MODIFIED: fromJson Factory ---
+  // --- *** CORRECTED: fromJson Factory *** ---
   factory ChatMessage.fromJson(Map<String, dynamic> json) {
-    // --- Helper Functions (Modified for Null Safety and pgtype) ---
+    // --- Helper Functions (Keep as is) ---
     DateTime parseTimestamp(dynamic tsField) {
       if (tsField is String) {
         try {
@@ -93,7 +93,7 @@ class ChatMessage {
         } catch (e) {
           print(
               "[ChatMessage.fromJson->parseTimestamp] Error parsing '$tsField': $e");
-          return DateTime.now().toLocal(); // Fallback to local time
+          return DateTime.now().toLocal();
         }
       } else if (tsField is Map &&
           tsField['Valid'] == true &&
@@ -108,7 +108,7 @@ class ChatMessage {
       }
       print(
           "[ChatMessage.fromJson->parseTimestamp] Invalid timestamp type: ${tsField.runtimeType}. Returning local now.");
-      return DateTime.now().toLocal(); // Fallback
+      return DateTime.now().toLocal();
     }
 
     DateTime? parseNullableTimestamp(dynamic tsField) {
@@ -131,7 +131,6 @@ class ChatMessage {
     }
 
     String parsePgtypeText(dynamic field) {
-      // Handles pgtype.Text (Map) or direct String
       if (field is String) {
         return field;
       } else if (field is Map &&
@@ -139,7 +138,7 @@ class ChatMessage {
           field['String'] is String) {
         return field['String'];
       }
-      return ''; // Default empty string if null, not Valid, or wrong type
+      return '';
     }
 
     String? parseNullablePgtypeText(dynamic field) {
@@ -154,7 +153,6 @@ class ChatMessage {
     }
 
     int? parsePgtypeInt(dynamic field) {
-      // Handles pgtype.Int4/Int8 (Map) or direct int
       if (field is int) {
         return field;
       } else if (field is Map && field['Valid'] == true) {
@@ -164,17 +162,16 @@ class ChatMessage {
           return (field['Int32'] as num).toInt();
         }
       } else if (field is String) {
-        // Handle if backend sends int as string sometimes
         return int.tryParse(field);
       }
-      return null; // Return null if invalid
+      return null;
     }
 
     String parseMessageTextRobust(Map<String, dynamic> jsonData) {
-      // Check direct keys first (more likely from WS or simplified responses)
-      if (jsonData['text'] is String) return jsonData['text'];
-      if (jsonData['message_text'] is String) return jsonData['message_text'];
-      // Check pgtype structure
+      if (jsonData['text'] is String)
+        return jsonData['text']; // Direct check added
+      if (jsonData['message_text'] is String)
+        return jsonData['message_text']; // Direct check added
       return parsePgtypeText(jsonData['message_text']);
     }
     // --- End Helper Functions ---
@@ -182,22 +179,42 @@ class ChatMessage {
     final messageID = json['id'] as int? ?? 0;
     final senderUserID = json['sender_user_id'] as int? ?? 0;
     final recipientUserID = json['recipient_user_id'] as int? ?? 0;
-    final text = parseMessageTextRobust(json); // Use robust helper
+    final text = parseMessageTextRobust(json);
     final mediaUrl = parseNullablePgtypeText(json['media_url']);
     final mediaType = parseNullablePgtypeText(json['media_type']);
     final sentAt = parseTimestamp(json['sent_at']);
     final isRead = json['is_read'] as bool? ?? false;
     final readAt = parseNullableTimestamp(json['read_at']);
 
-    // *** ADDED: Parse reply fields ***
-    final replyToMessageID = parsePgtypeInt(json['reply_to_message_id']);
-    final repliedMessageSenderID =
-        parsePgtypeInt(json['replied_message_sender_id']);
-    // replied_message_text_snippet is interface{}, likely String or null
-    final repliedMessageTextSnippet =
-        json['replied_message_text_snippet'] as String?;
-    final repliedMessageMediaType =
-        parseNullablePgtypeText(json['replied_message_media_type']);
+    // *** CORRECTED: Parse reply fields from nested 'reply_to' object ***
+    int? replyToMessageID;
+    int? repliedMessageSenderID;
+    String? repliedMessageTextSnippet;
+    String? repliedMessageMediaType; // Need to parse this as well
+
+    // Check if the 'reply_to' key exists and is a Map
+    if (json.containsKey('reply_to') &&
+        json['reply_to'] is Map<String, dynamic>) {
+      final replyData = json['reply_to'] as Map<String, dynamic>;
+      print(
+          "[ChatMessage.fromJson ID: $messageID] Found 'reply_to' object: $replyData"); // Log found reply data
+
+      // Try parsing fields within the 'reply_to' map
+      replyToMessageID =
+          parsePgtypeInt(replyData['message_id']); // Use helper for flexibility
+      repliedMessageSenderID =
+          parsePgtypeInt(replyData['sender_id']); // Use helper for flexibility
+
+      // Snippet might be directly a string or null
+      repliedMessageTextSnippet = replyData['text_snippet'] as String?;
+
+      // Media type might be pgtype.Text or direct string
+      repliedMessageMediaType =
+          parseNullablePgtypeText(replyData['media_type']);
+    } else if (json.containsKey('reply_to')) {
+      print(
+          "[ChatMessage.fromJson ID: $messageID] Found 'reply_to' key, but it's not a Map. Type: ${json['reply_to'].runtimeType}");
+    }
 
     if (kDebugMode) {
       print(
@@ -205,6 +222,9 @@ class ChatMessage {
       if (replyToMessageID != null) {
         print(
             "[ChatMessage.fromJson ID: $messageID] Parsed Reply Info: replyTo=$replyToMessageID, origSender=$repliedMessageSenderID, snippet='$repliedMessageTextSnippet', origMediaType=$repliedMessageMediaType");
+      } else {
+        print(
+            "[ChatMessage.fromJson ID: $messageID] No valid reply info parsed.");
       }
     }
 
@@ -218,8 +238,8 @@ class ChatMessage {
       sentAt: sentAt,
       isRead: isRead,
       readAt: readAt,
-      status: ChatMessageStatus.sent, // Default status for received messages
-      // *** ADDED: Pass reply fields to constructor ***
+      status: ChatMessageStatus.sent,
+      // *** Pass correctly parsed reply fields ***
       replyToMessageID: replyToMessageID,
       repliedMessageSenderID: repliedMessageSenderID,
       repliedMessageTextSnippet: repliedMessageTextSnippet,
@@ -227,9 +247,9 @@ class ChatMessage {
       // *** END ADDED ***
     );
   }
-  // --- END MODIFIED fromJson Factory ---
+  // --- END CORRECTED fromJson Factory ---
 
-  // --- MODIFIED: copyWith method ---
+  // --- copyWith method (Keep as is) ---
   ChatMessage copyWith({
     String? tempId,
     int? messageID,
@@ -247,12 +267,10 @@ class ChatMessage {
     String? initialLocalPath,
     String? errorMessage,
     bool clearErrorMessage = false,
-    // *** ADDED: Reply fields ***
-    int? Function()? replyToMessageID, // Nullable function for clearing
+    int? Function()? replyToMessageID,
     int? Function()? repliedMessageSenderID,
     String? Function()? repliedMessageTextSnippet,
     String? Function()? repliedMessageMediaType,
-    // *** END ADDED ***
   }) {
     return ChatMessage(
       tempId: tempId ?? this.tempId,
@@ -271,7 +289,6 @@ class ChatMessage {
       initialLocalPath: initialLocalPath ?? this.initialLocalPath,
       errorMessage:
           clearErrorMessage ? null : (errorMessage ?? this.errorMessage),
-      // *** ADDED: Assign reply fields ***
       replyToMessageID:
           replyToMessageID != null ? replyToMessageID() : this.replyToMessageID,
       repliedMessageSenderID: repliedMessageSenderID != null
@@ -283,8 +300,7 @@ class ChatMessage {
       repliedMessageMediaType: repliedMessageMediaType != null
           ? repliedMessageMediaType()
           : this.repliedMessageMediaType,
-      // *** END ADDED ***
     );
   }
-  // --- END MODIFIED copyWith ---
+  // --- END copyWith ---
 }

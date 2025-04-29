@@ -3,11 +3,9 @@ import 'dart:io';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:dtx/models/chat_message.dart';
 import 'package:dtx/providers/audio_player_provider.dart';
-// *** ADDED: Import ConversationProvider for starting reply ***
 import 'package:dtx/providers/conversation_provider.dart';
-// *** ADDED: Import UserProvider to check if replied message sender is 'You' ***
 import 'package:dtx/providers/user_provider.dart';
-// *** END ADDED ***
+import 'package:dtx/services/chat_service.dart';
 import 'package:flutter/foundation.dart'; // For kDebugMode
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -20,16 +18,14 @@ class MessageBubble extends ConsumerStatefulWidget {
   final ChatMessage message;
   final bool isMe;
   final bool showTail;
-  // *** ADDED: Callback for initiating reply ***
   final Function(ChatMessage message) onReplyInitiated;
-  // *** END ADDED ***
 
   const MessageBubble({
     Key? key,
     required this.message,
     required this.isMe,
     required this.showTail,
-    required this.onReplyInitiated, // *** ADDED ***
+    required this.onReplyInitiated,
   }) : super(key: key);
 
   @override
@@ -43,6 +39,7 @@ class _MessageBubbleState extends ConsumerState<MessageBubble>
 
   // --- Helpers (Keep as previously defined) ---
   String getFilenameFromUrl(String? url) {
+    // ... (no changes needed) ...
     if (url == null || url.isEmpty) return "File";
     try {
       final uri = Uri.parse(url);
@@ -64,6 +61,7 @@ class _MessageBubbleState extends ConsumerState<MessageBubble>
   }
 
   Future<void> _openMedia(BuildContext context, String url) async {
+    // ... (no changes needed) ...
     final Uri uri = Uri.parse(url);
     if (!await canLaunchUrl(uri)) {
       if (context.mounted) {
@@ -93,6 +91,7 @@ class _MessageBubbleState extends ConsumerState<MessageBubble>
   }
 
   Widget _buildMediaLoadingPlaceholder({required bool isMe}) {
+    // ... (no changes needed) ...
     return const Center(
       child: Padding(
         padding: EdgeInsets.symmetric(vertical: 40.0, horizontal: 40.0),
@@ -103,6 +102,7 @@ class _MessageBubbleState extends ConsumerState<MessageBubble>
   }
 
   Widget _buildMediaErrorPlaceholder({required bool isMe}) {
+    // ... (no changes needed) ...
     return Container(
       color: Colors.grey[isMe ? 700 : 200]?.withOpacity(0.3),
       child: Center(
@@ -112,27 +112,41 @@ class _MessageBubbleState extends ConsumerState<MessageBubble>
   }
   // --- End Helpers ---
 
-  // *** ADDED: Helper to build reply snippet UI ***
+  // --- Helper to build reply snippet UI ---
   Widget _buildReplySnippet() {
-    final repliedTo = widget.message; // Actually, message *is* the reply
+    // *** ADDED LOG ***
+    print(
+        "[MessageBubble _buildReplySnippet] Building for Msg ID: ${widget.message.messageID}");
+
+    final repliedTo = widget.message; // The current message IS the reply
     final originalSenderId = repliedTo.repliedMessageSenderID;
     final textSnippet = repliedTo.repliedMessageTextSnippet;
     final mediaType = repliedTo.repliedMessageMediaType;
-    final currentUserId = ref.read(currentUserIdProvider); // Check current user
+    final currentUserId = ref.read(currentUserIdProvider);
 
-    if (originalSenderId == null)
-      return const SizedBox.shrink(); // Safety check
+    // *** ADDED LOG ***
+    print("  - Original Sender ID: $originalSenderId");
+    print("  - Text Snippet: '$textSnippet'");
+    print("  - Media Type: $mediaType");
+    print("  - Current User ID: $currentUserId");
+
+    if (originalSenderId == null) {
+      print("  - Skipping snippet: originalSenderId is null.");
+      return const SizedBox.shrink();
+    }
 
     final originalSenderName =
-        originalSenderId == currentUserId ? "You" : "Them"; // Basic name logic
+        originalSenderId == currentUserId ? "You" : "Them";
     final Color snippetColor = widget.isMe ? Colors.white70 : Colors.black54;
     final Color nameColor =
-        widget.isMe ? Colors.white : const Color(0xFF7C3AED); // Highlight name
+        widget.isMe ? Colors.white : const Color(0xFF7C3AED);
 
-    String contentPreview = textSnippet ?? '';
+    String contentPreview =
+        (textSnippet != null && textSnippet.isNotEmpty) ? textSnippet : '';
     IconData? mediaIcon;
 
     if (contentPreview.isEmpty) {
+      print("  - Text snippet empty, checking media type...");
       if (mediaType?.startsWith('image/') ?? false) {
         contentPreview = "Photo";
         mediaIcon = Icons.photo_camera_back_outlined;
@@ -143,24 +157,27 @@ class _MessageBubbleState extends ConsumerState<MessageBubble>
         contentPreview = "Audio";
         mediaIcon = Icons.headphones_outlined;
       } else if (mediaType != null) {
-        contentPreview = "File"; // Generic file
+        contentPreview = "File";
         mediaIcon = Icons.attach_file_outlined;
       } else {
         contentPreview = "Original message"; // Fallback
+        print("  - No media type found, using fallback preview.");
       }
+    } else {
+      print("  - Using text snippet for preview.");
     }
+    print("  - Final Content Preview: '$contentPreview', Icon: $mediaIcon");
 
     return Container(
+      // ... (rest of the snippet container decoration - no changes) ...
       padding: const EdgeInsets.only(left: 8, right: 8, top: 6, bottom: 4),
       margin: const EdgeInsets.only(bottom: 4), // Space below snippet
       decoration: BoxDecoration(
         color: (widget.isMe ? Colors.white : Colors.black).withOpacity(0.1),
-        // Slightly transparent background
         borderRadius: const BorderRadius.only(
-          topLeft: Radius.circular(12), // Slightly less rounded than bubble
+          topLeft: Radius.circular(12),
           topRight: Radius.circular(12),
         ),
-        // Add a subtle left border for visual connection
         border: Border(
           left: BorderSide(
             color: nameColor.withOpacity(0.7),
@@ -181,14 +198,13 @@ class _MessageBubbleState extends ConsumerState<MessageBubble>
           ),
           const SizedBox(height: 2),
           Row(
-            mainAxisSize: MainAxisSize.min, // Row takes minimum space
+            mainAxisSize: MainAxisSize.min,
             children: [
               if (mediaIcon != null)
                 Icon(mediaIcon, size: 14, color: snippetColor),
               if (mediaIcon != null && contentPreview.isNotEmpty)
                 const SizedBox(width: 4),
               Flexible(
-                // Allow text to wrap if needed
                 child: Text(
                   contentPreview,
                   style: GoogleFonts.poppins(
@@ -205,16 +221,36 @@ class _MessageBubbleState extends ConsumerState<MessageBubble>
       ),
     );
   }
-  // *** END ADDED ***
+  // --- END Reply Snippet Helper ---
 
   @override
   Widget build(BuildContext context) {
-    super.build(context); // Needed for AutomaticKeepAliveClientMixin
+    super.build(context);
 
     final message = widget.message;
     final isMe = widget.isMe;
     final showTail = widget.showTail;
-    // final keyId = message.tempId ?? message.messageID.toString(); // Key not needed directly here anymore
+
+    // *** ADDED Detailed Log for Message Data ***
+    if (kDebugMode) {
+      print("--- Building MessageBubble ---");
+      print("  Msg ID: ${message.messageID}");
+      print("  Temp ID: ${message.tempId}");
+      print("  Is Me: $isMe");
+      print("  Show Tail: $showTail");
+      print("  Is Media: ${message.isMedia}");
+      print("  Text: '${message.messageText}'");
+      print("  Media URL: ${message.mediaUrl}");
+      print("  Media Type: ${message.mediaType}");
+      print("  Status: ${message.status}");
+      print("  Is Reply: ${message.isReply}"); // Log the getter result
+      print("  Reply To ID: ${message.replyToMessageID}");
+      print("  Replied Sender ID: ${message.repliedMessageSenderID}");
+      print("  Replied Snippet: '${message.repliedMessageTextSnippet}'");
+      print("  Replied Media Type: ${message.repliedMessageMediaType}");
+      print("-----------------------------");
+    }
+    // *** END ADDED LOG ***
 
     final radius = Radius.circular(18.0);
     final borderRadius = BorderRadius.only(
@@ -249,6 +285,7 @@ class _MessageBubbleState extends ConsumerState<MessageBubble>
 
     // Content Rendering Logic (no change needed inside this block)
     if (message.isMedia) {
+      // ... (existing media rendering logic - no changes here) ...
       final mediaType = message.mediaType?.toLowerCase() ?? '';
       final String? displayPath =
           (message.localFilePath != null && message.localFilePath!.isNotEmpty)
@@ -412,6 +449,7 @@ class _MessageBubbleState extends ConsumerState<MessageBubble>
         );
       }
     } else {
+      // --- TEXT MESSAGE ---
       messageContent = Text(
         message.messageText,
         style: GoogleFonts.poppins(
@@ -421,27 +459,28 @@ class _MessageBubbleState extends ConsumerState<MessageBubble>
       );
     }
 
-    // --- Build Final Bubble ---
+    // --- Build Final Bubble Structure ---
+    // *** ADDED Log before conditional rendering ***
+    if (kDebugMode)
+      print("  - Evaluating condition: message.isReply = ${message.isReply}");
     return Align(
       alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
-      // *** MODIFIED: Wrap bubble content in Dismissible for swipe gesture ***
       child: Dismissible(
-        key: Key(message.messageID.toString()), // Unique key for dismissible
-        direction: DismissDirection.startToEnd, // Swipe right to reply
+        key: Key(message.messageID.toString()),
+        direction: DismissDirection.startToEnd,
         confirmDismiss: (direction) async {
-          print("[MessageBubble] Swiped message ID: ${message.messageID}");
-          widget.onReplyInitiated(message); // Trigger the callback
-          return false; // Do not actually dismiss the widget
+          if (kDebugMode)
+            print("[MessageBubble] Swiped message ID: ${message.messageID}");
+          widget.onReplyInitiated(message);
+          return false; // Do not actually dismiss
         },
         background: Container(
-          // Visual feedback during swipe (optional)
           color: Colors.blue.withOpacity(0.1),
           padding: const EdgeInsets.symmetric(horizontal: 20),
           alignment: Alignment.centerLeft,
           child: const Icon(Icons.reply, color: Colors.blue),
         ),
         child: Container(
-          // The original message bubble container
           constraints: BoxConstraints(
             maxWidth: MediaQuery.of(context).size.width * 0.75,
           ),
@@ -465,15 +504,14 @@ class _MessageBubbleState extends ConsumerState<MessageBubble>
           child: ClipRRect(
             borderRadius: borderRadius,
             child: Column(
-              // Use Column to stack reply snippet and content
-              crossAxisAlignment:
-                  CrossAxisAlignment.start, // Align content left/right
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                // *** ADDED: Conditionally display reply snippet ***
-                if (message.isReply) _buildReplySnippet(),
-                // *** END ADDED ***
+                // *** MODIFIED: Conditionally display reply snippet ***
+                if (message.isReply)
+                  _buildReplySnippet(), // Call the helper here
+                // *** END MODIFIED ***
 
-                // Original content padding and stack
+                // Original content and status icon
                 Stack(
                   children: [
                     Padding(
@@ -498,7 +536,6 @@ class _MessageBubbleState extends ConsumerState<MessageBubble>
           ),
         ),
       ),
-      // *** END MODIFIED ***
     );
   }
 }
