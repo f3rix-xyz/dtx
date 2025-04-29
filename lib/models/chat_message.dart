@@ -1,8 +1,8 @@
-// lib/models/chat_message.dart
+// File: lib/models/chat_message.dart
+import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:intl/intl.dart';
 
-// Enum for message status remains the same
 enum ChatMessageStatus {
   pending,
   uploading,
@@ -21,19 +21,16 @@ class ChatMessage {
   final DateTime sentAt;
   final bool isRead;
   final DateTime? readAt;
-
-  // Fields for optimistic UI (remain the same)
   final ChatMessageStatus status;
   final String? localFilePath;
   final String? initialLocalPath;
   final String? errorMessage;
-
-  // *** Reply fields (Keep as is) ***
   final int? replyToMessageID;
   final int? repliedMessageSenderID;
   final String? repliedMessageTextSnippet;
   final String? repliedMessageMediaType;
-  // *** END ADDED ***
+  final Map<String, int>? reactionsSummary;
+  final String? currentUserReaction;
 
   ChatMessage({
     this.tempId,
@@ -50,49 +47,39 @@ class ChatMessage {
     this.localFilePath,
     this.initialLocalPath,
     this.errorMessage,
-    // *** Reply fields to constructor (Keep as is) ***
     this.replyToMessageID,
     this.repliedMessageSenderID,
     this.repliedMessageTextSnippet,
     this.repliedMessageMediaType,
-    // *** END ADDED ***
+    this.reactionsSummary,
+    this.currentUserReaction,
   });
 
   bool isMe(int currentUserId) => senderUserID == currentUserId;
-
-  // *** isReply getter (Keep as is) ***
   bool get isReply => replyToMessageID != null && replyToMessageID! > 0;
-  // *** END ADDED ***
-
   bool get isMedia =>
       (mediaUrl != null && mediaUrl!.isNotEmpty) ||
       (localFilePath != null && localFilePath!.isNotEmpty);
 
   String get formattedTimestamp {
-    // Formatting logic remains the same
     final now = DateTime.now();
     final today = DateTime(now.year, now.month, now.day);
     final messageDay = DateTime(sentAt.year, sentAt.month, sentAt.day);
-
-    if (messageDay == today) {
-      return DateFormat.jm().format(sentAt.toLocal());
-    } else if (today.difference(messageDay).inDays == 1) {
-      return 'Yesterday';
-    } else {
-      return DateFormat.yMd().format(sentAt.toLocal());
-    }
+    if (messageDay == today) return DateFormat.jm().format(sentAt.toLocal());
+    if (today.difference(messageDay).inDays == 1) return 'Yesterday';
+    return DateFormat.yMd().format(sentAt.toLocal());
   }
 
-  // --- *** CORRECTED: fromJson Factory *** ---
   factory ChatMessage.fromJson(Map<String, dynamic> json) {
-    // --- Helper Functions (Keep as is) ---
+    // --- Helper Functions (Keep) ---
     DateTime parseTimestamp(dynamic tsField) {
       if (tsField is String) {
         try {
           return DateTime.parse(tsField).toLocal();
         } catch (e) {
-          print(
-              "[ChatMessage.fromJson->parseTimestamp] Error parsing '$tsField': $e");
+          if (kDebugMode)
+            print(
+                "[ChatMessage.fromJson->parseTimestamp] Error parsing '$tsField': $e");
           return DateTime.now().toLocal();
         }
       } else if (tsField is Map &&
@@ -101,13 +88,15 @@ class ChatMessage {
         try {
           return DateTime.parse(tsField['Time']).toLocal();
         } catch (e) {
-          print(
-              "[ChatMessage.fromJson->parseTimestamp] Error parsing from map '$tsField': $e");
+          if (kDebugMode)
+            print(
+                "[ChatMessage.fromJson->parseTimestamp] Error parsing from map '$tsField': $e");
           return DateTime.now().toLocal();
         }
       }
-      print(
-          "[ChatMessage.fromJson->parseTimestamp] Invalid timestamp type: ${tsField.runtimeType}. Returning local now.");
+      if (kDebugMode)
+        print(
+            "[ChatMessage.fromJson->parseTimestamp] Invalid timestamp type: ${tsField.runtimeType}. Returning local now.");
       return DateTime.now().toLocal();
     }
 
@@ -131,47 +120,33 @@ class ChatMessage {
     }
 
     String parsePgtypeText(dynamic field) {
-      if (field is String) {
-        return field;
-      } else if (field is Map &&
-          field['Valid'] == true &&
-          field['String'] is String) {
+      if (field is String) return field;
+      if (field is Map && field['Valid'] == true && field['String'] is String)
         return field['String'];
-      }
       return '';
     }
 
     String? parseNullablePgtypeText(dynamic field) {
-      if (field is String) {
-        return field.isNotEmpty ? field : null;
-      } else if (field is Map &&
-          field['Valid'] == true &&
-          field['String'] is String) {
+      if (field is String) return field.isNotEmpty ? field : null;
+      if (field is Map && field['Valid'] == true && field['String'] is String)
         return (field['String'] as String).isNotEmpty ? field['String'] : null;
-      }
       return null;
     }
 
     int? parsePgtypeInt(dynamic field) {
-      if (field is int) {
-        return field;
-      } else if (field is Map && field['Valid'] == true) {
-        if (field.containsKey('Int64') && field['Int64'] is num) {
+      if (field is int) return field;
+      if (field is Map && field['Valid'] == true) {
+        if (field.containsKey('Int64') && field['Int64'] is num)
           return (field['Int64'] as num).toInt();
-        } else if (field.containsKey('Int32') && field['Int32'] is num) {
+        if (field.containsKey('Int32') && field['Int32'] is num)
           return (field['Int32'] as num).toInt();
-        }
-      } else if (field is String) {
-        return int.tryParse(field);
-      }
+      } else if (field is String) return int.tryParse(field);
       return null;
     }
 
     String parseMessageTextRobust(Map<String, dynamic> jsonData) {
-      if (jsonData['text'] is String)
-        return jsonData['text']; // Direct check added
-      if (jsonData['message_text'] is String)
-        return jsonData['message_text']; // Direct check added
+      if (jsonData['text'] is String) return jsonData['text'];
+      if (jsonData['message_text'] is String) return jsonData['message_text'];
       return parsePgtypeText(jsonData['message_text']);
     }
     // --- End Helper Functions ---
@@ -186,36 +161,137 @@ class ChatMessage {
     final isRead = json['is_read'] as bool? ?? false;
     final readAt = parseNullableTimestamp(json['read_at']);
 
-    // *** CORRECTED: Parse reply fields from nested 'reply_to' object ***
+    // Parse reply fields (Keep)
     int? replyToMessageID;
     int? repliedMessageSenderID;
     String? repliedMessageTextSnippet;
-    String? repliedMessageMediaType; // Need to parse this as well
-
-    // Check if the 'reply_to' key exists and is a Map
+    String? repliedMessageMediaType;
     if (json.containsKey('reply_to') &&
         json['reply_to'] is Map<String, dynamic>) {
       final replyData = json['reply_to'] as Map<String, dynamic>;
-      print(
-          "[ChatMessage.fromJson ID: $messageID] Found 'reply_to' object: $replyData"); // Log found reply data
-
-      // Try parsing fields within the 'reply_to' map
-      replyToMessageID =
-          parsePgtypeInt(replyData['message_id']); // Use helper for flexibility
-      repliedMessageSenderID =
-          parsePgtypeInt(replyData['sender_id']); // Use helper for flexibility
-
-      // Snippet might be directly a string or null
+      if (kDebugMode)
+        print(
+            "[ChatMessage.fromJson ID: $messageID] Found 'reply_to' object: $replyData");
+      replyToMessageID = parsePgtypeInt(replyData['message_id']);
+      repliedMessageSenderID = parsePgtypeInt(replyData['sender_id']);
       repliedMessageTextSnippet = replyData['text_snippet'] as String?;
-
-      // Media type might be pgtype.Text or direct string
       repliedMessageMediaType =
           parseNullablePgtypeText(replyData['media_type']);
     } else if (json.containsKey('reply_to')) {
-      print(
-          "[ChatMessage.fromJson ID: $messageID] Found 'reply_to' key, but it's not a Map. Type: ${json['reply_to'].runtimeType}");
+      if (kDebugMode)
+        print(
+            "[ChatMessage.fromJson ID: $messageID] Found 'reply_to' key, but it's not a Map. Type: ${json['reply_to'].runtimeType}");
     }
 
+    // *** --- START: Reaction Parsing MODIFIED --- ***
+    Map<String, int>? reactionsSummary;
+    // Use the correct key from the API spec: "reactions"
+    final reactionsData = json['reactions'];
+
+    if (kDebugMode)
+      print(
+          "[ChatMessage.fromJson ID: $messageID] Parsing 'reactions' field. Type: ${reactionsData.runtimeType}, Value: $reactionsData");
+
+    // Directly check if it's a Map<String, dynamic> (likely from direct JSON parsing)
+    if (reactionsData is Map<String, dynamic>) {
+      try {
+        reactionsSummary = reactionsData.map((key, value) {
+          final count = value is num ? value.toInt() : 0;
+          return MapEntry(key, count);
+        });
+        if (kDebugMode)
+          print(
+              "[ChatMessage.fromJson ID: $messageID] Parsed reactionsSummary directly from Map: $reactionsSummary");
+      } catch (e) {
+        if (kDebugMode)
+          print(
+              "[ChatMessage.fromJson ID: $messageID] Error converting Map<String, dynamic> to Map<String, int>: $e");
+        reactionsSummary = {};
+      }
+    } else if (reactionsData is String) {
+      // Handle case where it might be a JSON string
+      if (reactionsData.isNotEmpty && reactionsData != "{}") {
+        try {
+          final decodedMap = jsonDecode(reactionsData) as Map<String, dynamic>;
+          reactionsSummary = decodedMap.map((key, value) {
+            final count = value is num ? value.toInt() : 0;
+            return MapEntry(key, count);
+          });
+          if (kDebugMode)
+            print(
+                "[ChatMessage.fromJson ID: $messageID] Parsed reactionsSummary from String: $reactionsSummary");
+        } catch (e) {
+          if (kDebugMode)
+            print(
+                "[ChatMessage.fromJson ID: $messageID] Error decoding reactions JSON string: $e, Value: '$reactionsData'");
+          reactionsSummary = {};
+        }
+      } else {
+        if (kDebugMode)
+          print(
+              "[ChatMessage.fromJson ID: $messageID] reactions string is empty or '{}'. Setting summary to empty map.");
+        reactionsSummary = {};
+      }
+    } else if (reactionsData is List<int>) {
+      // Handle []byte / JSONB case
+      if (reactionsData.isNotEmpty) {
+        try {
+          final jsonString = utf8.decode(reactionsData);
+          if (jsonString.isNotEmpty && jsonString != "{}") {
+            final decodedMap = jsonDecode(jsonString) as Map<String, dynamic>;
+            reactionsSummary = decodedMap.map((key, value) {
+              final count = value is num ? value.toInt() : 0;
+              return MapEntry(key, count);
+            });
+            if (kDebugMode)
+              print(
+                  "[ChatMessage.fromJson ID: $messageID] Parsed reactionsSummary from bytes: $reactionsSummary");
+          } else {
+            if (kDebugMode)
+              print(
+                  "[ChatMessage.fromJson ID: $messageID] reactions bytes decoded to empty or '{}'. Setting summary to empty map.");
+            reactionsSummary = {};
+          }
+        } catch (e) {
+          if (kDebugMode)
+            print(
+                "[ChatMessage.fromJson ID: $messageID] Error decoding reactions bytes/JSON: $e");
+          reactionsSummary = {};
+        }
+      } else {
+        if (kDebugMode)
+          print(
+              "[ChatMessage.fromJson ID: $messageID] reactions byte list is empty. Setting summary to empty map.");
+        reactionsSummary = {};
+      }
+    } else {
+      if (kDebugMode)
+        print(
+            "[ChatMessage.fromJson ID: $messageID] 'reactions' field is null or unexpected type: ${reactionsData.runtimeType}. Setting summary to empty map.");
+      reactionsSummary = {}; // Default to empty map if null or other type
+    }
+
+    // Parse current_user_reaction (Use the correct key from API spec)
+    final currentUserReactionData = json['current_user_reaction'];
+    String? currentUserReaction;
+    if (currentUserReactionData is String &&
+        currentUserReactionData.isNotEmpty) {
+      currentUserReaction = currentUserReactionData;
+      if (kDebugMode)
+        print(
+            "[ChatMessage.fromJson ID: $messageID] Parsed currentUserReaction: '$currentUserReaction'");
+    } else {
+      if (kDebugMode && currentUserReactionData != null) {
+        print(
+            "[ChatMessage.fromJson ID: $messageID] currentUserReaction is present but not a valid string. Type: ${currentUserReactionData.runtimeType}, Value: $currentUserReactionData");
+      } else if (kDebugMode) {
+        print(
+            "[ChatMessage.fromJson ID: $messageID] currentUserReaction field is missing or null.");
+      }
+    }
+    // *** --- END: Reaction Parsing MODIFIED --- ***
+
+    // Logging core parsed fields (Keep)
     if (kDebugMode) {
       print(
           "[ChatMessage.fromJson ID: $messageID] Parsed Core: sender=$senderUserID, recipient=$recipientUserID, text='$text', mediaUrl=$mediaUrl, mediaType=$mediaType, sentAt=$sentAt, isRead=$isRead, readAt=$readAt");
@@ -238,18 +314,18 @@ class ChatMessage {
       sentAt: sentAt,
       isRead: isRead,
       readAt: readAt,
-      status: ChatMessageStatus.sent,
-      // *** Pass correctly parsed reply fields ***
+      status: ChatMessageStatus
+          .sent, // API messages are always 'sent' status initially
       replyToMessageID: replyToMessageID,
       repliedMessageSenderID: repliedMessageSenderID,
       repliedMessageTextSnippet: repliedMessageTextSnippet,
       repliedMessageMediaType: repliedMessageMediaType,
-      // *** END ADDED ***
+      reactionsSummary: reactionsSummary,
+      currentUserReaction: currentUserReaction,
     );
   }
-  // --- END CORRECTED fromJson Factory ---
 
-  // --- copyWith method (Keep as is) ---
+  // copyWith Method (Keep as previously modified)
   ChatMessage copyWith({
     String? tempId,
     int? messageID,
@@ -271,6 +347,8 @@ class ChatMessage {
     int? Function()? repliedMessageSenderID,
     String? Function()? repliedMessageTextSnippet,
     String? Function()? repliedMessageMediaType,
+    Map<String, int>? Function()? reactionsSummary,
+    String? Function()? currentUserReaction,
   }) {
     return ChatMessage(
       tempId: tempId ?? this.tempId,
@@ -300,7 +378,11 @@ class ChatMessage {
       repliedMessageMediaType: repliedMessageMediaType != null
           ? repliedMessageMediaType()
           : this.repliedMessageMediaType,
+      reactionsSummary:
+          reactionsSummary != null ? reactionsSummary() : this.reactionsSummary,
+      currentUserReaction: currentUserReaction != null
+          ? currentUserReaction()
+          : this.currentUserReaction,
     );
   }
-  // --- END copyWith ---
 }

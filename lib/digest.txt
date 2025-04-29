@@ -205,6 +205,7 @@ class AuthState {
 File: models/chat_message.dart
 ================================================
 // lib/models/chat_message.dart
+import 'package:flutter/foundation.dart';
 import 'package:intl/intl.dart';
 
 // Enum for message status remains the same
@@ -217,10 +218,10 @@ enum ChatMessageStatus {
 
 class ChatMessage {
   final String? tempId;
-  final int messageID; // Real ID from backend (0 or negative for optimistic)
+  final int messageID;
   final int senderUserID;
   final int recipientUserID;
-  final String messageText; // Final text content
+  final String messageText;
   final String? mediaUrl;
   final String? mediaType;
   final DateTime sentAt;
@@ -233,12 +234,19 @@ class ChatMessage {
   final String? initialLocalPath;
   final String? errorMessage;
 
+  // *** Reply fields (Keep as is) ***
+  final int? replyToMessageID;
+  final int? repliedMessageSenderID;
+  final String? repliedMessageTextSnippet;
+  final String? repliedMessageMediaType;
+  // *** END ADDED ***
+
   ChatMessage({
     this.tempId,
     required this.messageID,
     required this.senderUserID,
     required this.recipientUserID,
-    required this.messageText, // Use the final parsed text
+    required this.messageText,
     this.mediaUrl,
     this.mediaType,
     required this.sentAt,
@@ -248,9 +256,19 @@ class ChatMessage {
     this.localFilePath,
     this.initialLocalPath,
     this.errorMessage,
+    // *** Reply fields to constructor (Keep as is) ***
+    this.replyToMessageID,
+    this.repliedMessageSenderID,
+    this.repliedMessageTextSnippet,
+    this.repliedMessageMediaType,
+    // *** END ADDED ***
   });
 
   bool isMe(int currentUserId) => senderUserID == currentUserId;
+
+  // *** isReply getter (Keep as is) ***
+  bool get isReply => replyToMessageID != null && replyToMessageID! > 0;
+  // *** END ADDED ***
 
   bool get isMedia =>
       (mediaUrl != null && mediaUrl!.isNotEmpty) ||
@@ -271,20 +289,32 @@ class ChatMessage {
     }
   }
 
-  // --- UPDATED: fromJson Factory with Corrected Parsing ---
+  // --- *** CORRECTED: fromJson Factory *** ---
   factory ChatMessage.fromJson(Map<String, dynamic> json) {
-    // Helper functions for timestamps (remain the same)
+    // --- Helper Functions (Keep as is) ---
     DateTime parseTimestamp(dynamic tsField) {
       if (tsField is String) {
         try {
           return DateTime.parse(tsField).toLocal();
         } catch (e) {
           print(
-              "[ChatMessage.fromJson] Error parsing timestamp '$tsField': $e");
-          return DateTime.now().toUtc();
+              "[ChatMessage.fromJson->parseTimestamp] Error parsing '$tsField': $e");
+          return DateTime.now().toLocal();
+        }
+      } else if (tsField is Map &&
+          tsField['Valid'] == true &&
+          tsField['Time'] is String) {
+        try {
+          return DateTime.parse(tsField['Time']).toLocal();
+        } catch (e) {
+          print(
+              "[ChatMessage.fromJson->parseTimestamp] Error parsing from map '$tsField': $e");
+          return DateTime.now().toLocal();
         }
       }
-      return DateTime.now().toUtc();
+      print(
+          "[ChatMessage.fromJson->parseTimestamp] Invalid timestamp type: ${tsField.runtimeType}. Returning local now.");
+      return DateTime.now().toLocal();
     }
 
     DateTime? parseNullableTimestamp(dynamic tsField) {
@@ -294,96 +324,115 @@ class ChatMessage {
         } catch (_) {
           return null;
         }
+      } else if (tsField is Map &&
+          tsField['Valid'] == true &&
+          tsField['Time'] is String) {
+        try {
+          return DateTime.parse(tsField['Time']).toLocal();
+        } catch (_) {
+          return null;
+        }
       }
       return null;
     }
 
-    // *** REVISED: Helper function to parse message text ***
-    String parseMessageText(Map<String, dynamic> jsonData) {
-      print(
-          "[ChatMessage.fromJson->parseMessageText] Parsing message data: $jsonData");
-
-      // --- NEW: Prioritize checking if 'message_text' is a String ---
-      if (jsonData.containsKey('message_text') &&
-          jsonData['message_text'] is String) {
-        final extractedText = jsonData['message_text'];
-        print(
-            "[parseMessageText] Found 'message_text' key as String: '$extractedText'");
-        return extractedText;
+    String parsePgtypeText(dynamic field) {
+      if (field is String) {
+        return field;
+      } else if (field is Map &&
+          field['Valid'] == true &&
+          field['String'] is String) {
+        return field['String'];
       }
-      // --- END NEW ---
-
-      // 1. Check for 'message_text' as a Map (pgtype.Text structure - Fallback)
-      if (jsonData.containsKey('message_text') &&
-          jsonData['message_text'] is Map) {
-        print("[parseMessageText] Found 'message_text' key as Map.");
-        final textMap = jsonData['message_text'] as Map<String, dynamic>;
-        if (textMap['Valid'] == true && textMap['String'] is String) {
-          final extractedText = textMap['String'];
-          print(
-              "[parseMessageText] Extracted text from message_text.String: '$extractedText'");
-          return extractedText;
-        } else {
-          print(
-              "[parseMessageText] message_text Map was not Valid or String key missing/invalid type. Map: $textMap");
-        }
-      } else if (jsonData.containsKey('message_text')) {
-        // Log if 'message_text' exists but is not a String or Map we handled
-        print(
-            "[parseMessageText] Found 'message_text' key, but it's not a String or Map. Type: ${jsonData['message_text'].runtimeType}, Value: ${jsonData['message_text']}");
-      } else {
-        print("[parseMessageText] 'message_text' key NOT found.");
-      }
-
-      // 2. Fallback for 'text' key as a String
-      if (jsonData.containsKey('text')) {
-        if (jsonData['text'] is String) {
-          final extractedText = jsonData['text'];
-          print(
-              "[parseMessageText] Found 'text' key as String: '$extractedText'");
-          return extractedText;
-        } else {
-          print(
-              "[parseMessageText] Found 'text' key, but it's NOT a String. Type: ${jsonData['text'].runtimeType}, Value: ${jsonData['text']}");
-        }
-      } else {
-        print("[parseMessageText] 'text' key NOT found.");
-      }
-
-      // 3. Fallback for 'MessageText' key as a String
-      if (jsonData.containsKey('MessageText')) {
-        if (jsonData['MessageText'] is String) {
-          final extractedText = jsonData['MessageText'];
-          print(
-              "[parseMessageText] Found 'MessageText' key as String: '$extractedText'");
-          return extractedText;
-        } else {
-          print(
-              "[parseMessageText] Found 'MessageText' key, but it's NOT a String. Type: ${jsonData['MessageText'].runtimeType}, Value: ${jsonData['MessageText']}");
-        }
-      } else {
-        print("[parseMessageText] 'MessageText' key NOT found.");
-      }
-
-      // 4. Default if no valid text field found
-      print(
-          "[parseMessageText] No valid text found in expected keys. Returning empty string.");
       return '';
     }
-    // *** END REVISED Helper ***
+
+    String? parseNullablePgtypeText(dynamic field) {
+      if (field is String) {
+        return field.isNotEmpty ? field : null;
+      } else if (field is Map &&
+          field['Valid'] == true &&
+          field['String'] is String) {
+        return (field['String'] as String).isNotEmpty ? field['String'] : null;
+      }
+      return null;
+    }
+
+    int? parsePgtypeInt(dynamic field) {
+      if (field is int) {
+        return field;
+      } else if (field is Map && field['Valid'] == true) {
+        if (field.containsKey('Int64') && field['Int64'] is num) {
+          return (field['Int64'] as num).toInt();
+        } else if (field.containsKey('Int32') && field['Int32'] is num) {
+          return (field['Int32'] as num).toInt();
+        }
+      } else if (field is String) {
+        return int.tryParse(field);
+      }
+      return null;
+    }
+
+    String parseMessageTextRobust(Map<String, dynamic> jsonData) {
+      if (jsonData['text'] is String)
+        return jsonData['text']; // Direct check added
+      if (jsonData['message_text'] is String)
+        return jsonData['message_text']; // Direct check added
+      return parsePgtypeText(jsonData['message_text']);
+    }
+    // --- End Helper Functions ---
 
     final messageID = json['id'] as int? ?? 0;
     final senderUserID = json['sender_user_id'] as int? ?? 0;
     final recipientUserID = json['recipient_user_id'] as int? ?? 0;
-    final text = parseMessageText(json); // Use revised helper
-    final mediaUrl = json['media_url'] as String?;
-    final mediaType = json['media_type'] as String?;
+    final text = parseMessageTextRobust(json);
+    final mediaUrl = parseNullablePgtypeText(json['media_url']);
+    final mediaType = parseNullablePgtypeText(json['media_type']);
     final sentAt = parseTimestamp(json['sent_at']);
     final isRead = json['is_read'] as bool? ?? false;
     final readAt = parseNullableTimestamp(json['read_at']);
 
-    print(
-        "[ChatMessage.fromJson] Creating ChatMessage with: id=$messageID, sender=$senderUserID, recipient=$recipientUserID, text='$text', mediaUrl=$mediaUrl, mediaType=$mediaType, sentAt=$sentAt, isRead=$isRead, readAt=$readAt");
+    // *** CORRECTED: Parse reply fields from nested 'reply_to' object ***
+    int? replyToMessageID;
+    int? repliedMessageSenderID;
+    String? repliedMessageTextSnippet;
+    String? repliedMessageMediaType; // Need to parse this as well
+
+    // Check if the 'reply_to' key exists and is a Map
+    if (json.containsKey('reply_to') &&
+        json['reply_to'] is Map<String, dynamic>) {
+      final replyData = json['reply_to'] as Map<String, dynamic>;
+      print(
+          "[ChatMessage.fromJson ID: $messageID] Found 'reply_to' object: $replyData"); // Log found reply data
+
+      // Try parsing fields within the 'reply_to' map
+      replyToMessageID =
+          parsePgtypeInt(replyData['message_id']); // Use helper for flexibility
+      repliedMessageSenderID =
+          parsePgtypeInt(replyData['sender_id']); // Use helper for flexibility
+
+      // Snippet might be directly a string or null
+      repliedMessageTextSnippet = replyData['text_snippet'] as String?;
+
+      // Media type might be pgtype.Text or direct string
+      repliedMessageMediaType =
+          parseNullablePgtypeText(replyData['media_type']);
+    } else if (json.containsKey('reply_to')) {
+      print(
+          "[ChatMessage.fromJson ID: $messageID] Found 'reply_to' key, but it's not a Map. Type: ${json['reply_to'].runtimeType}");
+    }
+
+    if (kDebugMode) {
+      print(
+          "[ChatMessage.fromJson ID: $messageID] Parsed Core: sender=$senderUserID, recipient=$recipientUserID, text='$text', mediaUrl=$mediaUrl, mediaType=$mediaType, sentAt=$sentAt, isRead=$isRead, readAt=$readAt");
+      if (replyToMessageID != null) {
+        print(
+            "[ChatMessage.fromJson ID: $messageID] Parsed Reply Info: replyTo=$replyToMessageID, origSender=$repliedMessageSenderID, snippet='$repliedMessageTextSnippet', origMediaType=$repliedMessageMediaType");
+      } else {
+        print(
+            "[ChatMessage.fromJson ID: $messageID] No valid reply info parsed.");
+      }
+    }
 
     return ChatMessage(
       messageID: messageID,
@@ -396,11 +445,17 @@ class ChatMessage {
       isRead: isRead,
       readAt: readAt,
       status: ChatMessageStatus.sent,
+      // *** Pass correctly parsed reply fields ***
+      replyToMessageID: replyToMessageID,
+      repliedMessageSenderID: repliedMessageSenderID,
+      repliedMessageTextSnippet: repliedMessageTextSnippet,
+      repliedMessageMediaType: repliedMessageMediaType,
+      // *** END ADDED ***
     );
   }
-  // --- END UPDATED fromJson Factory ---
+  // --- END CORRECTED fromJson Factory ---
 
-  // copyWith method remains the same
+  // --- copyWith method (Keep as is) ---
   ChatMessage copyWith({
     String? tempId,
     int? messageID,
@@ -418,6 +473,10 @@ class ChatMessage {
     String? initialLocalPath,
     String? errorMessage,
     bool clearErrorMessage = false,
+    int? Function()? replyToMessageID,
+    int? Function()? repliedMessageSenderID,
+    String? Function()? repliedMessageTextSnippet,
+    String? Function()? repliedMessageMediaType,
   }) {
     return ChatMessage(
       tempId: tempId ?? this.tempId,
@@ -436,8 +495,20 @@ class ChatMessage {
       initialLocalPath: initialLocalPath ?? this.initialLocalPath,
       errorMessage:
           clearErrorMessage ? null : (errorMessage ?? this.errorMessage),
+      replyToMessageID:
+          replyToMessageID != null ? replyToMessageID() : this.replyToMessageID,
+      repliedMessageSenderID: repliedMessageSenderID != null
+          ? repliedMessageSenderID()
+          : this.repliedMessageSenderID,
+      repliedMessageTextSnippet: repliedMessageTextSnippet != null
+          ? repliedMessageTextSnippet()
+          : this.repliedMessageTextSnippet,
+      repliedMessageMediaType: repliedMessageMediaType != null
+          ? repliedMessageMediaType()
+          : this.repliedMessageMediaType,
     );
   }
+  // --- END copyWith ---
 }
 
 
@@ -2703,15 +2774,14 @@ File: providers/conversation_provider.dart
 import 'dart:async';
 import 'package:dtx/models/chat_message.dart';
 import 'package:dtx/models/error_model.dart';
-import 'package:dtx/providers/service_provider.dart';
-// Removed unused service_provider import
+import 'package:dtx/providers/service_provider.dart'; // Keep for repository provider
 import 'package:dtx/providers/status_provider.dart';
 import 'package:dtx/repositories/chat_repository.dart';
 import 'package:dtx/services/api_service.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter/foundation.dart';
 
-// --- ConversationData Class (Keep as is) ---
+// --- ConversationData Class (No change needed) ---
 class ConversationData {
   final List<ChatMessage> messages;
   final bool otherUserIsOnline;
@@ -2723,13 +2793,16 @@ class ConversationData {
 }
 // ---
 
-// --- ConversationState Class (Keep as is) ---
+// --- ConversationState Class (MODIFIED) ---
 class ConversationState {
   final bool isLoading;
   final List<ChatMessage> messages;
   final AppError? error;
   final bool otherUserIsOnline;
   final DateTime? otherUserLastOnline;
+  // *** ADDED: Field to track the message being replied to ***
+  final ChatMessage? replyingToMessage;
+  // *** END ADDED ***
 
   const ConversationState({
     this.isLoading = false,
@@ -2737,14 +2810,20 @@ class ConversationState {
     this.error,
     this.otherUserIsOnline = false,
     this.otherUserLastOnline,
+    this.replyingToMessage, // *** ADDED: Default null ***
   });
 
+  // --- MODIFIED: copyWith ---
   ConversationState copyWith({
     bool? isLoading,
     List<ChatMessage>? messages,
     AppError? Function()? error,
     bool? otherUserIsOnline,
     DateTime? Function()? otherUserLastOnline,
+    // *** ADDED: Parameter for replyingToMessage ***
+    // Use nullable function to allow clearing (setting to null)
+    ChatMessage? Function()? replyingToMessage,
+    // *** END ADDED ***
   }) {
     return ConversationState(
       isLoading: isLoading ?? this.isLoading,
@@ -2754,40 +2833,38 @@ class ConversationState {
       otherUserLastOnline: otherUserLastOnline != null
           ? otherUserLastOnline()
           : this.otherUserLastOnline,
+      // *** ADDED: Assign replyingToMessage ***
+      replyingToMessage: replyingToMessage != null
+          ? replyingToMessage()
+          : this.replyingToMessage,
+      // *** END ADDED ***
     );
   }
+  // --- END MODIFIED ---
 }
-// ---
+// --- END ConversationState ---
 
 class ConversationNotifier extends StateNotifier<ConversationState> {
   final ChatRepository _chatRepository;
   final int _otherUserId;
-  // No longer need Ref or explicit subscription here
 
   ConversationNotifier(this._chatRepository, this._otherUserId)
       : super(const ConversationState()) {
-    // Initial fetch is still good here
     print("[Provider Init: $_otherUserId] Fetching initial messages...");
     fetchMessages();
   }
 
-  // No need for _listenToStatusUpdates here, handled by provider definition
-
-  // --- Keep _updateOtherUserStatus ---
-  // This method is now called directly by the listener in the provider definition
+  // --- updateOtherUserStatus (No change needed) ---
   void updateOtherUserStatus(bool isOnline, DateTime eventTimestamp) {
     if (!mounted) {
       print(
           "[Provider UpdateStatus WS: $_otherUserId] Not mounted, ignoring update.");
       return;
     }
-
     if (state.otherUserIsOnline != isOnline) {
       print(
           "[Provider UpdateStatus WS: $_otherUserId] Updating status from ${state.otherUserIsOnline} to $isOnline via WebSocket event.");
-
       final newLastOnline = isOnline ? null : eventTimestamp;
-
       state = state.copyWith(
         otherUserIsOnline: isOnline,
         otherUserLastOnline: () => newLastOnline,
@@ -2800,20 +2877,17 @@ class ConversationNotifier extends StateNotifier<ConversationState> {
             "[Provider UpdateStatus WS: $_otherUserId] Received status update, but otherUserIsOnline ($isOnline) is already the same. No state change needed.");
     }
   }
-  // ---
 
-  // --- fetchMessages (Keep as is, including logging) ---
+  // --- fetchMessages (No change needed) ---
   Future<void> fetchMessages() async {
     if (state.isLoading) {
       print(
           "[Provider Fetch: $_otherUserId] Skipping fetch: isLoading=${state.isLoading}");
       return;
     }
-
     print(
         "[Provider Fetch: $_otherUserId] Fetching ALL messages and status via API...");
     state = state.copyWith(isLoading: true, error: () => null);
-
     try {
       final ConversationData conversationData =
           await _chatRepository.fetchConversation(otherUserId: _otherUserId);
@@ -2821,22 +2895,16 @@ class ConversationNotifier extends StateNotifier<ConversationState> {
       if (mounted) {
         bool statusBeforeAPISet = state.otherUserIsOnline;
         DateTime? lastOnlineBeforeAPISet = state.otherUserLastOnline;
-
         final oldMessagesHashCode = state.messages.hashCode;
         final reversedMessages = conversationData.messages.reversed.toList();
-
         state = state.copyWith(
           isLoading: false,
           messages: reversedMessages,
-          // Set status based on API result during fetch
           otherUserIsOnline: conversationData.otherUserIsOnline,
           otherUserLastOnline: () => conversationData.otherUserLastOnline,
         );
-
         print(
             "[Provider Fetch: $_otherUserId] API Fetch completed. Fetched ${conversationData.messages.length} messages. Stored ${reversedMessages.length} (Newest first). API Status Set: isOnline=${state.otherUserIsOnline}, lastOnline=${state.otherUserLastOnline}. List hashCode changed: ${state.messages.hashCode != oldMessagesHashCode}");
-
-        // Log if API fetch potentially overwrote a very recent WS update
         if (kDebugMode &&
             (statusBeforeAPISet != state.otherUserIsOnline ||
                 lastOnlineBeforeAPISet != state.otherUserLastOnline)) {
@@ -2862,18 +2930,23 @@ class ConversationNotifier extends StateNotifier<ConversationState> {
     }
   }
 
-  // --- addSentMessage (Keep as is) ---
+  // --- addSentMessage (No change needed) ---
   void addSentMessage(ChatMessage message) {
     if (!mounted) return;
     print(
         "[Provider AddSent: $_otherUserId] Adding message to START: TempID=${message.tempId}, RealID=${message.messageID}, Status=${message.status}, Type=${message.isMedia ? message.mediaType : 'text'}");
     final oldMessagesHashCode = state.messages.hashCode;
-    state = state.copyWith(messages: [message, ...state.messages]);
+    // *** ADDED: Clear reply state when adding a new SENT message ***
+    state = state.copyWith(
+      messages: [message, ...state.messages],
+      replyingToMessage: () => null, // Clear reply state after sending
+    );
+    // *** END ADDED ***
     print(
-        "[Provider AddSent: $_otherUserId] Message added to start. List hashCode changed: ${state.messages.hashCode != oldMessagesHashCode}. New count: ${state.messages.length}");
+        "[Provider AddSent: $_otherUserId] Message added to start. Reply state cleared. List hashCode changed: ${state.messages.hashCode != oldMessagesHashCode}. New count: ${state.messages.length}");
   }
 
-  // --- addReceivedMessage (Keep as is) ---
+  // --- addReceivedMessage (No change needed) ---
   void addReceivedMessage(ChatMessage message) {
     if (!mounted) return;
     print(
@@ -2884,23 +2957,20 @@ class ConversationNotifier extends StateNotifier<ConversationState> {
         "[Provider AddRcvd: $_otherUserId] Message added to start. List hashCode changed: ${state.messages.hashCode != oldMessagesHashCode}. New count: ${state.messages.length}");
   }
 
-  // --- updateMessageStatus (Keep as is) ---
+  // --- updateMessageStatus (No change needed) ---
   void updateMessageStatus(String tempOrRealId, ChatMessageStatus newStatus,
       {int? finalMessageId, String? finalMediaUrl, String? errorMessage}) {
     if (!mounted) return;
     print(
         "[Provider UpdateStatus API: $_otherUserId] Attempting update: ID=$tempOrRealId, NewStatus=$newStatus, FinalMsgID=$finalMessageId, FinalURL=${finalMediaUrl != null}, Error=${errorMessage != null}");
-
     final currentMessages = state.messages;
     final messageIndex = currentMessages.indexWhere((msg) =>
         (msg.tempId != null && msg.tempId == tempOrRealId) ||
         (msg.messageID != 0 && msg.messageID.toString() == tempOrRealId));
-
     if (messageIndex != -1) {
       final messageToUpdate = currentMessages[messageIndex];
       print(
           "[Provider UpdateStatus API: $_otherUserId] Found message at index $messageIndex (Newest=0). Current Status=${messageToUpdate.status}");
-
       final updatedMessage = messageToUpdate.copyWith(
         status: newStatus,
         messageID: finalMessageId ?? messageToUpdate.messageID,
@@ -2909,15 +2979,11 @@ class ConversationNotifier extends StateNotifier<ConversationState> {
         clearErrorMessage: errorMessage == null,
         clearLocalFilePath: false,
       );
-
       final updatedMessages = List<ChatMessage>.from(currentMessages);
       updatedMessages[messageIndex] = updatedMessage;
-
       final oldMessagesHashCode = state.messages.hashCode;
       final oldListIdentityHashCode = identityHashCode(state.messages);
-
       state = state.copyWith(messages: updatedMessages);
-
       final newListIdentityHashCode = identityHashCode(state.messages);
       print(
           "[Provider UpdateStatus API: $_otherUserId] Status updated for ID $tempOrRealId. RealID: ${updatedMessage.messageID}, NewStatus: ${updatedMessage.status}. List hashCode changed: ${state.messages.hashCode != oldMessagesHashCode}. List instance changed: ${oldListIdentityHashCode != newListIdentityHashCode}");
@@ -2927,35 +2993,44 @@ class ConversationNotifier extends StateNotifier<ConversationState> {
     }
   }
 
-  // No explicit dispose needed here anymore, autoDispose handles it
+  // *** ADDED: Methods to manage reply state ***
+  void startReplying(ChatMessage messageToReply) {
+    if (!mounted) return;
+    print(
+        "[Provider Reply: $_otherUserId] Starting reply to Message ID: ${messageToReply.messageID}");
+    state = state.copyWith(replyingToMessage: () => messageToReply);
+  }
+
+  void cancelReply() {
+    if (!mounted) return;
+    if (state.replyingToMessage != null) {
+      print("[Provider Reply: $_otherUserId] Cancelling reply.");
+      state = state.copyWith(replyingToMessage: () => null);
+    }
+  }
+  // *** END ADDED ***
 }
 
-// --- UPDATED Provider Definition ---
+// --- Provider Definition (No change needed) ---
 final conversationProvider = StateNotifierProvider.family
     .autoDispose<ConversationNotifier, ConversationState, int>(
         (ref, otherUserId) {
   final repo = ref.watch(chatRepositoryProvider);
   final notifier = ConversationNotifier(repo, otherUserId);
-
-  // Listen to the global status updates provider
   final statusSubscription =
       ref.listen<UserStatusUpdate?>(userStatusUpdateProvider, (prev, next) {
     if (next != null && next.userId == otherUserId) {
-      // If the update is for this conversation's user, call the notifier's method
       notifier.updateOtherUserStatus(next.isOnline, next.timestamp);
     }
   });
-
-  // Ensure the subscription is cancelled when the provider is disposed
   ref.onDispose(() {
     print(
         "[Provider Dispose Hook: $otherUserId] Cancelling status listener subscription.");
-    statusSubscription.close(); // Use close() on the subscription object
+    statusSubscription.close();
   });
-
   return notifier;
 });
-// --- END UPDATED ---
+// --- END Provider Definition ---
 
 
 
@@ -4681,7 +4756,7 @@ class ChatRepository {
 
   ChatRepository(this._apiService);
 
-  // --- UPDATED Return Type and Logic ---
+  // --- MODIFIED Logic ---
   Future<ConversationData> fetchConversation({
     required int otherUserId,
   }) async {
@@ -4708,7 +4783,6 @@ class ChatRepository {
         headers: headers,
       );
       if (kDebugMode) {
-        // Log raw response only in debug mode
         try {
           print(
               '[ChatRepository $methodName] Raw API Response Map: ${jsonEncode(response)}');
@@ -4726,11 +4800,14 @@ class ChatRepository {
 
         final messages = messagesData
             .map((data) {
-              if (kDebugMode)
+              if (kDebugMode) {
+                // Log raw data *before* parsing attempt
                 print(
                     "[ChatRepository $methodName map] Processing raw message data item: $data");
+              }
               try {
                 if (data is Map<String, dynamic>) {
+                  // *** The ChatMessage.fromJson factory now handles parsing all fields, including reply info ***
                   return ChatMessage.fromJson(data);
                 } else {
                   print(
@@ -4747,11 +4824,11 @@ class ChatRepository {
               }
             })
             .whereType<ChatMessage>()
-            .toList();
+            .toList(); // Filter out any nulls resulting from parsing errors
         print(
             '[ChatRepository $methodName] Parsed Messages Count: ${messages.length}');
 
-        // --- PARSE STATUS ---
+        // --- PARSE STATUS (No change needed here) ---
         final bool isOnline = response['other_user_is_online'] as bool? ??
             false; // Default to false
         final String? lastOnlineStr =
@@ -4793,6 +4870,7 @@ class ChatRepository {
           'An unexpected error occurred while fetching conversation: ${e.toString()}');
     }
   }
+  // --- END MODIFIED Logic ---
 }
 
 
@@ -6014,12 +6092,12 @@ import 'package:dtx/models/chat_message.dart';
 import 'package:dtx/providers/auth_provider.dart';
 import 'package:dtx/providers/conversation_provider.dart';
 import 'package:dtx/providers/user_provider.dart';
-import 'package:dtx/providers/status_provider.dart'; // <-- IMPORT ADDED
+import 'package:dtx/providers/status_provider.dart';
 import 'package:dtx/utils/token_storage.dart';
-import 'package:flutter/foundation.dart'; // <-- IMPORT ADDED (if not already)
+import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-// --- Keep WebSocketConnectionState enum and webSocketStateProvider ---
+// --- WebSocketConnectionState enum and webSocketStateProvider (Keep as is) ---
 enum WebSocketConnectionState { disconnected, connecting, connected, error }
 
 final webSocketStateProvider = StateProvider<WebSocketConnectionState>(
@@ -6037,14 +6115,13 @@ class ChatService {
   static const int _maxReconnectAttempts = 5;
   static const Duration _initialReconnectDelay = Duration(seconds: 2);
 
-  // Map to track optimistic messages (No Lock Needed)
   final Map<String, int> _pendingMessages = {};
 
   ChatService(this._ref, this._wsUrl) {
     print("[ChatService] Initialized with URL: $_wsUrl");
   }
 
-  // --- connect logic remains the same ---
+  // --- connect, _onMessageReceived, _handleMessageAck, lifecycle handlers (Keep as is) ---
   Future<void> connect() async {
     _isManualDisconnect = false;
     if (_channel != null &&
@@ -6076,7 +6153,7 @@ class ChatService {
       );
       print("[ChatService] WebSocket channel created. Listening...");
       _streamSubscription = _channel!.stream.listen(
-        _onMessageReceived, // <<< Passes messages here
+        _onMessageReceived,
         onDone: _handleDisconnect,
         onError: _handleError,
         cancelOnError: false,
@@ -6089,17 +6166,15 @@ class ChatService {
       _handleError(e);
     }
   }
-  // --- End connect logic ---
 
   void _onMessageReceived(dynamic message) {
-    print("[ChatService] Message received: $message");
+    if (kDebugMode) print("[ChatService] Message received: $message");
     try {
       final Map<String, dynamic> decodedMessage = jsonDecode(message);
       final type = decodedMessage['type'] as String?;
 
       switch (type) {
         case 'chat_message':
-          // --- chat_message handling remains the same ---
           final messageId = decodedMessage['id'] as int?;
           final senderId = decodedMessage['sender_user_id'] as int?;
           final recipientId = decodedMessage['recipient_user_id'] as int?;
@@ -6107,6 +6182,17 @@ class ChatService {
           final textContent = decodedMessage['text'] as String?;
           final mediaUrlContent = decodedMessage['media_url'] as String?;
           final mediaTypeContent = decodedMessage['media_type'] as String?;
+          // --- ADDED: Parse reply info from received message ---
+          final replyToMessageId =
+              decodedMessage['reply_to_message_id'] as int?;
+          final repliedMessageSenderID =
+              decodedMessage['replied_message_sender_id'] as int?;
+          final repliedMessageTextSnippet =
+              decodedMessage['replied_message_text_snippet'] as String?;
+          final repliedMessageMediaType =
+              decodedMessage['replied_message_media_type'] as String?;
+          // --- END ADDED ---
+
           if (messageId == null ||
               messageId <= 0 ||
               senderId == null ||
@@ -6118,13 +6204,15 @@ class ChatService {
           }
           final currentUserId = _ref.read(currentUserIdProvider);
           if (currentUserId == null || recipientId != currentUserId) {
-            print(
-                "[ChatService] Received message not intended for current user ($currentUserId). Recipient was $recipientId. Ignoring.");
+            if (kDebugMode)
+              print(
+                  "[ChatService] Received message not intended for current user ($currentUserId). Recipient was $recipientId. Ignoring.");
             return;
           }
           if (senderId == currentUserId) {
-            print(
-                "[ChatService] Received message loopback from self (ID: $messageId). Ignoring.");
+            if (kDebugMode)
+              print(
+                  "[ChatService] Received message loopback from self (ID: $messageId). Ignoring.");
             return;
           }
           DateTime sentAt;
@@ -6146,70 +6234,73 @@ class ChatService {
             status: ChatMessageStatus.sent,
             isRead: false,
             readAt: null,
+            // --- ADDED: Pass reply fields to constructor ---
+            replyToMessageID: replyToMessageId,
+            repliedMessageSenderID: repliedMessageSenderID,
+            repliedMessageTextSnippet: repliedMessageTextSnippet,
+            repliedMessageMediaType: repliedMessageMediaType,
+            // --- END ADDED ---
           );
           _ref
               .read(conversationProvider(senderId).notifier)
               .addReceivedMessage(chatMessage);
-          print(
-              "[ChatService] Added received 'chat_message' (ID: $messageId) to conversation with $senderId");
-          break; // End case 'chat_message'
+          if (kDebugMode)
+            print(
+                "[ChatService] Added received 'chat_message' (ID: $messageId) to conversation with $senderId. ReplyTo: $replyToMessageId");
+          break;
 
         case 'message_ack':
-          // --- message_ack handling remains the same ---
-          print("[ChatService] Received message_ack: $decodedMessage");
+          if (kDebugMode)
+            print("[ChatService] Received message_ack: $decodedMessage");
           _handleMessageAck(decodedMessage);
-          break; // End case 'message_ack'
+          break;
 
-        // --- NEW: Handle status_update ---
         case 'status_update':
-          print("[ChatService] Received status_update: $decodedMessage");
+          if (kDebugMode)
+            print("[ChatService] Received status_update: $decodedMessage");
           final userId = decodedMessage['user_id'] as int?;
           final status = decodedMessage['status'] as String?;
-
           if (userId == null || userId <= 0 || status == null) {
             print(
                 "[ChatService] Invalid status_update message: Missing user_id or status. Data: $decodedMessage");
             return;
           }
-
           final bool isOnline = status.toLowerCase() == 'online';
-          print(
-              "[ChatService] Parsed status_update: UserID=$userId, isOnline=$isOnline");
-
-          // Broadcast the update using the new provider
+          if (kDebugMode)
+            print(
+                "[ChatService] Parsed status_update: UserID=$userId, isOnline=$isOnline");
           _ref
               .read(userStatusUpdateProvider.notifier)
               .updateStatus(userId, isOnline);
-          break; // End case 'status_update'
-        // --- END NEW ---
+          break;
 
         case 'error':
           print(
               "[ChatService] Received error message from server: ${decodedMessage['content']}");
-          break; // End case 'error'
+          break;
 
         case 'info':
           print(
               "[ChatService] Received info message from server: ${decodedMessage['content']}");
-          break; // End case 'info'
+          break;
 
         default:
           print(
               "[ChatService] Received unhandled message type '$type': $decodedMessage");
-      } // End switch (type)
+      }
     } catch (e, stacktrace) {
       print("[ChatService] Error processing received message: $e");
       print("[ChatService] Stacktrace: $stacktrace");
     }
   }
 
-  // --- sendMessage logic remains the same ---
+  // --- MODIFIED: sendMessage signature and logic ---
   void sendMessage(
     int recipientUserId, {
     String? text,
     String? mediaUrl,
     String? mediaType,
-    int? replyToMessageId,
+    int? replyToMessageId, // <<< ADDED parameter
   }) {
     if (_channel == null ||
         _ref.read(webSocketStateProvider) !=
@@ -6234,12 +6325,12 @@ class ChatService {
         mediaType.isNotEmpty) {
       payload['media_url'] = mediaUrl;
       payload['media_type'] = mediaType;
-      payload['text'] = null;
+      payload['text'] = null; // Ensure text is null for media messages
       isMediaMessage = true;
       print("[ChatService] Preparing media message payload.");
     } else if (text != null && text.trim().isNotEmpty) {
       payload['text'] = text.trim();
-      payload['media_url'] = null;
+      payload['media_url'] = null; // Ensure media is null for text messages
       payload['media_type'] = null;
       isMediaMessage = false;
       print("[ChatService] Preparing text message payload.");
@@ -6247,27 +6338,35 @@ class ChatService {
       print("[ChatService] Cannot send: Message must have text or media.");
       return;
     }
+
+    // *** ADDED: Include replyToMessageId in payload if provided ***
     if (replyToMessageId != null && replyToMessageId > 0) {
       payload['reply_to_message_id'] = replyToMessageId;
-      print("[ChatService] Adding replyToMessageId: $replyToMessageId");
+      print(
+          "[ChatService] Adding replyToMessageId: $replyToMessageId to payload.");
     }
+    // *** END ADDED ***
+
     final messageJson = jsonEncode(payload);
     print("[ChatService] Sending message (Type: chat_message): $messageJson");
     try {
       if (!isMediaMessage) {
         optimisticTempId = DateTime.now().millisecondsSinceEpoch.toString();
+        // Create optimistic message (no reply info needed for optimistic UI?)
+        // We only need the *real* message to display the reply snippet.
         final sentMessage = ChatMessage(
           tempId: optimisticTempId,
           messageID: 0,
           senderUserID: currentUserId,
           recipientUserID: recipientUserId,
           messageText: text!,
-          sentAt: DateTime.now(),
+          sentAt: DateTime.now().toLocal(),
           status: ChatMessageStatus.pending,
-          isRead: false,
+          isRead: false, // Assuming not read yet
           readAt: null,
           mediaUrl: null,
           mediaType: null,
+          // No reply info needed for optimistic display of the *new* message
         );
         addPendingMessage(optimisticTempId, recipientUserId);
         _ref
@@ -6295,14 +6394,16 @@ class ChatService {
       _handleError(e);
     }
   }
+  // --- END MODIFIED ---
 
-  // --- _handleMessageAck logic remains the same ---
+  // --- _handleMessageAck (Keep as is) ---
   void _handleMessageAck(Map<String, dynamic> ackData) {
     final realMessageId = ackData['id'] as int?;
     final ackContent = ackData['content'] as String?;
     final mediaUrlAck = ackData['media_url'] as String?;
-    print(
-        "[ChatService _handleMessageAck] Received: RealID=$realMessageId, Content='$ackContent', MediaURL='$mediaUrlAck'");
+    if (kDebugMode)
+      print(
+          "[ChatService _handleMessageAck] Received: RealID=$realMessageId, Content='$ackContent', MediaURL='$mediaUrlAck'");
     if (realMessageId == null) {
       print("[ChatService _handleMessageAck] Invalid ack: Missing real ID.");
       return;
@@ -6316,37 +6417,35 @@ class ChatService {
     String? foundTempId;
     int? foundRecipientId;
     if (_pendingMessages.isNotEmpty) {
-      // Attempt to find the right tempId - simple FIFO for now
-      // IMPORTANT: This simple FIFO approach might fail if multiple messages
-      // are sent rapidly and acks arrive out of order. A more robust
-      // solution would involve matching based on content or a temporary correlation ID.
-      // For now, we proceed with the FIFO assumption.
       foundTempId = _pendingMessages.keys.first;
       foundRecipientId = _pendingMessages.values.first;
-      print(
-          "[ChatService _handleMessageAck] Found pending message via map (FIFO): TempID=$foundTempId for Recipient=$foundRecipientId");
+      if (kDebugMode)
+        print(
+            "[ChatService _handleMessageAck] Found pending message via map (FIFO): TempID=$foundTempId for Recipient=$foundRecipientId");
       removePendingMessage(foundTempId);
     } else {
       print(
           "[ChatService _handleMessageAck] No pending messages found in tracking map.");
     }
     if (foundTempId != null && foundRecipientId != null) {
-      print(
-          "[ChatService _handleMessageAck] Updating message (TempID: $foundTempId) for ack (Real ID: $realMessageId). Status -> Sent.");
+      if (kDebugMode)
+        print(
+            "[ChatService _handleMessageAck] Updating message (TempID: $foundTempId) for ack (Real ID: $realMessageId). Status -> Sent.");
       final conversationNotifier =
           _ref.read(conversationProvider(foundRecipientId).notifier);
       conversationNotifier.updateMessageStatus(
           foundTempId, ChatMessageStatus.sent,
           finalMessageId: realMessageId, finalMediaUrl: mediaUrlAck);
-      print(
-          "[ChatService _handleMessageAck] Message status updated successfully.");
+      if (kDebugMode)
+        print(
+            "[ChatService _handleMessageAck] Message status updated successfully.");
     } else {
       print(
           "[ChatService _handleMessageAck] WARNING: Received message_ack for Real ID $realMessageId, but couldn't find a matching tracked pending message.");
     }
   }
 
-  // --- Public Helper methods for tracking pending messages ---
+  // --- Public Helper methods for tracking pending messages (Keep as is) ---
   void addPendingMessage(String tempId, int recipientId) {
     _pendingMessages[tempId] = recipientId;
     print(
@@ -6424,18 +6523,17 @@ class ChatService {
   }
 
   void _updateState(WebSocketConnectionState newState) {
-    // Update only if state changes
     Future.microtask(() {
-      // Use microtask to avoid modifying state during build/notification phase
       if (_ref.read(webSocketStateProvider) != newState) {
         _ref.read(webSocketStateProvider.notifier).state = newState;
         print("[ChatService] WebSocket state updated to: $newState");
       }
     });
   }
+  // --- End Lifecycle Handlers ---
 }
 
-// --- currentUserIdProvider remains the same ---
+// --- currentUserIdProvider (Keep as is) ---
 final currentUserIdProvider = Provider<int?>((ref) {
   return ref.watch(userProvider.select((user) => user.id));
 });
@@ -8161,6 +8259,9 @@ import 'dart:typed_data';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:dtx/models/chat_message.dart';
 import 'package:dtx/models/media_upload_model.dart';
+// *** ADDED: Import UserProvider for sender name check ***
+import 'package:dtx/models/user_model.dart';
+// *** END ADDED ***
 import 'package:dtx/providers/conversation_provider.dart';
 import 'package:dtx/providers/error_provider.dart';
 import 'package:dtx/providers/matches_provider.dart';
@@ -8171,7 +8272,7 @@ import 'package:dtx/repositories/media_repository.dart';
 import 'package:dtx/services/api_service.dart';
 import 'package:dtx/services/chat_service.dart';
 import 'package:dtx/utils/app_enums.dart';
-import 'package:dtx/utils/date_formatter.dart'; // <-- IMPORT ADDED
+import 'package:dtx/utils/date_formatter.dart';
 import 'package:dtx/widgets/message_bubble.dart';
 import 'package:dtx/widgets/report_reason_dialog.dart';
 import 'package:file_picker/file_picker.dart';
@@ -8183,8 +8284,8 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:mime/mime.dart';
 import 'package:path/path.dart' as p;
+import 'package:url_launcher/url_launcher.dart';
 
-// ... (Keep existing ChatDetailScreen class signature and state variables) ...
 class ChatDetailScreen extends ConsumerStatefulWidget {
   final int matchUserId;
   final String matchName;
@@ -8208,46 +8309,33 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
   bool _isUploadingMedia = false;
   bool _isInteracting = false;
 
-  static const int _maxImageSizeBytes = 10 * 1024 * 1024; // 10 MB
-  static const int _maxVideoSizeBytes = 50 * 1024 * 1024; // 50 MB
-  static const int _maxAudioSizeBytes = 10 * 1024 * 1024; // 10 MB
-  static const int _maxFileSizeBytes = 25 * 1024 * 1024; // 25 MB
+  // --- File Type Constants (Keep as is) ---
+  static const int _maxImageSizeBytes = 10 * 1024 * 1024;
+  static const int _maxVideoSizeBytes = 50 * 1024 * 1024;
+  static const int _maxAudioSizeBytes = 10 * 1024 * 1024;
+  static const int _maxFileSizeBytes = 25 * 1024 * 1024;
   static final Set<String> _allowedMimeTypes = {
     // Images
-    'image/jpeg',
-    'image/png',
-    'image/gif',
-    'image/webp',
+    'image/jpeg', 'image/png', 'image/gif', 'image/webp',
     // Videos
-    'video/mp4',
-    'video/quicktime', // .mov
-    'video/webm',
-    'video/x-msvideo', // .avi (might be large)
+    'video/mp4', 'video/quicktime', 'video/webm', 'video/x-msvideo',
     'video/mpeg',
     // Audio
-    'audio/mpeg', // .mp3
-    'audio/ogg',
-    'audio/wav',
-    'audio/aac',
-    'audio/opus',
-    'audio/webm',
-    'audio/mp4', // m4a
-    'audio/x-m4a',
+    'audio/mpeg', 'audio/ogg', 'audio/wav', 'audio/aac', 'audio/opus',
+    'audio/webm', 'audio/mp4', 'audio/x-m4a',
     // Documents
-    'application/pdf',
-    'application/msword', // .doc
-    'application/vnd.openxmlformats-officedocument.wordprocessingml.document', // .docx
-    'application/vnd.ms-excel', // .xls
-    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', // .xlsx
-    'application/vnd.ms-powerpoint', // .ppt
-    'application/vnd.openxmlformats-officedocument.presentationml.presentation', // .pptx
-    'text/plain', // .txt
+    'application/pdf', 'application/msword',
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    'application/vnd.ms-excel',
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    'application/vnd.ms-powerpoint',
+    'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+    'text/plain',
   };
-  // --- END ADDED BACK ---
+
   @override
   void initState() {
     super.initState();
-    // ... (Keep existing initState logic) ...
     print("[ChatDetailScreen Init: ${widget.matchUserId}] Initializing...");
     _inputFocusNode.addListener(_handleFocusChange);
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -8267,7 +8355,6 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
 
   @override
   void dispose() {
-    // ... (Keep existing dispose logic) ...
     print("[ChatDetailScreen Dispose: ${widget.matchUserId}] Disposing...");
     _messageController.dispose();
     _scrollController.dispose();
@@ -8276,12 +8363,9 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
     super.dispose();
   }
 
-  void _handleFocusChange() {
-    // Optional: Add logic if needed when focus changes
-  }
+  void _handleFocusChange() {}
 
-  // --- Keep ALL existing helper methods (_readHeaderBytes, _sendMessage, _scrollToBottom, _showAttachmentOptions, etc.) ---
-  // ...
+  // --- _readHeaderBytes (Keep as is) ---
   Future<Uint8List?> _readHeaderBytes(File file, [int length = 1024]) async {
     try {
       final stream = file.openRead(0, length);
@@ -8300,25 +8384,41 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
     }
   }
 
+  // --- MODIFIED: _sendMessage ---
   void _sendMessage() {
     final text = _messageController.text.trim();
     if (text.isEmpty || _isUploadingMedia || _isInteracting) return;
 
     final chatService = ref.read(chatServiceProvider);
     final wsState = ref.read(webSocketStateProvider);
+    // *** CORRECTED: Watch provider to get state, then access property ***
+    final conversationState =
+        ref.read(conversationProvider(widget.matchUserId));
+    final replyingTo = conversationState.replyingToMessage;
+    // *** END CORRECTION ***
 
     if (wsState == WebSocketConnectionState.connected) {
-      chatService.sendMessage(widget.matchUserId, text: text);
+      print(
+          "[ChatDetailScreen _sendMessage] Sending text. Replying to: ${replyingTo?.messageID}");
+      // *** Pass replyToMessageId if available ***
+      chatService.sendMessage(
+        widget.matchUserId,
+        text: text,
+        replyToMessageId: replyingTo?.messageID, // Pass the ID if replying
+      );
+      // *** END ADDED ***
+
       _messageController.clear();
       ref.read(messageInputProvider.notifier).state = false;
-      // Don't refocus immediately, let keyboard manage itself
-      // FocusScope.of(context).requestFocus(_inputFocusNode);
+      // *** No need to call cancelReply here, addSentMessage handles it ***
     } else {
       _showErrorSnackbar("Cannot send message. Not connected.");
-      chatService.connect();
+      chatService.connect(); // Attempt to reconnect
     }
   }
+  // --- END MODIFIED ---
 
+  // --- _scrollToBottom, _showAttachmentOptions, _handleFileSelection, _handleMediaSelection (Keep as is) ---
   void _scrollToBottom() {
     if (_scrollController.hasClients) {
       print(
@@ -8399,6 +8499,7 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
         bool isValid = false;
         String errorMsg = "Unsupported file type.";
         int maxSize = _maxFileSizeBytes;
+
         if (mimeType.startsWith('image/')) {
           maxSize = _maxImageSizeBytes;
           isValid = _allowedMimeTypes.contains(mimeType);
@@ -8415,6 +8516,7 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
           maxSize = _maxFileSizeBytes;
           isValid = true;
         }
+
         if (!isValid) {
           _showErrorSnackbar(errorMsg);
           return;
@@ -8451,6 +8553,7 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
         bool isVideo = mimeType.startsWith('video/');
         int maxSize =
             isImage ? _maxImageSizeBytes : (isVideo ? _maxVideoSizeBytes : 0);
+
         if (!isImage && !isVideo) {
           _showErrorSnackbar("Unsupported file type selected.");
           return;
@@ -8475,14 +8578,19 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
     }
   }
 
+  // --- MODIFIED: _initiateMediaSend ---
   Future<void> _initiateMediaSend(
       File file, String fileName, String mimeType) async {
     if (!mounted) return;
     final conversationNotifier =
         ref.read(conversationProvider(widget.matchUserId).notifier);
     final currentUserId = ref.read(currentUserIdProvider);
-    final chatService =
-        ref.read(chatServiceProvider); // Get chat service instance
+    final chatService = ref.read(chatServiceProvider);
+    // *** CORRECTED: Get reply state ***
+    final conversationState =
+        ref.read(conversationProvider(widget.matchUserId));
+    final replyingTo = conversationState.replyingToMessage;
+    // *** END CORRECTION ***
 
     if (currentUserId == null) {
       _showErrorSnackbar("Cannot send media: User not identified.");
@@ -8497,23 +8605,32 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
       messageText: '',
       mediaUrl: null,
       mediaType: mimeType,
-      sentAt: DateTime.now(),
+      sentAt: DateTime.now().toLocal(), // Use local time for optimistic UI
       isRead: false,
       status: ChatMessageStatus.pending,
       localFilePath: file.path,
       errorMessage: null,
+      // *** Include reply info if available ***
+      replyToMessageID: replyingTo?.messageID,
+      repliedMessageSenderID: replyingTo?.repliedMessageSenderID,
+      repliedMessageTextSnippet: replyingTo?.repliedMessageTextSnippet,
+      repliedMessageMediaType: replyingTo?.repliedMessageMediaType,
+      // *** END ADDED ***
     );
     print(
-        "[ChatDetailScreen _initiateMediaSend: ${widget.matchUserId}] Adding optimistic media message TempID: $tempId");
+        "[ChatDetailScreen _initiateMediaSend: ${widget.matchUserId}] Adding optimistic media message TempID: $tempId. Replying to: ${replyingTo?.messageID}");
 
-    // *** Call public method ***
+    // Add to pending messages and conversation state
     chatService.addPendingMessage(tempId, widget.matchUserId);
-    // *** END ***
+    conversationNotifier.addSentMessage(
+        optimisticMessage); // This now also clears reply state in provider
 
-    conversationNotifier.addSentMessage(optimisticMessage);
     setState(() => _isUploadingMedia = true);
 
-    _uploadAndSendMediaInBackground(file, fileName, mimeType, tempId).then((_) {
+    // Start background upload/send
+    _uploadAndSendMediaInBackground(file, fileName, mimeType, tempId,
+            replyingTo?.messageID) // *** Pass reply ID ***
+        .then((_) {
       if (mounted) {
         final stillProcessing = ref
             .read(conversationProvider(widget.matchUserId))
@@ -8533,15 +8650,23 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
       }
     });
   }
+  // --- END MODIFIED ---
 
+  // --- MODIFIED: _uploadAndSendMediaInBackground ---
   Future<void> _uploadAndSendMediaInBackground(
-      File file, String fileName, String mimeType, String tempId) async {
+      File file,
+      String fileName,
+      String mimeType,
+      String tempId,
+      int? replyToMessageId // <<< ADDED parameter
+      ) async {
     final conversationNotifier =
         ref.read(conversationProvider(widget.matchUserId).notifier);
     final mediaRepo = ref.read(mediaRepositoryProvider);
     final chatService = ref.read(chatServiceProvider);
     final bool isImage = mimeType.startsWith('image/');
 
+    // Update status to Uploading
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) {
         print("[ChatBG Task $tempId] Updating status to Uploading");
@@ -8572,6 +8697,7 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
         throw ApiException("Failed to upload media to storage.");
       }
 
+      // Pre-cache image
       if (isImage && objectUrl != null) {
         print("[ChatBG Task $tempId] Pre-caching image: $objectUrl");
         try {
@@ -8584,9 +8710,15 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
       }
 
       print(
-          "[ChatBG Task $tempId] Upload successful. Sending WebSocket message...");
-      chatService.sendMessage(widget.matchUserId,
-          mediaUrl: objectUrl, mediaType: mimeType);
+          "[ChatBG Task $tempId] Upload successful. Sending WebSocket message. ReplyTo: $replyToMessageId");
+      // *** Pass replyToMessageId to sendMessage ***
+      chatService.sendMessage(
+        widget.matchUserId,
+        mediaUrl: objectUrl,
+        mediaType: mimeType,
+        replyToMessageId: replyToMessageId,
+      );
+      // *** END ADDED ***
 
       print("[ChatBG Task $tempId] WebSocket message sent. Awaiting ack...");
     } on ApiException catch (e) {
@@ -8610,7 +8742,9 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
       }
     }
   }
+  // --- END MODIFIED ---
 
+  // --- _showSnackbar, _showErrorSnackbar, _showMoreOptions, _confirmAndUnmatch, _reportUser (Keep as is) ---
   void _showSnackbar(String message,
       {bool isError = false, Duration duration = const Duration(seconds: 3)}) {
     if (!mounted) return;
@@ -8688,22 +8822,18 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
         ],
       ),
     );
-
     if (confirm != true) return;
-
     if (!mounted) return;
     setState(() => _isInteracting = true);
     ref.read(errorProvider.notifier).clearError();
-
     try {
       final success = await ref
           .read(likeRepositoryProvider)
           .unmatchUser(targetUserId: widget.matchUserId);
-
       if (success && mounted) {
         _showSnackbar("Unmatched successfully.", isError: false);
-        ref.invalidate(matchesProvider); // Refresh matches list
-        Navigator.of(context).pop(); // Go back from chat screen
+        ref.invalidate(matchesProvider);
+        Navigator.of(context).pop();
       } else if (!success && mounted) {
         _showErrorSnackbar("Failed to unmatch user.");
       }
@@ -8719,20 +8849,17 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
   Future<void> _reportUser() async {
     final selectedReason = await showReportReasonDialog(context);
     if (selectedReason == null) return;
-
     if (!mounted) return;
     setState(() => _isInteracting = true);
     ref.read(errorProvider.notifier).clearError();
-
     try {
       final success = await ref.read(likeRepositoryProvider).reportUser(
             targetUserId: widget.matchUserId,
             reason: selectedReason,
           );
-
       if (success && mounted) {
         _showSnackbar("Report submitted. Thank you.", isError: false);
-        await _confirmAndUnmatch();
+        await _confirmAndUnmatch(); // Unmatch after reporting
       } else if (!success && mounted) {
         _showErrorSnackbar("Failed to submit report.");
       }
@@ -8744,70 +8871,198 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
       if (mounted) setState(() => _isInteracting = false);
     }
   }
-  // --- END ---
+
+  // --- CORRECTED: _buildReplyPreviewWidget (incorporating fix from previous turn) ---
+  Widget _buildReplyPreviewWidget() {
+    // Watch the provider to get the state, then access the property
+    final conversationState =
+        ref.watch(conversationProvider(widget.matchUserId));
+    final replyingToMessage = conversationState.replyingToMessage;
+
+    if (replyingToMessage == null) {
+      if (kDebugMode)
+        print(
+            "[ChatDetailScreen _buildReplyPreviewWidget] No message being replied to.");
+      return const SizedBox.shrink(); // Return empty space if not replying
+    }
+
+    if (kDebugMode)
+      print(
+          "[ChatDetailScreen _buildReplyPreviewWidget] Building preview for Message ID: ${replyingToMessage.messageID}");
+
+    // Determine sender name ("You" or match name)
+    final currentUserId = ref.read(currentUserIdProvider);
+    final originalSenderName = replyingToMessage.senderUserID == currentUserId
+        ? "You"
+        : widget.matchName; // Use widget.matchName
+
+    // Determine content preview
+    // Use repliedMessageTextSnippet if available and not empty
+    String contentPreview =
+        (replyingToMessage.repliedMessageTextSnippet != null &&
+                replyingToMessage.repliedMessageTextSnippet!.isNotEmpty)
+            ? replyingToMessage.repliedMessageTextSnippet!
+            : '';
+    IconData? mediaIcon;
+
+    // If text snippet is empty, determine preview from media type
+    if (contentPreview.isEmpty) {
+      final mediaType = replyingToMessage.repliedMessageMediaType;
+      if (kDebugMode)
+        print(
+            "[ChatDetailScreen _buildReplyPreviewWidget] Original media type: $mediaType");
+      if (mediaType?.startsWith('image/') ?? false) {
+        contentPreview = "Photo";
+        mediaIcon = Icons.photo_camera_back_outlined;
+      } else if (mediaType?.startsWith('video/') ?? false) {
+        contentPreview = "Video";
+        mediaIcon = Icons.videocam_outlined;
+      } else if (mediaType?.startsWith('audio/') ?? false) {
+        contentPreview = "Audio";
+        mediaIcon = Icons.headphones_outlined;
+      } else if (mediaType != null) {
+        contentPreview = "File"; // Generic file
+        mediaIcon = Icons.attach_file_outlined;
+      } else {
+        contentPreview =
+            "Original message"; // Fallback if both text and media type are missing
+        if (kDebugMode)
+          print(
+              "[ChatDetailScreen _buildReplyPreviewWidget] Using fallback content preview.");
+      }
+    } else {
+      if (kDebugMode)
+        print(
+            "[ChatDetailScreen _buildReplyPreviewWidget] Using text snippet: '$contentPreview'");
+    }
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12.0, vertical: 8.0),
+      decoration: BoxDecoration(
+        color: Colors.grey[200], // Different background for preview bar
+        border: Border(
+          top: BorderSide(color: Colors.grey[300]!, width: 0.5),
+        ),
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.reply_rounded, size: 18, color: Colors.black54),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  "Replying to $originalSenderName",
+                  style: GoogleFonts.poppins(
+                    fontWeight: FontWeight.w600,
+                    fontSize: 13,
+                    color: const Color(0xFF6B46C1),
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Row(
+                  children: [
+                    if (mediaIcon != null)
+                      Icon(mediaIcon, size: 14, color: Colors.black54),
+                    if (mediaIcon != null) const SizedBox(width: 4),
+                    Expanded(
+                      child: Text(
+                        contentPreview,
+                        style: GoogleFonts.poppins(
+                          fontSize: 13,
+                          color: Colors.black54,
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+          IconButton(
+            icon: const Icon(Icons.close_rounded, size: 20),
+            color: Colors.black54,
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints(),
+            tooltip: "Cancel Reply",
+            onPressed: () {
+              print("[ChatDetailScreen CancelReplyButton] Cancelling reply.");
+              ref
+                  .read(conversationProvider(widget.matchUserId).notifier)
+                  .cancelReply();
+            },
+          ),
+        ],
+      ),
+    );
+  }
+  // --- END CORRECTED ---
 
   @override
   Widget build(BuildContext context) {
-    print(
-        "[ChatDetailScreen Build: ${widget.matchUserId}] Rebuilding Widget... IsUploading: $_isUploadingMedia, IsInteracting: $_isInteracting");
+    if (kDebugMode)
+      print(
+          "[ChatDetailScreen Build: ${widget.matchUserId}] Rebuilding Widget... IsUploading: $_isUploadingMedia, IsInteracting: $_isInteracting");
     final state = ref.watch(conversationProvider(widget.matchUserId));
     final currentUserId = ref.watch(currentUserIdProvider);
-    // final wsState = ref.watch(webSocketStateProvider); // No longer needed for status here
 
-    // --- ADDED LOGGING for Status ---
-    if (kDebugMode) {
+    if (kDebugMode)
       print(
           "[ChatDetailScreen Build: ${widget.matchUserId}] State status: otherUserIsOnline=${state.otherUserIsOnline}, otherUserLastOnline=${state.otherUserLastOnline}");
-    }
-    // --- END LOGGING ---
 
+    // Listener for scroll (keep as is)
     ref.listen<ConversationState>(conversationProvider(widget.matchUserId),
         (prev, next) {
-      // ... (keep existing scroll listener logic) ...
       final prevLength = prev?.messages.length ?? 0;
       final nextLength = next.messages.length;
-      final prevFirstTempId = prev?.messages.isNotEmpty ?? false
-          ? prev!.messages.first.tempId
-          : null;
-      final nextFirstTempId =
-          next.messages.isNotEmpty ? next.messages.first.tempId : null;
-      final nextFirstStatus =
-          next.messages.isNotEmpty ? next.messages.first.status : null;
-      final Map<String, int> nextStatusCounts = {};
-      for (var msg in next.messages) {
-        nextStatusCounts[msg.status.toString()] =
-            (nextStatusCounts[msg.status.toString()] ?? 0) + 1;
-      }
-      print(
-          "[ChatDetailScreen Listener: ${widget.matchUserId}] State changed. PrevLen=$prevLength, NextLen=$nextLength. PrevFirstTempId=$prevFirstTempId, NextFirstTempId=$nextFirstTempId, NextFirstStatus=$nextFirstStatus. Next Status Counts: $nextStatusCounts");
-      if (nextLength > prevLength &&
+      final isNewMessageFromMe = nextLength > prevLength &&
           next.messages.isNotEmpty &&
-          next.messages.first.senderUserID == currentUserId &&
-          next.messages.first.status == ChatMessageStatus.pending) {
+          next.messages.first.senderUserID == currentUserId;
+      final isMessageStatusUpdate = nextLength == prevLength &&
+          prevLength > 0 &&
+          next.messages.isNotEmpty &&
+          next.messages.first.tempId != null &&
+          prev?.messages.first.status != next.messages.first.status;
+
+      if (kDebugMode)
+        print(
+            "[ChatDetailScreen Listener: ${widget.matchUserId}] State changed. PrevLen=$prevLength, NextLen=$nextLength. IsNewFromMe=$isNewMessageFromMe, IsStatusUpdate=$isMessageStatusUpdate");
+
+      if (isNewMessageFromMe) {
         print(
             "[ChatDetailScreen Listener: ${widget.matchUserId}] New PENDING message added by me. Scheduling scroll.");
         WidgetsBinding.instance.addPostFrameCallback((_) {
-          print(
-              "[ChatDetailScreen Listener: ${widget.matchUserId}] Executing scroll after frame callback.");
-          _scrollToBottom();
+          // Add check if scrollController has clients before scrolling
+          if (_scrollController.hasClients) {
+            print(
+                "[ChatDetailScreen Listener: ${widget.matchUserId}] Executing scroll after frame callback.");
+            _scrollToBottom();
+          } else {
+            print(
+                "[ChatDetailScreen Listener: ${widget.matchUserId}] ScrollController has no clients, skipping scroll.");
+          }
         });
-      } else if (nextLength == prevLength &&
-          prevLength > 0 &&
-          next.messages.isNotEmpty &&
-          next.messages.first.tempId != null) {
+      } else if (isMessageStatusUpdate) {
         print(
-            "[ChatDetailScreen Listener: ${widget.matchUserId}] Message status likely updated (Length same). TempID=${next.messages.first.tempId}, NewStatus=${next.messages.first.status}. No scroll triggered.");
+            "[ChatDetailScreen Listener: ${widget.matchUserId}] Message status updated. No scroll triggered.");
+      } else if (nextLength > prevLength && !isNewMessageFromMe) {
+        print(
+            "[ChatDetailScreen Listener: ${widget.matchUserId}] New message received from other user. No scroll triggered.");
       } else {
         print(
-            "[ChatDetailScreen Listener: ${widget.matchUserId}] No scroll triggered (Condition not met or received message).");
+            "[ChatDetailScreen Listener: ${widget.matchUserId}] No scroll triggered (Other state change).");
       }
     });
 
-    // --- STATUS TEXT LOGIC ---
+    // Status text logic (keep as is)
     String statusText;
     Color statusColor;
     if (state.isLoading && state.messages.isEmpty) {
-      statusText = 'Loading...'; // Initial loading state
+      statusText = 'Loading...';
       statusColor = Colors.grey;
     } else if (state.otherUserIsOnline) {
       statusText = 'Online';
@@ -8816,11 +9071,11 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
       statusText = formatLastSeen(state.otherUserLastOnline, short: true);
       statusColor = Colors.grey;
     }
-    // --- END STATUS TEXT LOGIC ---
 
     return Scaffold(
       backgroundColor: Colors.grey[100],
       appBar: AppBar(
+        // AppBar setup remains the same
         elevation: 1,
         backgroundColor: Colors.white,
         foregroundColor: Colors.black87,
@@ -8829,8 +9084,8 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
               Icon(Icons.arrow_back_ios_new, size: 20, color: Colors.grey[700]),
           onPressed: () => Navigator.of(context).pop(),
         ),
-        // --- UPDATED TITLE ---
         title: Row(
+          /* ... Title Row ... */
           mainAxisSize: MainAxisSize.min,
           children: [
             CircleAvatar(
@@ -8852,19 +9107,16 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
                   Text(
                     widget.matchName,
                     style: GoogleFonts.poppins(
-                        fontSize: 16, // Slightly smaller name
-                        fontWeight: FontWeight.w600),
+                        fontSize: 16, fontWeight: FontWeight.w600),
                     overflow: TextOverflow.ellipsis,
                   ),
-                  // --- Display Status Text ---
-                  if (statusText.isNotEmpty) // Only show if status is available
+                  if (statusText.isNotEmpty)
                     Text(
                       statusText,
                       style: GoogleFonts.poppins(
-                        fontSize: 12, // Smaller font for status
-                        fontWeight: FontWeight.w400,
-                        color: statusColor, // Dynamic color
-                      ),
+                          fontSize: 12,
+                          fontWeight: FontWeight.w400,
+                          color: statusColor),
                       overflow: TextOverflow.ellipsis,
                     ),
                 ],
@@ -8872,29 +9124,15 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
             ),
           ],
         ),
-        // --- END UPDATED TITLE ---
         titleSpacing: 0,
         actions: [
+          /* ... Actions ... */
           IconButton(
             icon: Icon(Icons.more_vert_rounded, color: Colors.grey[600]),
             tooltip: "More Options",
             onPressed: _isInteracting ? null : _showMoreOptions,
             disabledColor: Colors.grey[300],
           ),
-          // --- REMOVED redundant WebSocket status dot ---
-          // Padding(
-          //   padding: const EdgeInsets.only(right: 16.0),
-          //   child: Icon(
-          //     Icons.circle,
-          //     size: 10,
-          //     color: wsState == WebSocketConnectionState.connected
-          //         ? Colors.green
-          //         : (wsState == WebSocketConnectionState.connecting
-          //             ? Colors.orange
-          //             : Colors.red),
-          //   ),
-          // ),
-          // --- END REMOVED ---
         ],
       ),
       body: Column(
@@ -8905,24 +9143,30 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
               child: _buildMessagesList(state, currentUserId),
             ),
           ),
+          // *** ADDED: Reply Preview Widget ***
+          _buildReplyPreviewWidget(),
+          // *** END ADDED ***
           if (_isInteracting)
             Container(
+              // Keep loading indicator
               padding: const EdgeInsets.symmetric(vertical: 8.0),
               color: Colors.white.withOpacity(0.8),
               child: const Center(
                   child: CircularProgressIndicator(color: Color(0xFF8B5CF6))),
             )
           else
-            _buildMessageInputArea(),
+            _buildMessageInputArea(), // Keep input area
         ],
       ),
     );
   }
 
-  // --- Keep _buildMessagesList ---
+  // --- MODIFIED: _buildMessagesList ---
   Widget _buildMessagesList(ConversationState state, int? currentUserId) {
-    print(
-        "[ChatDetailScreen _buildMessagesList: ${widget.matchUserId}] Building message list. Count: ${state.messages.length}");
+    if (kDebugMode)
+      print(
+          "[ChatDetailScreen _buildMessagesList: ${widget.matchUserId}] Building message list. Count: ${state.messages.length}");
+    // --- Loading/Error/Empty checks remain the same ---
     if (state.isLoading && state.messages.isEmpty) {
       return const Center(
           child: CircularProgressIndicator(color: Color(0xFF8B5CF6)));
@@ -8944,6 +9188,8 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
                       color: Colors.grey[600], fontSize: 16),
                   textAlign: TextAlign.center)));
     }
+    // --- End Checks ---
+
     return ListView.builder(
       addAutomaticKeepAlives: true,
       controller: _scrollController,
@@ -8964,19 +9210,41 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
           }
         }
         final keyId = message.tempId ?? message.messageID.toString();
+        String originalSenderDisplayName = "Unknown"; // Default
+        if (message.isReply && message.repliedMessageSenderID != null) {
+          originalSenderDisplayName =
+              message.repliedMessageSenderID == currentUserId
+                  ? "You"
+                  : widget.matchName; // Use the match name passed to the screen
+        }
+
+        // *** ADDED: Pass onReplyInitiated callback ***
         return Padding(
             padding: const EdgeInsets.symmetric(vertical: 2.0),
             child: MessageBubble(
-                key: ValueKey(
-                    "${keyId}_${message.status}_${message.mediaUrl ?? message.localFilePath}"),
-                message: message,
-                isMe: isMe,
-                showTail: showTail));
+              key: ValueKey(
+                  "${keyId}_${message.status}_${message.mediaUrl ?? message.localFilePath}_${message.isReply}"), // Add isReply to key
+              message: message,
+              isMe: isMe,
+              showTail: showTail,
+              originalSenderDisplayName:
+                  originalSenderDisplayName, // *** ADDED ***
+              // Call startReplying when bubble signals reply initiation
+              onReplyInitiated: (messageToReply) {
+                print(
+                    "[ChatDetailScreen onReplyInitiated] Triggered for message ID: ${messageToReply.messageID}");
+                ref
+                    .read(conversationProvider(widget.matchUserId).notifier)
+                    .startReplying(messageToReply);
+              },
+            ));
+        // *** END ADDED ***
       },
     );
   }
+  // --- END MODIFIED ---
 
-  // --- Keep _buildMessageInputArea ---
+  // --- _buildMessageInputArea (Keep as is) ---
   Widget _buildMessageInputArea() {
     final canSendText = ref.watch(messageInputProvider);
     final bool allowInput = !_isUploadingMedia && !_isInteracting;
@@ -8994,6 +9262,7 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
         ],
       ),
       child: SafeArea(
+        top: false, // Don't add padding for top safe area here
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.center,
           children: [
@@ -9057,7 +9326,7 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
   }
 }
 
-// --- Keep messageInputProvider ---
+// --- Keep messageInputProvider (No change needed) ---
 final messageInputProvider = StateProvider<bool>((ref) => false);
 
 
@@ -20842,26 +21111,34 @@ File: widgets/message_bubble.dart
 import 'dart:io';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:dtx/models/chat_message.dart';
-import 'package:dtx/providers/audio_player_provider.dart'; // Ensure this is correct
+import 'package:dtx/providers/audio_player_provider.dart';
+import 'package:dtx/providers/conversation_provider.dart';
+import 'package:dtx/providers/user_provider.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_fonts/google_fonts.dart';
-import 'package:audioplayers/audioplayers.dart'; // Ensure this is correct
+import 'package:audioplayers/audioplayers.dart';
 import 'package:path/path.dart' as p;
 import 'package:url_launcher/url_launcher.dart';
 
-// Convert to ConsumerStatefulWidget and add AutomaticKeepAliveClientMixin
 class MessageBubble extends ConsumerStatefulWidget {
   final ChatMessage message;
   final bool isMe;
   final bool showTail;
+  final Function(ChatMessage message) onReplyInitiated;
+  // *** ADDED: Parameter for original sender's display name ***
+  final String originalSenderDisplayName;
+  // *** END ADDED ***
 
   const MessageBubble({
-    Key? key, // Use Key? key
+    Key? key,
     required this.message,
     required this.isMe,
     required this.showTail,
-  }) : super(key: key); // Pass key to super
+    required this.onReplyInitiated,
+    required this.originalSenderDisplayName, // *** ADDED ***
+  }) : super(key: key);
 
   @override
   ConsumerState<MessageBubble> createState() => _MessageBubbleState();
@@ -20869,10 +21146,8 @@ class MessageBubble extends ConsumerStatefulWidget {
 
 class _MessageBubbleState extends ConsumerState<MessageBubble>
     with AutomaticKeepAliveClientMixin {
-  // Add mixin
-
   @override
-  bool get wantKeepAlive => true; // Keep the state alive
+  bool get wantKeepAlive => true;
 
   // --- Helpers (Keep as previously defined) ---
   String getFilenameFromUrl(String? url) {
@@ -20926,11 +21201,9 @@ class _MessageBubbleState extends ConsumerState<MessageBubble>
   }
 
   Widget _buildMediaLoadingPlaceholder({required bool isMe}) {
-    // Simple centered spinner without a surrounding box
     return const Center(
       child: Padding(
-        padding: EdgeInsets.symmetric(
-            vertical: 40.0, horizontal: 40.0), // Give spinner some space
+        padding: EdgeInsets.symmetric(vertical: 40.0, horizontal: 40.0),
         child:
             CircularProgressIndicator(strokeWidth: 2, color: Color(0xFF8B5CF6)),
       ),
@@ -20938,7 +21211,6 @@ class _MessageBubbleState extends ConsumerState<MessageBubble>
   }
 
   Widget _buildMediaErrorPlaceholder({required bool isMe}) {
-    // Keep error placeholder visually distinct
     return Container(
       color: Colors.grey[isMe ? 700 : 200]?.withOpacity(0.3),
       child: Center(
@@ -20948,6 +21220,112 @@ class _MessageBubbleState extends ConsumerState<MessageBubble>
   }
   // --- End Helpers ---
 
+  // --- *** MODIFIED: _buildReplySnippet *** ---
+  Widget _buildReplySnippet() {
+    final repliedTo = widget.message;
+    final textSnippet = repliedTo.repliedMessageTextSnippet;
+    final mediaType = repliedTo.repliedMessageMediaType;
+
+    // Use the display name passed from the parent
+    final String originalSenderName = widget.originalSenderDisplayName;
+
+    // Define colors based on who sent the *current* message (the reply)
+    final Color snippetBgColor = widget.isMe
+        ? const Color(0xFF7C3AED)
+            .withOpacity(0.8) // Slightly darker purple for own reply snippet
+        : Colors.grey.shade200; // Light grey for other's reply snippet
+    final Color nameColor = widget.isMe
+        ? Colors.white // White name on purple
+        : const Color(0xFF7C3AED); // Purple name on grey
+    final Color contentColor = widget.isMe
+        ? Colors.white.withOpacity(0.9) // Slightly lighter content on purple
+        : Colors.black54; // Darker grey content on grey
+    final Color indicatorColor = nameColor; // Match indicator to name color
+
+    String contentPreview =
+        (textSnippet != null && textSnippet.isNotEmpty) ? textSnippet : '';
+    IconData? mediaIcon;
+
+    if (contentPreview.isEmpty) {
+      if (mediaType?.startsWith('image/') ?? false) {
+        contentPreview = "Photo";
+        mediaIcon = Icons.photo_camera_back_outlined;
+      } else if (mediaType?.startsWith('video/') ?? false) {
+        contentPreview = "Video";
+        mediaIcon = Icons.videocam_outlined;
+      } else if (mediaType?.startsWith('audio/') ?? false) {
+        contentPreview = "Audio";
+        mediaIcon = Icons.headphones_outlined;
+      } else if (mediaType != null) {
+        contentPreview = "File";
+        mediaIcon = Icons.attach_file_outlined;
+      } else {
+        contentPreview = "Original message";
+      }
+    }
+
+    return Container(
+      padding: const EdgeInsets.only(
+          left: 8, right: 8, top: 6, bottom: 6), // Adjusted padding
+      margin: const EdgeInsets.only(
+          bottom: 4,
+          left: 1,
+          right: 1,
+          top: 1), // Add slight margin inside bubble
+      decoration: BoxDecoration(
+        color: snippetBgColor, // Use dynamic background
+        // Apply rounding *only* to top corners if it's the first element
+        borderRadius: const BorderRadius.only(
+          topLeft: Radius.circular(14), // Slightly less rounded
+          topRight: Radius.circular(14),
+        ),
+        // Apply the left border indicator
+        border: Border(
+          left: BorderSide(
+            color: indicatorColor, // Use dynamic indicator color
+            width: 4, // Slightly thicker indicator
+          ),
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            originalSenderName, // Use the passed display name
+            style: GoogleFonts.poppins(
+              color: nameColor, // Use dynamic name color
+              fontWeight: FontWeight.w600,
+              fontSize: 13, // Slightly larger name
+            ),
+          ),
+          const SizedBox(height: 3), // Adjust spacing
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (mediaIcon != null)
+                Icon(mediaIcon,
+                    size: 15, color: contentColor), // Slightly larger icon
+              if (mediaIcon != null && contentPreview.isNotEmpty)
+                const SizedBox(width: 5),
+              Flexible(
+                child: Text(
+                  contentPreview,
+                  style: GoogleFonts.poppins(
+                    color: contentColor, // Use dynamic content color
+                    fontSize: 13,
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+  // --- *** END MODIFIED *** ---
+
   @override
   Widget build(BuildContext context) {
     super.build(context);
@@ -20955,15 +21333,42 @@ class _MessageBubbleState extends ConsumerState<MessageBubble>
     final message = widget.message;
     final isMe = widget.isMe;
     final showTail = widget.showTail;
-    final keyId = message.tempId ?? message.messageID.toString();
+
+    // --- Log message data (keep) ---
+    if (kDebugMode) {
+      print("--- Building MessageBubble ---");
+      print("  Msg ID: ${message.messageID}");
+      print("  Temp ID: ${message.tempId}");
+      print("  Is Me: $isMe");
+      print("  Show Tail: $showTail");
+      print("  Is Media: ${message.isMedia}");
+      print("  Text: '${message.messageText}'");
+      print("  Media URL: ${message.mediaUrl}");
+      print("  Media Type: ${message.mediaType}");
+      print("  Status: ${message.status}");
+      print("  Is Reply: ${message.isReply}");
+      print("  Reply To ID: ${message.replyToMessageID}");
+      print("  Replied Sender ID: ${message.repliedMessageSenderID}");
+      print("  Replied Snippet: '${message.repliedMessageTextSnippet}'");
+      print("  Replied Media Type: ${message.repliedMessageMediaType}");
+      print("-----------------------------");
+    }
+    // --- End Log ---
 
     final radius = Radius.circular(18.0);
+    // *** MODIFIED: Adjust borderRadius based on whether it's a reply ***
     final borderRadius = BorderRadius.only(
-      topLeft: radius,
-      topRight: radius,
+      topLeft: message.isReply
+          ? const Radius.circular(8)
+          : radius, // Less rounded if reply
+      topRight: message.isReply
+          ? const Radius.circular(8)
+          : radius, // Less rounded if reply
       bottomLeft: isMe || !showTail ? radius : Radius.zero,
       bottomRight: !isMe || !showTail ? radius : Radius.zero,
     );
+    // *** END MODIFIED ***
+
     Widget messageContent;
     Widget? statusIcon;
 
@@ -20987,8 +21392,9 @@ class _MessageBubbleState extends ConsumerState<MessageBubble>
       }
     }
 
-    // Content Rendering Logic
+    // Content Rendering Logic (no change needed inside this block)
     if (message.isMedia) {
+      // ... (existing media rendering logic - no changes here) ...
       final mediaType = message.mediaType?.toLowerCase() ?? '';
       final String? displayPath =
           (message.localFilePath != null && message.localFilePath!.isNotEmpty)
@@ -21003,14 +21409,11 @@ class _MessageBubbleState extends ConsumerState<MessageBubble>
           "[Media Error]",
           style: GoogleFonts.poppins(color: Colors.red, fontSize: 14),
         );
-      }
-      // --- IMAGE ---
-      else if (mediaType.startsWith('image/')) {
+      } else if (mediaType.startsWith('image/')) {
         Widget imageToShow;
         if (isUsingLocalFile) {
           imageToShow = Image.file(File(displayPath),
               key: ValueKey(displayPath),
-              // Use contain to respect aspect ratio within available width
               fit: BoxFit.contain,
               errorBuilder: (_, __, ___) =>
                   _buildMediaErrorPlaceholder(isMe: isMe));
@@ -21018,7 +21421,6 @@ class _MessageBubbleState extends ConsumerState<MessageBubble>
           imageToShow = CachedNetworkImage(
             key: ValueKey(displayPath),
             imageUrl: displayPath,
-            // Use contain to respect aspect ratio within available width
             fit: BoxFit.contain,
             placeholder: (context, url) =>
                 _buildMediaLoadingPlaceholder(isMe: isMe),
@@ -21026,28 +21428,19 @@ class _MessageBubbleState extends ConsumerState<MessageBubble>
                 _buildMediaErrorPlaceholder(isMe: isMe),
           );
         }
-        // --- *** REMOVE ConstrainedBox *** ---
-        // Wrap directly in ClipRRect if needed for rounding corners *of the image itself*
-        // The outer bubble already clips. You might not need this inner ClipRRect unless
-        // you want different rounding for the image than the bubble.
         messageContent = ClipRRect(
-          borderRadius: BorderRadius.circular(
-              8.0), // Round corners for image content if desired
-          child: imageToShow, // No ConstrainedBox wrapper
+          borderRadius: BorderRadius.circular(8.0),
+          child: imageToShow,
         );
-        // --- *** END REMOVAL *** ---
-      }
-      // --- VIDEO (no change needed) ---
-      else if (mediaType.startsWith('video/')) {
+      } else if (mediaType.startsWith('video/')) {
         messageContent = InkWell(
           onTap: isMediaSent && !isUsingLocalFile
               ? () => _openMedia(context, displayPath)
               : null,
           child: Container(
-            padding: const EdgeInsets.all(10),
+            /* ... video placeholder ... */ padding: const EdgeInsets.all(10),
             constraints: BoxConstraints(
-                maxWidth: MediaQuery.of(context).size.width *
-                    0.65, // Still constrain width
+                maxWidth: MediaQuery.of(context).size.width * 0.65,
                 minHeight: 100),
             decoration: BoxDecoration(
                 color: Colors.grey[isMe ? 700 : 300],
@@ -21079,9 +21472,7 @@ class _MessageBubbleState extends ConsumerState<MessageBubble>
             ),
           ),
         );
-      }
-      // --- AUDIO (no change needed) ---
-      else if (mediaType.startsWith('audio/')) {
+      } else if (mediaType.startsWith('audio/')) {
         final audioPlayerState = ref.watch(audioPlayerStateProvider);
         final currentPlayingUrl = ref.watch(currentAudioUrlProvider);
         final playerNotifier = ref.read(audioPlayerControllerProvider.notifier);
@@ -21095,73 +21486,75 @@ class _MessageBubbleState extends ConsumerState<MessageBubble>
         final bool isThisPaused = canPlay &&
             currentPlayingUrl == displayPath &&
             audioPlayerState == AudioPlayerState.paused;
-
-        messageContent = Row(mainAxisSize: MainAxisSize.min, children: [
-          IconButton(
-            icon: isThisLoading
-                ? SizedBox(
-                    width: 24,
-                    height: 24,
-                    child: CircularProgressIndicator(
-                        strokeWidth: 2,
-                        color: isMe ? Colors.white : Color(0xFF8B5CF6)))
-                : Icon(isThisPlaying
-                    ? Icons.pause_circle_filled_rounded
-                    : Icons.play_circle_fill_rounded),
-            color: isMe
-                ? Colors.white
-                : (canPlay ? const Color(0xFF8B5CF6) : Colors.grey[400]),
-            iconSize: 36,
-            padding: EdgeInsets.zero,
-            constraints: const BoxConstraints(),
-            tooltip: canPlay ? (isThisPlaying ? 'Pause' : 'Play') : 'Audio',
-            onPressed: isThisLoading || !canPlay
-                ? null
-                : () {
-                    if (isThisPlaying)
-                      playerNotifier.pause();
-                    else if (isThisPaused)
-                      playerNotifier.resume();
-                    else
-                      playerNotifier.play(displayPath!);
-                  },
-          ),
-          const SizedBox(width: 8),
-          Expanded(
-            child: Text(
-              getFilenameFromUrl(displayPath),
-              style: GoogleFonts.poppins(
-                  fontSize: 13, color: isMe ? Colors.white : Colors.black87),
-              overflow: TextOverflow.ellipsis,
-              maxLines: 2,
-            ),
-          ),
-        ]);
-      }
-      // --- GENERIC FILE (no change needed) ---
-      else {
+        messageContent = Row(
+            /* ... audio content ... */ mainAxisSize: MainAxisSize.min,
+            children: [
+              IconButton(
+                icon: isThisLoading
+                    ? SizedBox(
+                        width: 24,
+                        height: 24,
+                        child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: isMe ? Colors.white : Color(0xFF8B5CF6)))
+                    : Icon(isThisPlaying
+                        ? Icons.pause_circle_filled_rounded
+                        : Icons.play_circle_fill_rounded),
+                color: isMe
+                    ? Colors.white
+                    : (canPlay ? const Color(0xFF8B5CF6) : Colors.grey[400]),
+                iconSize: 36,
+                padding: EdgeInsets.zero,
+                constraints: const BoxConstraints(),
+                tooltip: canPlay ? (isThisPlaying ? 'Pause' : 'Play') : 'Audio',
+                onPressed: isThisLoading || !canPlay
+                    ? null
+                    : () {
+                        if (isThisPlaying)
+                          playerNotifier.pause();
+                        else if (isThisPaused)
+                          playerNotifier.resume();
+                        else
+                          playerNotifier.play(displayPath!);
+                      },
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  getFilenameFromUrl(displayPath),
+                  style: GoogleFonts.poppins(
+                      fontSize: 13,
+                      color: isMe ? Colors.white : Colors.black87),
+                  overflow: TextOverflow.ellipsis,
+                  maxLines: 2,
+                ),
+              ),
+            ]);
+      } else {
         messageContent = InkWell(
           onTap: isMediaSent && !isUsingLocalFile
               ? () => _openMedia(context, displayPath)
               : null,
-          child: Row(mainAxisSize: MainAxisSize.min, children: [
-            Icon(Icons.insert_drive_file_outlined,
-                color: isMe ? Colors.white70 : Colors.grey[600], size: 30),
-            const SizedBox(width: 10),
-            Expanded(
-              child: Text(
-                getFilenameFromUrl(displayPath),
-                style: GoogleFonts.poppins(
-                    fontSize: 13, color: isMe ? Colors.white : Colors.black87),
-                overflow: TextOverflow.ellipsis,
-                maxLines: 2,
-              ),
-            ),
-          ]),
+          child: Row(
+              /* ... generic file content ... */ mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(Icons.insert_drive_file_outlined,
+                    color: isMe ? Colors.white70 : Colors.grey[600], size: 30),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    getFilenameFromUrl(displayPath),
+                    style: GoogleFonts.poppins(
+                        fontSize: 13,
+                        color: isMe ? Colors.white : Colors.black87),
+                    overflow: TextOverflow.ellipsis,
+                    maxLines: 2,
+                  ),
+                ),
+              ]),
         );
       }
     } else {
-      // --- TEXT MESSAGE ---
       messageContent = Text(
         message.messageText,
         style: GoogleFonts.poppins(
@@ -21171,56 +21564,88 @@ class _MessageBubbleState extends ConsumerState<MessageBubble>
       );
     }
 
-    // --- Build Final Bubble ---
+    // --- Build Final Bubble Structure ---
     return Align(
       alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
-      child: Container(
-        // *** This Container provides the main width constraint ***
-        constraints: BoxConstraints(
-          maxWidth: MediaQuery.of(context).size.width * 0.75,
-        ),
-        margin: EdgeInsets.only(
-          top: 4.0,
-          bottom: 4.0,
-          left: isMe ? 0 : (showTail ? 0 : 10.0),
-          right: isMe ? (showTail ? 0 : 10.0) : 0,
-        ),
-        decoration: BoxDecoration(
-          color: isMe ? const Color(0xFF8B5CF6) : Colors.white,
-          borderRadius: borderRadius,
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withOpacity(0.05),
-              blurRadius: 3,
-              offset: const Offset(0, 1),
-            )
-          ],
-        ),
-        // --- *** Outer ClipRRect ensures bubble shape *** ---
-        child: ClipRRect(
-          borderRadius: borderRadius,
-          child: Stack(
-            // Stack allows overlaying status icon if needed
-            children: [
-              Padding(
-                // Padding for non-image content
-                padding: message.isMedia &&
-                        (message.mediaType?.startsWith('image/') ?? false)
-                    ? EdgeInsets
-                        .zero // No padding needed around image widget itself
-                    : const EdgeInsets.symmetric(
-                        horizontal: 14.0, vertical: 10.0),
-                child:
-                    messageContent, // The actual content (text, image, video placeholder, etc.)
+      child: Dismissible(
+        key: Key(message.messageID.toString()),
+        direction: DismissDirection.startToEnd,
+        confirmDismiss: (direction) async {
+          if (kDebugMode)
+            print("[MessageBubble] Swiped message ID: ${message.messageID}");
+          widget.onReplyInitiated(message);
+          return false; // Do not actually dismiss
+        },
+        background: Container(
+          // Simple background, ensures the bubble decoration shows correctly
+          decoration: BoxDecoration(
+              color: Colors.blue.withOpacity(0.1),
+              borderRadius: borderRadius // Match bubble radius
               ),
-              if (statusIcon != null)
-                Positioned(
-                  bottom: 4,
-                  right: isMe ? 4 : null,
-                  left: isMe ? null : 4,
-                  child: statusIcon,
-                ),
+          padding: const EdgeInsets.symmetric(horizontal: 20),
+          alignment: Alignment.centerLeft,
+          child: const Icon(Icons.reply, color: Colors.blue),
+        ),
+        child: Container(
+          constraints: BoxConstraints(
+            maxWidth: MediaQuery.of(context).size.width * 0.75,
+          ),
+          margin: EdgeInsets.only(
+            top: 4.0,
+            bottom: 4.0,
+            left: isMe ? 0 : (showTail ? 0 : 10.0),
+            right: isMe ? (showTail ? 0 : 10.0) : 0,
+          ),
+          decoration: BoxDecoration(
+            color: isMe ? const Color(0xFF8B5CF6) : Colors.white,
+            borderRadius: borderRadius,
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withOpacity(0.05),
+                blurRadius: 3,
+                offset: const Offset(0, 1),
+              )
             ],
+          ),
+          child: ClipRRect(
+            borderRadius: borderRadius,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // *** Conditionally display reply snippet ***
+                if (message.isReply) _buildReplySnippet(),
+
+                // Original content and status icon
+                Stack(
+                  children: [
+                    Padding(
+                      // *** MODIFIED: Add extra padding if it's a reply for visual separation ***
+                      padding: message.isMedia &&
+                              (message.mediaType?.startsWith('image/') ?? false)
+                          ? EdgeInsets.zero // No padding for images
+                          : EdgeInsets.only(
+                              // Add vertical padding conditionally
+                              left: 14.0,
+                              right: 14.0,
+                              top: message.isReply
+                                  ? 6.0
+                                  : 10.0, // Less top padding if reply
+                              bottom: 10.0,
+                            ),
+                      // *** END MODIFIED ***
+                      child: messageContent,
+                    ),
+                    if (statusIcon != null)
+                      Positioned(
+                        bottom: 4,
+                        right: isMe ? 4 : null,
+                        left: isMe ? null : 4,
+                        child: statusIcon,
+                      ),
+                  ],
+                ),
+              ],
+            ),
           ),
         ),
       ),
