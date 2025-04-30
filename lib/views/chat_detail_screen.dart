@@ -389,7 +389,9 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
           "[ChatDetailScreen _initiateMediaSend: ${widget.matchUserId}] Adding optimistic media message TempID: $tempId. Replying to: ${replyingTo?.messageID}");
 
     // Add to pending messages and conversation state
-    chatService.addPendingMessage(tempId, widget.matchUserId);
+    // --- ** FIX: Pass null for mediaUrl here initially ** ---
+    chatService.addPendingMessage(tempId, widget.matchUserId, null);
+    // --- ** END FIX ** ---
     conversationNotifier.addSentMessage(optimisticMessage);
 
     setState(() => _isUploadingMedia = true);
@@ -421,11 +423,16 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
   }
   // --- END MODIFIED ---
 
-  // --- MODIFIED: _uploadAndSendMediaInBackground ---
-  // Phase 3: Send WebSocket Message after successful upload
+  // --- MODIFIED: _uploadAndSendMediaInBackground (With Pending Message Tracking Fix) ---
   Future<void> _uploadAndSendMediaInBackground(File file, String fileName,
       String mimeType, String tempId, int? replyToMessageId) async {
-    if (!mounted) return;
+    // Ensure mounted at the start
+    if (!mounted) {
+      if (kDebugMode)
+        print("[ChatBG Task $tempId] Not mounted, aborting background task.");
+      return;
+    }
+
     final conversationNotifier =
         ref.read(conversationProvider(widget.matchUserId).notifier);
     final mediaRepo = ref.read(mediaRepositoryProvider);
@@ -433,7 +440,7 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
     final bool isImage = mimeType.startsWith('image/');
     final bool isAudio = mimeType.startsWith('audio/');
 
-    // Update status to Uploading
+    // Update status to Uploading (use addPostFrameCallback for safety)
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) {
         if (kDebugMode)
@@ -443,16 +450,18 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
       }
     });
 
-    String? objectUrl;
+    String? objectUrl; // Store the final S3 URL
     try {
       if (kDebugMode)
         print("[ChatBG Task $tempId] Getting chat presigned URL...");
       final urls = await mediaRepo.getChatMediaPresignedUrl(fileName, mimeType);
       final presignedUrl = urls['presigned_url'];
-      objectUrl = urls['object_url'];
+      objectUrl = urls['object_url']; // Assign objectUrl here
       if (presignedUrl == null || objectUrl == null) {
         throw ApiException("Failed to get upload URLs from server.");
       }
+      if (kDebugMode)
+        print("[ChatBG Task $tempId] Received URLs. ObjectURL: $objectUrl");
 
       if (kDebugMode) print("[ChatBG Task $tempId] Uploading to S3...");
       final uploadModel = MediaUploadModel(
@@ -465,6 +474,8 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
       if (!uploadSuccess) {
         throw ApiException("Failed to upload media to storage.");
       }
+      // --- Upload Successful ---
+      if (kDebugMode) print("[ChatBG Task $tempId] Upload successful.");
 
       // Pre-cache image (only if it's an image)
       if (isImage && objectUrl != null) {
@@ -481,31 +492,55 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
         }
       }
 
-      // --- START: Phase 3 Change ---
+      // --- **START: FIX - Add Pending Message WITH URL *before* sending WS msg** ---
+      if (objectUrl != null) {
+        if (kDebugMode)
+          print(
+              "[ChatBG Task $tempId] Adding pending message tracker with URL.");
+        // Track the message with its final URL
+        chatService.addPendingMessage(tempId, widget.matchUserId, objectUrl);
+      } else {
+        if (kDebugMode)
+          print(
+              "[ChatBG Task $tempId] WARNING: objectUrl is null after successful upload. Cannot track media URL for ack.");
+        // Still track it, but without the URL (ack won't be able to add URL later)
+        chatService.addPendingMessage(tempId, widget.matchUserId, null);
+      }
+      // --- **END: FIX** ---
+
+      // --- Send WebSocket message ---
       if (kDebugMode)
         print(
-            "[ChatBG Task $tempId] Upload successful. Sending WebSocket message. ReplyTo: $replyToMessageId, URL: $objectUrl, Type: $mimeType");
+            "[ChatBG Task $tempId] Sending WebSocket message. ReplyTo: $replyToMessageId, URL: $objectUrl, Type: $mimeType");
       chatService.sendMessage(
         widget.matchUserId,
-        mediaUrl: objectUrl,
+        mediaUrl: objectUrl, // Pass the final S3 URL
         mediaType: mimeType,
         replyToMessageId: replyToMessageId,
       );
       if (kDebugMode)
         print("[ChatBG Task $tempId] WebSocket message sent. Awaiting ack...");
-      // --- END: Phase 3 Change ---
+      // --- End Send ---
     } on ApiException catch (e) {
       if (kDebugMode) print("[ChatBG Task $tempId] API Error: ${e.message}");
+      // --- **START: FIX - Remove pending message on failure** ---
+      chatService.removePendingMessage(tempId);
+      // --- **END: FIX** ---
       if (mounted) {
         if (kDebugMode)
           print("[ChatBG Task $tempId] Updating status to Failed (API Error)");
         conversationNotifier.updateMessageStatus(
             tempId, ChatMessageStatus.failed,
-            errorMessage: e.message, finalMediaUrl: objectUrl);
+            errorMessage: e.message,
+            // Keep objectUrl if upload failed but URL was obtained, helps UI potentially
+            finalMediaUrl: objectUrl);
       }
     } catch (e, stacktrace) {
       if (kDebugMode) print("[ChatBG Task $tempId] General Error: $e");
       if (kDebugMode) print("[ChatBG Task $tempId] Stacktrace: $stacktrace");
+      // --- **START: FIX - Remove pending message on failure** ---
+      chatService.removePendingMessage(tempId);
+      // --- **END: FIX** ---
       if (mounted) {
         if (kDebugMode)
           print(
@@ -513,12 +548,14 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
         conversationNotifier.updateMessageStatus(
             tempId, ChatMessageStatus.failed,
             errorMessage: "Upload/Send failed: ${e.toString()}",
+            // Keep objectUrl if upload failed but URL was obtained
             finalMediaUrl: objectUrl);
       }
     }
+    // Note: _isUploadingMedia is handled in the .then() block of _initiateMediaSend
   }
-  // --- END MODIFIED ---
 
+  // --- END MODIFIED ---
   // --- _showSnackbar, _showErrorSnackbar, _showMoreOptions, _confirmAndUnmatch, _reportUser (Keep as is) ---
   void _showSnackbar(String message,
       {bool isError = false, Duration duration = const Duration(seconds: 3)}) {
