@@ -9,17 +9,18 @@ import 'package:dtx/providers/service_provider.dart';
 import 'package:dtx/providers/user_provider.dart';
 import 'package:dtx/services/api_service.dart';
 import 'package:dtx/views/filter_settings_dialog.dart';
-import 'package:dtx/views/name.dart';
+import 'package:dtx/views/name.dart'; // Keep for profile completion dialog
 import 'package:dtx/models/user_model.dart';
 import 'package:dtx/widgets/home_profile_card.dart';
 import 'package:dtx/models/like_models.dart';
 import 'package:dtx/repositories/like_repository.dart';
-import 'package:dtx/widgets/report_reason_dialog.dart'; // Added
+import 'package:dtx/widgets/report_reason_dialog.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:dtx/models/filter_model.dart';
 import 'package:dtx/utils/app_enums.dart';
+import 'package:flutter/foundation.dart'; // For kDebugMode
 
 class HomeScreen extends ConsumerStatefulWidget {
   const HomeScreen({super.key});
@@ -29,33 +30,38 @@ class HomeScreen extends ConsumerStatefulWidget {
 }
 
 class _HomeScreenState extends ConsumerState<HomeScreen> {
+  // Use local state to manage the currently displayed list
+  // Initialize from the provider, but allow local removal for optimism
   List<UserModel> _feedProfiles = [];
-  bool _isInteracting = false; // To show overlay during API call
+  bool _isInteracting = false; // Track interaction state locally
 
-  // --- initState, dispose, _fetchFeed, _showCompleteProfileDialog, _removeTopCard ---
-  // --- _callLikeRepository, _callDislikeRepository, _showErrorSnackbar ---
-  // --- _openFilterDialog, _showMiniFilterEditor, _buildFilterChips, _buildFilterChip ---
-  // --- Remain the same ---
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       final feedState = ref.read(feedProvider);
-      if (!feedState.hasFetchedOnce && !feedState.isLoading) {
-        print("[HomeScreen initState] Feed not fetched yet, triggering fetch.");
+      // Initialize local state from provider if it has data
+      if (feedState.profiles.isNotEmpty) {
+        setState(() {
+          _feedProfiles = List.from(feedState.profiles);
+          if (kDebugMode)
+            print(
+                "[HomeScreen initState] Initialized local _feedProfiles from provider. Count: ${_feedProfiles.length}");
+        });
+      } else if (!feedState.hasFetchedOnce && !feedState.isLoading) {
+        // Fetch only if provider hasn't fetched yet and isn't loading
+        if (kDebugMode)
+          print(
+              "[HomeScreen initState] Feed not fetched yet, triggering fetch.");
         _fetchFeed();
-      } else {
-        if (mounted) {
-          setState(() {
-            _feedProfiles = feedState.profiles;
-          });
-        }
       }
+      // Fetch filters if they seem default
       final filterState = ref.read(filterProvider);
       final filterNotifier = ref.read(filterProvider.notifier);
       if (filterState == const FilterSettings() && !filterNotifier.isLoading) {
-        print(
-            "[HomeScreen initState] Filters appear default, triggering load.");
+        if (kDebugMode)
+          print(
+              "[HomeScreen initState] Filters appear default, triggering load.");
         filterNotifier.loadFilters();
       }
     });
@@ -67,13 +73,15 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
   }
 
   Future<void> _fetchFeed({bool force = false}) async {
-    print("[HomeScreen _fetchFeed] Fetching home feed. Force: $force");
+    if (kDebugMode)
+      print("[HomeScreen _fetchFeed] Fetching home feed. Force: $force");
     ref.read(errorProvider.notifier).clearError();
     await ref.read(feedProvider.notifier).fetchFeed(forceRefresh: force);
+    // Listener below will update _feedProfiles
   }
 
   void _showCompleteProfileDialog() {
-    /* ... keep existing implementation ... */
+    // (No changes needed)
     showDialog(
         context: context,
         barrierDismissible: false,
@@ -104,98 +112,200 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
         });
   }
 
+  // --- OPTIMISTIC: Remove card locally AND notify provider ---
   void _removeTopCard() {
-    print("[HomeScreen _removeTopCard] Removing top card from local state.");
-    if (!mounted) return;
-    if (_feedProfiles.isNotEmpty) {
-      final removedUserId = _feedProfiles[0].id!;
-      setState(() {
-        _feedProfiles.removeAt(0);
-      });
+    if (kDebugMode)
       print(
-          "[HomeScreen _removeTopCard] Notifying FeedProvider to remove profile ID: $removedUserId");
-      ref.read(feedProvider.notifier).removeProfile(removedUserId);
+          "[HomeScreen _removeTopCard] Removing top card from local state and notifying provider.");
+    if (!mounted) {
+      if (kDebugMode)
+        print(
+            "[HomeScreen _removeTopCard] Widget not mounted, skipping removal.");
+      return;
+    }
+    if (_feedProfiles.isNotEmpty) {
+      final removedUserId = _feedProfiles[0].id; // Get ID before removing
+      setState(() {
+        _feedProfiles
+            .removeAt(0); // Remove from local list for immediate UI update
+        if (kDebugMode)
+          print(
+              "[HomeScreen _removeTopCard] Local _feedProfiles count after removal: ${_feedProfiles.length}");
+      });
+      if (removedUserId != null) {
+        // Notify provider to remove from its source list
+        if (kDebugMode)
+          print(
+              "[HomeScreen _removeTopCard] Notifying FeedProvider to remove profile ID: $removedUserId");
+        ref.read(feedProvider.notifier).removeProfile(removedUserId);
+      } else {
+        if (kDebugMode)
+          print(
+              "[HomeScreen _removeTopCard] Warning: Removed card had null ID.");
+      }
+    } else {
+      if (kDebugMode)
+        print(
+            "[HomeScreen _removeTopCard] Warning: Attempted to remove card but local list is empty.");
     }
   }
+  // --- END OPTIMISTIC CHANGE ---
 
-  Future<bool> _callLikeRepository(
-      {required int targetUserId,
-      required ContentLikeType contentType,
-      required String contentIdentifier,
-      required LikeInteractionType interactionType,
-      String? comment}) async {
+  // --- START: Optimistic Swipe Handlers ---
+  void _handleSwipeLeft() {
+    if (kDebugMode)
+      print("[HomeScreen _handleSwipeLeft] Swiped Left (Dislike)");
+    if (_feedProfiles.isEmpty) return;
+    final profileToDislike = _feedProfiles[0];
+    if (profileToDislike.id == null) {
+      if (kDebugMode)
+        print(
+            "[HomeScreen _handleSwipeLeft] Cannot dislike, top profile has null ID.");
+      return;
+    }
+
+    // 1. Optimistic UI Update
+    _removeTopCard();
+
+    // 2. Background API Call
+    _callDislikeRepository(profileToDislike.id!);
+  }
+
+  void _handleSwipeRight() {
+    if (kDebugMode) print("[HomeScreen _handleSwipeRight] Swiped Right (Like)");
+    if (_feedProfiles.isEmpty) return;
+    final profileToLike = _feedProfiles[0];
+    if (profileToLike.id == null) {
+      if (kDebugMode)
+        print(
+            "[HomeScreen _handleSwipeRight] Cannot like, top profile has null ID.");
+      return;
+    }
+
+    // 1. Optimistic UI Update
+    _removeTopCard();
+
+    // 2. Background API Call (Default profile like)
+    _callLikeRepository(
+      targetUserId: profileToLike.id!,
+      contentType: ContentLikeType.profile, // Standard profile like on swipe
+      contentIdentifier: 'profile', // Standard profile like on swipe
+      interactionType: LikeInteractionType.standard,
+      comment: null, // No comment on swipe like
+    );
+  }
+  // --- END: Optimistic Swipe Handlers ---
+
+  // --- MODIFIED: API Call Handlers (Now fire-and-forget for background) ---
+  Future<void> _callLikeRepository({
+    required int targetUserId,
+    required ContentLikeType contentType,
+    required String contentIdentifier,
+    required LikeInteractionType interactionType,
+    String? comment,
+  }) async {
+    // Check profile completion status
     final authStatus = ref.read(authProvider).authStatus;
     if (authStatus == AuthStatus.onboarding2) {
       _showCompleteProfileDialog();
-      return false;
+      return; // Don't proceed if profile incomplete
     }
-    if (_isInteracting) return false;
-    if (mounted) setState(() => _isInteracting = true);
+
+    if (kDebugMode)
+      print(
+          "[HomeScreen _callLikeRepository BG] Firing API call for UserID: $targetUserId, Type: $contentType, ID: $contentIdentifier, Interaction: $interactionType");
+
     final errorNotifier = ref.read(errorProvider.notifier)..clearError();
-    bool success = false;
+
     try {
       final likeRepo = ref.read(likeRepositoryProvider);
-      success = await likeRepo.likeContent(
-          likedUserId: targetUserId,
-          contentType: contentType,
-          contentIdentifier: contentIdentifier,
-          interactionType: interactionType,
-          comment: comment);
-      if (!success && mounted && ref.read(errorProvider) == null) {
-        errorNotifier.setError(
-            AppError.server("Could not send ${interactionType.value}."));
-        _showErrorSnackbar("Could not send ${interactionType.value}.");
+      // Call API but don't block UI
+      final success = await likeRepo.likeContent(
+        likedUserId: targetUserId,
+        contentType: contentType,
+        contentIdentifier: contentIdentifier,
+        interactionType: interactionType,
+        comment: comment,
+      );
+
+      if (!success && mounted) {
+        // If the background call fails, show an error snackbar
+        final defaultError = "Could not send ${interactionType.value}.";
+        final currentError = ref.read(errorProvider);
+        // Use the error set by the repo if available, else use default
+        _showErrorSnackbar(currentError?.message ?? defaultError);
+      } else if (success) {
+        if (kDebugMode)
+          print(
+              "[HomeScreen _callLikeRepository BG] Background API call successful for UserID: $targetUserId");
       }
     } on LikeLimitExceededException catch (e) {
-      if (mounted) errorNotifier.setError(AppError.validation(e.message));
-      _showErrorSnackbar(e.message);
+      if (mounted) {
+        errorNotifier.setError(AppError.validation(e.message));
+        _showErrorSnackbar(e.message);
+      }
     } on InsufficientRosesException catch (e) {
-      if (mounted) errorNotifier.setError(AppError.validation(e.message));
-      _showErrorSnackbar(e.message);
+      if (mounted) {
+        errorNotifier.setError(AppError.validation(e.message));
+        _showErrorSnackbar(e.message);
+      }
     } on ApiException catch (e) {
-      if (mounted) errorNotifier.setError(AppError.server(e.message));
-      _showErrorSnackbar(e.message);
+      if (mounted) {
+        errorNotifier.setError(AppError.server(e.message));
+        _showErrorSnackbar(e.message);
+      }
     } catch (e) {
-      if (mounted)
+      if (kDebugMode) print("[HomeScreen _callLikeRepository BG] Error: $e");
+      if (mounted) {
         errorNotifier
             .setError(AppError.generic("An unexpected error occurred."));
-      _showErrorSnackbar("An unexpected error occurred.");
-    } finally {
-      if (mounted) setState(() => _isInteracting = false);
+        _showErrorSnackbar("An unexpected error occurred.");
+      }
     }
-    return success;
   }
 
-  Future<bool> _callDislikeRepository(int targetUserId) async {
+  Future<void> _callDislikeRepository(int targetUserId) async {
+    // Check profile completion status
     final authStatus = ref.read(authProvider).authStatus;
     if (authStatus == AuthStatus.onboarding2) {
       _showCompleteProfileDialog();
-      return false;
+      return; // Don't proceed if profile incomplete
     }
-    if (_isInteracting) return false;
-    if (mounted) setState(() => _isInteracting = true);
+
+    if (kDebugMode)
+      print(
+          "[HomeScreen _callDislikeRepository BG] Firing API call for UserID: $targetUserId");
+
     final errorNotifier = ref.read(errorProvider.notifier)..clearError();
-    bool success = false;
+
     try {
       final likeRepo = ref.read(likeRepositoryProvider);
-      success = await likeRepo.dislikeUser(dislikedUserId: targetUserId);
-      if (!success && mounted && ref.read(errorProvider) == null) {
-        errorNotifier.setError(AppError.server("Could not dislike user."));
-        _showErrorSnackbar("Could not dislike user.");
+      final success = await likeRepo.dislikeUser(dislikedUserId: targetUserId);
+
+      if (!success && mounted) {
+        final defaultError = "Could not dislike user.";
+        final currentError = ref.read(errorProvider);
+        _showErrorSnackbar(currentError?.message ?? defaultError);
+      } else if (success) {
+        if (kDebugMode)
+          print(
+              "[HomeScreen _callDislikeRepository BG] Background API call successful for UserID: $targetUserId");
       }
     } on ApiException catch (e) {
-      if (mounted) errorNotifier.setError(AppError.server(e.message));
-      _showErrorSnackbar(e.message);
+      if (mounted) {
+        errorNotifier.setError(AppError.server(e.message));
+        _showErrorSnackbar(e.message);
+      }
     } catch (e) {
-      if (mounted)
+      if (kDebugMode) print("[HomeScreen _callDislikeRepository BG] Error: $e");
+      if (mounted) {
         errorNotifier
             .setError(AppError.generic("An unexpected error occurred."));
-      _showErrorSnackbar("An unexpected error occurred.");
-    } finally {
-      if (mounted) setState(() => _isInteracting = false);
+        _showErrorSnackbar("An unexpected error occurred.");
+      }
     }
-    return success;
   }
+  // --- END MODIFIED API Call Handlers ---
 
   void _showSnackbar(String message, {bool isError = false}) {
     // Added snackbar helper
@@ -206,23 +316,24 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
         backgroundColor: isError ? Colors.redAccent : Colors.green));
   }
 
-  void _showErrorSnackbar(String message) {
-    _showSnackbar(message, isError: true);
-  } // Added error snackbar helper
+  void _showErrorSnackbar(String message,
+      [String defaultMsg = "An error occurred."]) {
+    _showSnackbar(message.isNotEmpty ? message : defaultMsg, isError: true);
+  }
 
   Future<void> _openFilterDialog() async {
-    /* ... keep existing implementation ... */
-    print("[HomeScreen] Opening Full Filter Dialog.");
+    // (No changes needed)
+    if (kDebugMode) print("[HomeScreen] Opening Full Filter Dialog.");
     await showDialog<bool>(
         context: context, builder: (context) => const FilterSettingsDialog());
   }
 
   Future<void> _showMiniFilterEditor(FilterField filterType) async {
-    /* ... keep existing implementation ... */
+    // (No changes needed)
     final filterNotifier = ref.read(filterProvider.notifier);
     final currentFilters = ref.read(filterProvider);
     bool changesMade = false;
-    print("[HomeScreen] Opening mini-editor for: $filterType");
+    if (kDebugMode) print("[HomeScreen] Opening mini-editor for: $filterType");
     final initialGender = currentFilters.whoYouWantToSee;
     final initialAgeRange = RangeValues(
         currentFilters.ageMin?.toDouble() ??
@@ -260,8 +371,9 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                           onChanged: (FilterGenderPref? value) {
                             if (value != null) {
                               stfSetState(() {
-                                print(
-                                    "[MiniDialog stfSetState] Updating tempGender from $tempGender to $value");
+                                if (kDebugMode)
+                                  print(
+                                      "[MiniDialog stfSetState] Updating tempGender from $tempGender to $value");
                                 tempGender = value;
                               });
                             }
@@ -287,8 +399,9 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                       onChanged: (RangeValues values) {
                         stfSetState(() {
                           if (values.start <= values.end) {
-                            print(
-                                "[MiniDialog stfSetState] Updating tempAgeRange from $tempAgeRange to $values");
+                            if (kDebugMode)
+                              print(
+                                  "[MiniDialog stfSetState] Updating tempAgeRange from $tempAgeRange to $values");
                             tempAgeRange = values;
                           }
                         });
@@ -315,8 +428,9 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                       inactiveColor: const Color(0xFF8B5CF6).withOpacity(0.3),
                       onChanged: (double value) {
                         stfSetState(() {
-                          print(
-                              "[MiniDialog stfSetState] Updating tempRadius from $tempRadius to $value");
+                          if (kDebugMode)
+                            print(
+                                "[MiniDialog stfSetState] Updating tempRadius from $tempRadius to $value");
                           tempRadius = value;
                         });
                       }),
@@ -337,8 +451,9 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                     contentPadding: EdgeInsets.zero,
                     onChanged: (bool value) {
                       stfSetState(() {
-                        print(
-                            "[MiniDialog stfSetState] Updating tempActive from $tempActive to $value");
+                        if (kDebugMode)
+                          print(
+                              "[MiniDialog stfSetState] Updating tempActive from $tempActive to $value");
                         tempActive = value;
                       });
                     });
@@ -398,11 +513,13 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                         }
                         if (valueChanged) {
                           changesMade = true;
-                          print(
-                              "[HomeScreen] Mini-editor change confirmed for $filterType.");
+                          if (kDebugMode)
+                            print(
+                                "[HomeScreen] Mini-editor change confirmed for $filterType.");
                         } else {
-                          print(
-                              "[HomeScreen] Mini-editor no change detected for $filterType.");
+                          if (kDebugMode)
+                            print(
+                                "[HomeScreen] Mini-editor no change detected for $filterType.");
                         }
                         Navigator.of(dialogContext).pop();
                       })
@@ -412,19 +529,23 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
           });
         });
     if (changesMade && mounted) {
-      print("[HomeScreen] Mini-filter changed. Saving current state via API.");
+      if (kDebugMode)
+        print(
+            "[HomeScreen] Mini-filter changed. Saving current state via API.");
       await Future.delayed(const Duration(milliseconds: 50));
       final bool saveSuccess = await filterNotifier.saveCurrentFilterState();
       if (!saveSuccess && mounted) {
         _showErrorSnackbar("Failed to save filter change.");
       }
     } else if (!changesMade) {
-      print("[HomeScreen] No changes made in mini-filter editor, not saving.");
+      if (kDebugMode)
+        print(
+            "[HomeScreen] No changes made in mini-filter editor, not saving.");
     }
   }
 
   List<Widget> _buildFilterChips(FilterSettings filters) {
-    /* ... keep existing implementation ... */
+    // (No changes needed)
     List<Widget> chips = [];
     chips.add(_buildFilterChip(
         Icons.wc_rounded,
@@ -460,7 +581,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
 
   Widget _buildFilterChip(
       IconData icon, String label, FilterField type, VoidCallback onTap) {
-    /* ... keep existing implementation ... */
+    // (No changes needed)
     const Color themeColor = Color(0xFF8B5CF6);
     const Color themeBgColor = Color(0xFFEDE9FE);
     const Color themeTextColor = themeColor;
@@ -486,16 +607,14 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                 shadowColor: themeColor.withOpacity(0.2))));
   }
 
-  // --- ADDED: _callReportRepository ---
   Future<bool> _callReportRepository(
       int targetUserId, ReportReason reason) async {
-    // Check if user needs to complete profile first
+    // (No changes needed, but now returns bool for consistency, though not used)
     final authStatus = ref.read(authProvider).authStatus;
     if (authStatus == AuthStatus.onboarding2) {
       _showCompleteProfileDialog();
       return false;
     }
-    // Prevent multiple interactions
     if (_isInteracting) return false;
     setState(() => _isInteracting = true);
     final errorNotifier = ref.read(errorProvider.notifier)..clearError();
@@ -516,6 +635,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
       if (mounted) errorNotifier.setError(AppError.server(e.message));
       _showErrorSnackbar(e.message);
     } catch (e) {
+      if (kDebugMode) print("[HomeScreen _callReportRepository] Error: $e");
       if (mounted)
         errorNotifier
             .setError(AppError.generic("An unexpected error occurred."));
@@ -525,24 +645,27 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     }
     return success;
   }
-  // --- END ADDED ---
 
   @override
   Widget build(BuildContext context) {
-    // ... (keep existing build setup) ...
     final feedState = ref.watch(feedProvider);
     final filters = ref.watch(filterProvider);
+    // Listen to provider changes to update local state
     ref.listen<HomeFeedState>(feedProvider, (_, next) {
       if (mounted && _feedProfiles != next.profiles) {
+        // Check if the list reference is actually different
         setState(() {
-          _feedProfiles = next.profiles;
-          print(
-              "[HomeScreen Listener] Updated local _feedProfiles. Count: ${_feedProfiles.length}");
+          _feedProfiles = List.from(
+              next.profiles); // Update local copy when provider changes
+          if (kDebugMode)
+            print(
+                "[HomeScreen Listener] Updated local _feedProfiles from provider. New Count: ${_feedProfiles.length}");
         });
       }
     });
     final error = feedState.error ?? ref.watch(errorProvider);
     final isLoadingFeed = feedState.isLoading && !feedState.hasFetchedOnce;
+    // Use local list for UI building
     final bool hasProfilesToShow = _feedProfiles.isNotEmpty;
 
     return Scaffold(
@@ -563,6 +686,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
       ),
       body: Column(
         children: [
+          // Filter Chips Row (No changes needed)
           Padding(
             padding:
                 const EdgeInsets.symmetric(horizontal: 12.0, vertical: 10.0),
@@ -574,18 +698,23 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                     physics: const BouncingScrollPhysics(),
                     child: Row(children: _buildFilterChips(filters)))),
           ),
+          // Main Content Area
           Expanded(
             child: Stack(
               alignment: Alignment.center,
               children: [
                 if (isLoadingFeed)
                   const CircularProgressIndicator(color: Color(0xFF8B5CF6))
+                // --- Build based on local _feedProfiles ---
                 else if (error != null && !hasProfilesToShow)
                   _buildErrorState(error)
                 else if (!hasProfilesToShow)
                   _buildEmptyState()
                 else
-                  _buildProfileCardAtIndex(0),
+                  _buildProfileCardAtIndex(0), // Only build the top card
+                // --- End Local List Build ---
+
+                // Interaction overlay remains the same BUT is now less used visually
                 if (_isInteracting)
                   Positioned.fill(
                       child: Container(
@@ -601,47 +730,59 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     );
   }
 
-  // --- Modified _buildProfileCardAtIndex ---
+  // --- Modified to pass Optimistic Swipe Handlers ---
   Widget _buildProfileCardAtIndex(int index) {
     if (index >= 0 && index < _feedProfiles.length) {
       final currentProfile = _feedProfiles[index];
       return HomeProfileCard(
-        key: ValueKey(currentProfile.id),
+        key: ValueKey(currentProfile.id), // Use profile ID as key
         profile: currentProfile,
+        // Pass background API handlers
         performLikeApiCall: (
             {required contentType,
             required contentIdentifier,
             required interactionType,
             comment}) async {
-          if (currentProfile.id == null) return false;
-          return await _callLikeRepository(
+          // Call background API call, return true optimistically
+          _callLikeRepository(
               targetUserId: currentProfile.id!,
               contentType: contentType,
               contentIdentifier: contentIdentifier,
               interactionType: interactionType,
               comment: comment);
+          return true;
         },
         performDislikeApiCall: () async {
-          if (currentProfile.id == null) return false;
-          return await _callDislikeRepository(currentProfile.id!);
+          // Call background API call, return true optimistically
+          _callDislikeRepository(currentProfile.id!);
+          return true;
         },
-        // --- ADDED: Pass Report Callback ---
         performReportApiCall: ({required reason}) async {
-          if (currentProfile.id == null) return false;
-          return await _callReportRepository(currentProfile.id!, reason);
+          // Keep reporting synchronous for now? Or make optimistic too?
+          // Let's make it optimistic for consistency.
+          _callReportRepository(currentProfile.id!, reason);
+          return true;
         },
-        // --- END ADDED ---
-        onInteractionComplete: _removeTopCard,
+        onInteractionComplete: _removeTopCard, // Optimistic UI removal
+        // *** Pass SWIPE Handlers ***
+        onSwiped: (direction) {
+          if (direction == DismissDirection.endToStart) {
+            _handleSwipeLeft(); // Dislike
+          } else if (direction == DismissDirection.startToEnd) {
+            _handleSwipeRight(); // Like
+          }
+        },
+        // *** END SWIPE Handlers ***
       );
     }
-    return Container(
-        alignment: Alignment.center,
-        child: Text("No more profiles.", style: GoogleFonts.poppins()));
+    // Show empty state if local list is empty AFTER loading/error checks
+    return _buildEmptyState();
   }
+  // --- End Modification ---
 
-  // --- _buildEmptyState, _buildErrorState (keep as is) ---
+  // --- Helper methods (_buildEmptyState, _buildErrorState, etc.) remain unchanged ---
   Widget _buildEmptyState() {
-    /* ... keep existing implementation ... */
+    // (No changes needed)
     return LayoutBuilder(builder: (context, constraints) {
       return SingleChildScrollView(
           physics: const AlwaysScrollableScrollPhysics(),
@@ -679,7 +820,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
   }
 
   Widget _buildErrorState(AppError error) {
-    /* ... keep existing implementation ... */
+    // (No changes needed)
     return LayoutBuilder(builder: (context, constraints) {
       return SingleChildScrollView(
           physics: const AlwaysScrollableScrollPhysics(),
