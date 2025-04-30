@@ -5,9 +5,7 @@ import 'dart:typed_data';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:dtx/models/chat_message.dart';
 import 'package:dtx/models/media_upload_model.dart';
-// *** ADDED: Import UserProvider for sender name check ***
 import 'package:dtx/models/user_model.dart';
-// *** END ADDED ***
 import 'package:dtx/providers/conversation_provider.dart';
 import 'package:dtx/providers/error_provider.dart';
 import 'package:dtx/providers/matches_provider.dart';
@@ -31,6 +29,11 @@ import 'package:image_picker/image_picker.dart';
 import 'package:mime/mime.dart';
 import 'package:path/path.dart' as p;
 import 'package:url_launcher/url_launcher.dart';
+// --- Phase 1 & 2 Imports ---
+import 'package:permission_handler/permission_handler.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:record/record.dart';
+// --- End Imports ---
 
 class ChatDetailScreen extends ConsumerStatefulWidget {
   final int matchUserId;
@@ -55,10 +58,20 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
   bool _isUploadingMedia = false;
   bool _isInteracting = false;
 
+  // --- Phase 1: Recording State ---
+  final AudioRecorder _audioRecorder = AudioRecorder();
+  bool _isRecording = false;
+  String? _recordingPath;
+  Timer? _recordingTimer;
+  int _recordingDurationSeconds = 0;
+  final int _maxRecordingDuration = 60; // Max 60 seconds
+  // --- End Recording State ---
+
   // --- File Type Constants (Keep as is) ---
   static const int _maxImageSizeBytes = 10 * 1024 * 1024;
   static const int _maxVideoSizeBytes = 50 * 1024 * 1024;
-  static const int _maxAudioSizeBytes = 10 * 1024 * 1024;
+  static const int _maxAudioSizeBytes =
+      10 * 1024 * 1024; // Adjusted for consistency
   static const int _maxFileSizeBytes = 25 * 1024 * 1024;
   static final Set<String> _allowedMimeTypes = {
     // Images
@@ -69,6 +82,7 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
     // Audio
     'audio/mpeg', 'audio/ogg', 'audio/wav', 'audio/aac', 'audio/opus',
     'audio/webm', 'audio/mp4', 'audio/x-m4a',
+    'audio/m4a', // Ensure m4a is allowed
     // Documents
     'application/pdf', 'application/msword',
     'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
@@ -82,14 +96,16 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
   @override
   void initState() {
     super.initState();
-    print("[ChatDetailScreen Init: ${widget.matchUserId}] Initializing...");
+    if (kDebugMode)
+      print("[ChatDetailScreen Init: ${widget.matchUserId}] Initializing...");
     _inputFocusNode.addListener(_handleFocusChange);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       final chatService = ref.read(chatServiceProvider);
       if (ref.read(webSocketStateProvider) !=
           WebSocketConnectionState.connected) {
-        print(
-            "[ChatDetailScreen Init: ${widget.matchUserId}] Connecting WebSocket...");
+        if (kDebugMode)
+          print(
+              "[ChatDetailScreen Init: ${widget.matchUserId}] Connecting WebSocket...");
         chatService.connect();
       }
       // Fetch initial state which includes status
@@ -101,11 +117,16 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
 
   @override
   void dispose() {
-    print("[ChatDetailScreen Dispose: ${widget.matchUserId}] Disposing...");
+    if (kDebugMode)
+      print("[ChatDetailScreen Dispose: ${widget.matchUserId}] Disposing...");
     _messageController.dispose();
     _scrollController.dispose();
     _inputFocusNode.removeListener(_handleFocusChange);
     _inputFocusNode.dispose();
+    // --- Dispose Recorder and Timer ---
+    _recordingTimer?.cancel();
+    _audioRecorder.dispose();
+    // --- End Dispose ---
     super.dispose();
   }
 
@@ -125,41 +146,40 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
       );
       return await completer.future;
     } catch (e) {
-      print("Error reading header bytes: $e");
+      if (kDebugMode) print("Error reading header bytes: $e");
       return null;
     }
   }
 
   // --- MODIFIED: _sendMessage ---
   void _sendMessage() {
+    // --- Add check: Don't send if recording ---
+    if (_isRecording) return;
+    // --- End check ---
     final text = _messageController.text.trim();
     if (text.isEmpty || _isUploadingMedia || _isInteracting) return;
 
     final chatService = ref.read(chatServiceProvider);
     final wsState = ref.read(webSocketStateProvider);
-    // *** CORRECTED: Watch provider to get state, then access property ***
     final conversationState =
         ref.read(conversationProvider(widget.matchUserId));
     final replyingTo = conversationState.replyingToMessage;
-    // *** END CORRECTION ***
 
     if (wsState == WebSocketConnectionState.connected) {
-      print(
-          "[ChatDetailScreen _sendMessage] Sending text. Replying to: ${replyingTo?.messageID}");
-      // *** Pass replyToMessageId if available ***
+      if (kDebugMode)
+        print(
+            "[ChatDetailScreen _sendMessage] Sending text. Replying to: ${replyingTo?.messageID}");
       chatService.sendMessage(
         widget.matchUserId,
         text: text,
-        replyToMessageId: replyingTo?.messageID, // Pass the ID if replying
+        replyToMessageId: replyingTo?.messageID,
       );
-      // *** END ADDED ***
 
       _messageController.clear();
       ref.read(messageInputProvider.notifier).state = false;
-      // *** No need to call cancelReply here, addSentMessage handles it ***
     } else {
       _showErrorSnackbar("Cannot send message. Not connected.");
-      chatService.connect(); // Attempt to reconnect
+      chatService.connect();
     }
   }
   // --- END MODIFIED ---
@@ -167,21 +187,24 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
   // --- _scrollToBottom, _showAttachmentOptions, _handleFileSelection, _handleMediaSelection (Keep as is) ---
   void _scrollToBottom() {
     if (_scrollController.hasClients) {
-      print(
-          "[ChatDetailScreen Scroll: ${widget.matchUserId}] Animating scroll to top (0.0)");
+      if (kDebugMode)
+        print(
+            "[ChatDetailScreen Scroll: ${widget.matchUserId}] Animating scroll to top (0.0)");
       _scrollController.animateTo(
         0.0,
         duration: const Duration(milliseconds: 300),
         curve: Curves.easeOut,
       );
     } else {
-      print(
-          "[ChatDetailScreen Scroll: ${widget.matchUserId}] Cannot scroll, no clients.");
+      if (kDebugMode)
+        print(
+            "[ChatDetailScreen Scroll: ${widget.matchUserId}] Cannot scroll, no clients.");
     }
   }
 
   void _showAttachmentOptions() {
-    if (_isUploadingMedia || _isInteracting) return;
+    if (_isUploadingMedia || _isInteracting || _isRecording)
+      return; // Added recording check
     FocusScope.of(context).unfocus();
     showModalBottomSheet(
       context: context,
@@ -229,7 +252,8 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
   }
 
   Future<void> _handleFileSelection() async {
-    if (_isUploadingMedia || _isInteracting) return;
+    if (_isUploadingMedia || _isInteracting || _isRecording)
+      return; // Added recording check
     try {
       FilePickerResult? result =
           await FilePicker.platform.pickFiles(type: FileType.any);
@@ -274,16 +298,17 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
         }
         _initiateMediaSend(file, fileName, mimeType);
       } else {
-        print("[ChatDetailScreen] File picking cancelled.");
+        if (kDebugMode) print("[ChatDetailScreen] File picking cancelled.");
       }
     } catch (e) {
-      print("[ChatDetailScreen] Error picking file: $e");
+      if (kDebugMode) print("[ChatDetailScreen] Error picking file: $e");
       _showErrorSnackbar("Error selecting file: ${e.toString()}");
     }
   }
 
   Future<void> _handleMediaSelection(ImageSource source) async {
-    if (_isUploadingMedia || _isInteracting) return;
+    if (_isUploadingMedia || _isInteracting || _isRecording)
+      return; // Added recording check
     final ImagePicker picker = ImagePicker();
     try {
       final XFile? pickedFile = await picker.pickMedia();
@@ -316,10 +341,10 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
         }
         _initiateMediaSend(file, fileName, mimeType);
       } else {
-        print("[ChatDetailScreen] Media picking cancelled.");
+        if (kDebugMode) print("[ChatDetailScreen] Media picking cancelled.");
       }
     } catch (e) {
-      print("[ChatDetailScreen] Error picking media: $e");
+      if (kDebugMode) print("[ChatDetailScreen] Error picking media: $e");
       _showErrorSnackbar("Error selecting media: ${e.toString()}");
     }
   }
@@ -332,11 +357,9 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
         ref.read(conversationProvider(widget.matchUserId).notifier);
     final currentUserId = ref.read(currentUserIdProvider);
     final chatService = ref.read(chatServiceProvider);
-    // *** CORRECTED: Get reply state ***
     final conversationState =
         ref.read(conversationProvider(widget.matchUserId));
     final replyingTo = conversationState.replyingToMessage;
-    // *** END CORRECTION ***
 
     if (currentUserId == null) {
       _showErrorSnackbar("Cannot send media: User not identified.");
@@ -356,26 +379,24 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
       status: ChatMessageStatus.pending,
       localFilePath: file.path,
       errorMessage: null,
-      // *** Include reply info if available ***
       replyToMessageID: replyingTo?.messageID,
       repliedMessageSenderID: replyingTo?.repliedMessageSenderID,
       repliedMessageTextSnippet: replyingTo?.repliedMessageTextSnippet,
       repliedMessageMediaType: replyingTo?.repliedMessageMediaType,
-      // *** END ADDED ***
     );
-    print(
-        "[ChatDetailScreen _initiateMediaSend: ${widget.matchUserId}] Adding optimistic media message TempID: $tempId. Replying to: ${replyingTo?.messageID}");
+    if (kDebugMode)
+      print(
+          "[ChatDetailScreen _initiateMediaSend: ${widget.matchUserId}] Adding optimistic media message TempID: $tempId. Replying to: ${replyingTo?.messageID}");
 
     // Add to pending messages and conversation state
     chatService.addPendingMessage(tempId, widget.matchUserId);
-    conversationNotifier.addSentMessage(
-        optimisticMessage); // This now also clears reply state in provider
+    conversationNotifier.addSentMessage(optimisticMessage);
 
     setState(() => _isUploadingMedia = true);
 
     // Start background upload/send
-    _uploadAndSendMediaInBackground(file, fileName, mimeType, tempId,
-            replyingTo?.messageID) // *** Pass reply ID ***
+    _uploadAndSendMediaInBackground(
+            file, fileName, mimeType, tempId, replyingTo?.messageID)
         .then((_) {
       if (mounted) {
         final stillProcessing = ref
@@ -386,12 +407,14 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
                 (m.status == ChatMessageStatus.uploading ||
                     m.status == ChatMessageStatus.pending));
         if (!stillProcessing) {
-          print(
-              "[ChatDetailScreen _initiateMediaSend: ${widget.matchUserId}] All uploads/acks seem finished for current user. Re-enabling input.");
+          if (kDebugMode)
+            print(
+                "[ChatDetailScreen _initiateMediaSend: ${widget.matchUserId}] All uploads/acks seem finished for current user. Re-enabling input.");
           setState(() => _isUploadingMedia = false);
         } else {
-          print(
-              "[ChatDetailScreen _initiateMediaSend: ${widget.matchUserId}] Background task for $tempId finished, but others might be pending/uploading. Input remains disabled.");
+          if (kDebugMode)
+            print(
+                "[ChatDetailScreen _initiateMediaSend: ${widget.matchUserId}] Background task for $tempId finished, but others might be pending/uploading. Input remains disabled.");
         }
       }
     });
@@ -399,23 +422,22 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
   // --- END MODIFIED ---
 
   // --- MODIFIED: _uploadAndSendMediaInBackground ---
-  Future<void> _uploadAndSendMediaInBackground(
-      File file,
-      String fileName,
-      String mimeType,
-      String tempId,
-      int? replyToMessageId // <<< ADDED parameter
-      ) async {
+  // Phase 3: Send WebSocket Message after successful upload
+  Future<void> _uploadAndSendMediaInBackground(File file, String fileName,
+      String mimeType, String tempId, int? replyToMessageId) async {
+    if (!mounted) return;
     final conversationNotifier =
         ref.read(conversationProvider(widget.matchUserId).notifier);
     final mediaRepo = ref.read(mediaRepositoryProvider);
     final chatService = ref.read(chatServiceProvider);
     final bool isImage = mimeType.startsWith('image/');
+    final bool isAudio = mimeType.startsWith('audio/');
 
     // Update status to Uploading
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) {
-        print("[ChatBG Task $tempId] Updating status to Uploading");
+        if (kDebugMode)
+          print("[ChatBG Task $tempId] Updating status to Uploading");
         conversationNotifier.updateMessageStatus(
             tempId, ChatMessageStatus.uploading);
       }
@@ -423,7 +445,8 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
 
     String? objectUrl;
     try {
-      print("[ChatBG Task $tempId] Getting chat presigned URL...");
+      if (kDebugMode)
+        print("[ChatBG Task $tempId] Getting chat presigned URL...");
       final urls = await mediaRepo.getChatMediaPresignedUrl(fileName, mimeType);
       final presignedUrl = urls['presigned_url'];
       objectUrl = urls['object_url'];
@@ -431,7 +454,7 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
         throw ApiException("Failed to get upload URLs from server.");
       }
 
-      print("[ChatBG Task $tempId] Uploading to S3...");
+      if (kDebugMode) print("[ChatBG Task $tempId] Uploading to S3...");
       final uploadModel = MediaUploadModel(
           file: file,
           fileName: fileName,
@@ -443,44 +466,50 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
         throw ApiException("Failed to upload media to storage.");
       }
 
-      // Pre-cache image
+      // Pre-cache image (only if it's an image)
       if (isImage && objectUrl != null) {
-        print("[ChatBG Task $tempId] Pre-caching image: $objectUrl");
+        if (kDebugMode)
+          print("[ChatBG Task $tempId] Pre-caching image: $objectUrl");
         try {
           await DefaultCacheManager().downloadFile(objectUrl);
-          print("[ChatBG Task $tempId] Image pre-caching completed");
+          if (kDebugMode)
+            print("[ChatBG Task $tempId] Image pre-caching completed");
         } catch (cacheErr) {
-          print(
-              "[ChatBG Task $tempId] WARNING: Image pre-caching failed: $cacheErr");
+          if (kDebugMode)
+            print(
+                "[ChatBG Task $tempId] WARNING: Image pre-caching failed: $cacheErr");
         }
       }
 
-      print(
-          "[ChatBG Task $tempId] Upload successful. Sending WebSocket message. ReplyTo: $replyToMessageId");
-      // *** Pass replyToMessageId to sendMessage ***
+      // --- START: Phase 3 Change ---
+      if (kDebugMode)
+        print(
+            "[ChatBG Task $tempId] Upload successful. Sending WebSocket message. ReplyTo: $replyToMessageId, URL: $objectUrl, Type: $mimeType");
       chatService.sendMessage(
         widget.matchUserId,
         mediaUrl: objectUrl,
         mediaType: mimeType,
         replyToMessageId: replyToMessageId,
       );
-      // *** END ADDED ***
-
-      print("[ChatBG Task $tempId] WebSocket message sent. Awaiting ack...");
+      if (kDebugMode)
+        print("[ChatBG Task $tempId] WebSocket message sent. Awaiting ack...");
+      // --- END: Phase 3 Change ---
     } on ApiException catch (e) {
-      print("[ChatBG Task $tempId] API Error: ${e.message}");
+      if (kDebugMode) print("[ChatBG Task $tempId] API Error: ${e.message}");
       if (mounted) {
-        print("[ChatBG Task $tempId] Updating status to Failed (API Error)");
+        if (kDebugMode)
+          print("[ChatBG Task $tempId] Updating status to Failed (API Error)");
         conversationNotifier.updateMessageStatus(
             tempId, ChatMessageStatus.failed,
             errorMessage: e.message, finalMediaUrl: objectUrl);
       }
     } catch (e, stacktrace) {
-      print("[ChatBG Task $tempId] General Error: $e");
-      print("[ChatBG Task $tempId] Stacktrace: $stacktrace");
+      if (kDebugMode) print("[ChatBG Task $tempId] General Error: $e");
+      if (kDebugMode) print("[ChatBG Task $tempId] Stacktrace: $stacktrace");
       if (mounted) {
-        print(
-            "[ChatBG Task $tempId] Updating status to Failed (General Error)");
+        if (kDebugMode)
+          print(
+              "[ChatBG Task $tempId] Updating status to Failed (General Error)");
         conversationNotifier.updateMessageStatus(
             tempId, ChatMessageStatus.failed,
             errorMessage: "Upload/Send failed: ${e.toString()}",
@@ -506,7 +535,7 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
   }
 
   void _showMoreOptions() {
-    if (_isInteracting) return;
+    if (_isInteracting || _isRecording) return; // Added recording check
     showModalBottomSheet(
       context: context,
       shape: const RoundedRectangleBorder(
@@ -736,7 +765,8 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
             constraints: const BoxConstraints(),
             tooltip: "Cancel Reply",
             onPressed: () {
-              print("[ChatDetailScreen CancelReplyButton] Cancelling reply.");
+              if (kDebugMode)
+                print("[ChatDetailScreen CancelReplyButton] Cancelling reply.");
               ref
                   .read(conversationProvider(widget.matchUserId).notifier)
                   .cancelReply();
@@ -748,11 +778,207 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
   }
   // --- END CORRECTED ---
 
+  // --- Phase 1: Recording Methods ---
+  Future<void> _startRecording() async {
+    if (_isUploadingMedia || _isInteracting)
+      return; // Don't allow during other ops
+    if (_isRecording) return; // Prevent starting if already recording
+
+    if (kDebugMode)
+      print(
+          "[ChatDetailScreen _startRecording] Attempting to start recording...");
+
+    // 1. Request Permission
+    final status = await Permission.microphone.request();
+    if (!status.isGranted) {
+      if (kDebugMode)
+        print(
+            "[ChatDetailScreen _startRecording] Microphone permission denied.");
+      if (mounted) {
+        _showErrorSnackbar(
+            'Microphone permission is required to record audio.');
+      }
+      // Optionally open settings: await openAppSettings();
+      return;
+    }
+    if (kDebugMode)
+      print(
+          "[ChatDetailScreen _startRecording] Microphone permission granted.");
+
+    // 2. Get Temp Path
+    try {
+      final directory = await getTemporaryDirectory(); // Use temporary dir
+      _recordingPath =
+          '${directory.path}/recording_${DateTime.now().millisecondsSinceEpoch}.m4a'; // Using m4a format
+      if (kDebugMode)
+        print(
+            "[ChatDetailScreen _startRecording] Recording path set to: $_recordingPath");
+
+      // 3. Start Recorder
+      // Ensure recorder is not already recording
+      if (await _audioRecorder.isRecording()) {
+        await _audioRecorder.stop();
+      }
+      await _audioRecorder.start(
+          const RecordConfig(
+              encoder: AudioEncoder.aacLc), // Use a common encoder
+          path: _recordingPath!);
+
+      // 4. Update State & Start Timer
+      _recordingDurationSeconds = 0;
+      if (mounted) {
+        setState(() {
+          _isRecording = true;
+        });
+        // Start timer to update UI and stop recording after max duration
+        _recordingTimer?.cancel(); // Cancel any previous timer
+        _recordingTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
+          if (!_isRecording || !mounted) {
+            timer.cancel();
+            return;
+          }
+          setState(() {
+            _recordingDurationSeconds++;
+          });
+          if (_recordingDurationSeconds >= _maxRecordingDuration) {
+            if (kDebugMode)
+              print(
+                  "[ChatDetailScreen _startRecording] Max recording time reached.");
+            _stopRecordingAndSend(); // Auto-stop and send
+          }
+        });
+        if (kDebugMode)
+          print(
+              "[ChatDetailScreen _startRecording] Recording started successfully.");
+      }
+    } catch (e) {
+      if (kDebugMode)
+        print('[ChatDetailScreen _startRecording] Recording error: $e');
+      if (mounted) {
+        _showErrorSnackbar('Recording failed: ${e.toString()}');
+        setState(() {
+          _isRecording = false; // Reset state on error
+          _recordingPath = null;
+          _recordingDurationSeconds = 0;
+        });
+      }
+    }
+  }
+
+  Future<void> _stopRecordingAndSend() async {
+    if (!_isRecording) return;
+    if (kDebugMode)
+      print("[ChatDetailScreen _stopRecordingAndSend] Stopping recording...");
+
+    _recordingTimer?.cancel(); // Stop the timer
+    try {
+      final path = await _audioRecorder.stop();
+      if (kDebugMode)
+        print(
+            '[ChatDetailScreen _stopRecordingAndSend] Recording stopped. Path from recorder: $path');
+      // Use the internally stored path if recorder doesn't return one reliably
+      final finalPath = path ?? _recordingPath;
+
+      if (finalPath == null) {
+        throw Exception("Recording path is null after stopping.");
+      }
+
+      final file = File(finalPath);
+      if (!await file.exists() || await file.length() == 0) {
+        if (kDebugMode)
+          print(
+              '[ChatDetailScreen _stopRecordingAndSend] Error: Recording file missing or empty at $finalPath');
+        throw Exception("Recording file error.");
+      }
+
+      // Reset UI state *before* starting background task
+      if (mounted) {
+        setState(() {
+          _isRecording = false;
+          _recordingDurationSeconds = 0;
+        });
+      }
+
+      // --- Phase 2: Initiate Optimistic UI & Upload ---
+      final fileName = p.basename(finalPath);
+      // Detect MIME type (fallback to m4a if needed)
+      String? mimeType = lookupMimeType(finalPath) ?? 'audio/m4a';
+      if (kDebugMode)
+        print(
+            "[ChatDetailScreen _stopRecordingAndSend] Detected MIME: $mimeType for $fileName");
+
+      // Validate size
+      final fileSize = await file.length();
+      if (fileSize > _maxAudioSizeBytes) {
+        throw Exception(
+            "Audio file exceeds maximum size (${_maxAudioSizeBytes / 1024 / 1024} MB).");
+      }
+      if (!_allowedMimeTypes.contains(mimeType)) {
+        throw Exception("Unsupported audio format: $mimeType");
+      }
+
+      _initiateMediaSend(file, fileName, mimeType); // Pass audio file details
+      // --- End Phase 2 ---
+
+      _recordingPath = null; // Clear path after initiating send
+    } catch (e) {
+      if (kDebugMode)
+        print(
+            '[ChatDetailScreen _stopRecordingAndSend] Error stopping/sending: $e');
+      if (mounted) {
+        _showErrorSnackbar('Error processing recording: ${e.toString()}');
+        setState(() {
+          // Reset state fully on error
+          _isRecording = false;
+          _recordingPath = null;
+          _recordingDurationSeconds = 0;
+        });
+      }
+    }
+  }
+
+  Future<void> _cancelRecording() async {
+    if (!_isRecording) return;
+    if (kDebugMode)
+      print("[ChatDetailScreen _cancelRecording] Cancelling recording...");
+
+    _recordingTimer?.cancel();
+    try {
+      await _audioRecorder.stop();
+      if (kDebugMode)
+        print("[ChatDetailScreen _cancelRecording] Recorder stopped.");
+      // Delete the partial/cancelled recording file
+      if (_recordingPath != null) {
+        final file = File(_recordingPath!);
+        if (await file.exists()) {
+          await file.delete();
+          if (kDebugMode)
+            print(
+                "[ChatDetailScreen _cancelRecording] Deleted temporary file: $_recordingPath");
+        }
+      }
+    } catch (e) {
+      if (kDebugMode)
+        print(
+            "[ChatDetailScreen _cancelRecording] Error stopping/deleting recording: $e");
+      // Don't necessarily show error to user, just reset state
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isRecording = false;
+          _recordingPath = null;
+          _recordingDurationSeconds = 0;
+        });
+      }
+    }
+  }
+  // --- End Recording Methods ---
+
   @override
   Widget build(BuildContext context) {
     if (kDebugMode)
       print(
-          "[ChatDetailScreen Build: ${widget.matchUserId}] Rebuilding Widget... IsUploading: $_isUploadingMedia, IsInteracting: $_isInteracting");
+          "[ChatDetailScreen Build: ${widget.matchUserId}] Rebuilding Widget... IsUploading: $_isUploadingMedia, IsInteracting: $_isInteracting, IsRecording: $_isRecording"); // Added recording state
     final state = ref.watch(conversationProvider(widget.matchUserId));
     final currentUserId = ref.watch(currentUserIdProvider);
 
@@ -779,28 +1005,34 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
             "[ChatDetailScreen Listener: ${widget.matchUserId}] State changed. PrevLen=$prevLength, NextLen=$nextLength. IsNewFromMe=$isNewMessageFromMe, IsStatusUpdate=$isMessageStatusUpdate");
 
       if (isNewMessageFromMe) {
-        print(
-            "[ChatDetailScreen Listener: ${widget.matchUserId}] New PENDING message added by me. Scheduling scroll.");
+        if (kDebugMode)
+          print(
+              "[ChatDetailScreen Listener: ${widget.matchUserId}] New PENDING message added by me. Scheduling scroll.");
         WidgetsBinding.instance.addPostFrameCallback((_) {
           // Add check if scrollController has clients before scrolling
           if (_scrollController.hasClients) {
-            print(
-                "[ChatDetailScreen Listener: ${widget.matchUserId}] Executing scroll after frame callback.");
+            if (kDebugMode)
+              print(
+                  "[ChatDetailScreen Listener: ${widget.matchUserId}] Executing scroll after frame callback.");
             _scrollToBottom();
           } else {
-            print(
-                "[ChatDetailScreen Listener: ${widget.matchUserId}] ScrollController has no clients, skipping scroll.");
+            if (kDebugMode)
+              print(
+                  "[ChatDetailScreen Listener: ${widget.matchUserId}] ScrollController has no clients, skipping scroll.");
           }
         });
       } else if (isMessageStatusUpdate) {
-        print(
-            "[ChatDetailScreen Listener: ${widget.matchUserId}] Message status updated. No scroll triggered.");
+        if (kDebugMode)
+          print(
+              "[ChatDetailScreen Listener: ${widget.matchUserId}] Message status updated. No scroll triggered.");
       } else if (nextLength > prevLength && !isNewMessageFromMe) {
-        print(
-            "[ChatDetailScreen Listener: ${widget.matchUserId}] New message received from other user. No scroll triggered.");
+        if (kDebugMode)
+          print(
+              "[ChatDetailScreen Listener: ${widget.matchUserId}] New message received from other user. No scroll triggered.");
       } else {
-        print(
-            "[ChatDetailScreen Listener: ${widget.matchUserId}] No scroll triggered (Other state change).");
+        if (kDebugMode)
+          print(
+              "[ChatDetailScreen Listener: ${widget.matchUserId}] No scroll triggered (Other state change).");
       }
     });
 
@@ -876,7 +1108,9 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
           IconButton(
             icon: Icon(Icons.more_vert_rounded, color: Colors.grey[600]),
             tooltip: "More Options",
-            onPressed: _isInteracting ? null : _showMoreOptions,
+            onPressed: _isInteracting || _isRecording
+                ? null
+                : _showMoreOptions, // Disable during recording
             disabledColor: Colors.grey[300],
           ),
         ],
@@ -889,19 +1123,19 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
               child: _buildMessagesList(state, currentUserId),
             ),
           ),
-          // *** ADDED: Reply Preview Widget ***
           _buildReplyPreviewWidget(),
-          // *** END ADDED ***
-          if (_isInteracting)
+          if (_isInteracting) // Show generic loading if unmatching/reporting
             Container(
-              // Keep loading indicator
               padding: const EdgeInsets.symmetric(vertical: 8.0),
               color: Colors.white.withOpacity(0.8),
               child: const Center(
                   child: CircularProgressIndicator(color: Color(0xFF8B5CF6))),
             )
+          // Show recording UI or input area
+          else if (_isRecording)
+            _buildRecordingInputArea()
           else
-            _buildMessageInputArea(), // Keep input area
+            _buildMessageInputArea(),
         ],
       ),
     );
@@ -977,8 +1211,9 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
                   originalSenderDisplayName, // *** ADDED ***
               // Call startReplying when bubble signals reply initiation
               onReplyInitiated: (messageToReply) {
-                print(
-                    "[ChatDetailScreen onReplyInitiated] Triggered for message ID: ${messageToReply.messageID}");
+                if (kDebugMode)
+                  print(
+                      "[ChatDetailScreen onReplyInitiated] Triggered for message ID: ${messageToReply.messageID}");
                 ref
                     .read(conversationProvider(widget.matchUserId).notifier)
                     .startReplying(messageToReply);
@@ -990,10 +1225,10 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
   }
   // --- END MODIFIED ---
 
-  // --- _buildMessageInputArea (Keep as is) ---
+  // --- MODIFIED: _buildMessageInputArea ---
   Widget _buildMessageInputArea() {
     final canSendText = ref.watch(messageInputProvider);
-    final bool allowInput = !_isUploadingMedia && !_isInteracting;
+    final allowInput = !_isUploadingMedia && !_isInteracting;
 
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12.0, vertical: 8.0),
@@ -1008,7 +1243,7 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
         ],
       ),
       child: SafeArea(
-        top: false, // Don't add padding for top safe area here
+        top: false,
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.center,
           children: [
@@ -1058,18 +1293,92 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
               ),
             ),
             const SizedBox(width: 8.0),
+            // --- Conditionally show Send or Mic button ---
+            if (canSendText)
+              IconButton(
+                icon: const Icon(Icons.send_rounded),
+                color: const Color(0xFF8B5CF6),
+                onPressed: allowInput ? _sendMessage : null,
+                tooltip: "Send Message",
+                disabledColor: Colors.grey[400],
+              )
+            else
+              IconButton(
+                icon: const Icon(Icons.mic_none_rounded),
+                color: allowInput ? const Color(0xFF8B5CF6) : Colors.grey[300],
+                onPressed: allowInput ? _startRecording : null,
+                tooltip: "Record Voice Note",
+              ),
+            // --- End Conditional Button ---
+          ],
+        ),
+      ),
+    );
+  }
+  // --- END MODIFIED ---
+
+  // --- NEW: _buildRecordingInputArea ---
+  Widget _buildRecordingInputArea() {
+    final displayDuration = Duration(seconds: _recordingDurationSeconds);
+    final minutes = displayDuration.inMinutes.remainder(60).toString();
+    final seconds =
+        displayDuration.inSeconds.remainder(60).toString().padLeft(2, '0');
+    final timerText = "$minutes:$seconds / 0:${_maxRecordingDuration}";
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12.0, vertical: 8.0),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        boxShadow: [
+          BoxShadow(
+              color: Colors.grey.withOpacity(0.15),
+              spreadRadius: 1,
+              blurRadius: 5,
+              offset: const Offset(0, -2))
+        ],
+      ),
+      child: SafeArea(
+        top: false,
+        child: Row(
+          children: [
+            // Cancel Button
             IconButton(
-              icon: const Icon(Icons.send_rounded),
+              icon: Icon(Icons.delete_outline_rounded, color: Colors.grey[600]),
+              onPressed: _cancelRecording,
+              tooltip: "Cancel Recording",
+            ),
+            // Recording Indicator / Timer
+            Expanded(
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(Icons.mic, color: Colors.redAccent, size: 20),
+                  const SizedBox(width: 8),
+                  Text(
+                    timerText,
+                    style: GoogleFonts.poppins(
+                      fontSize: 15,
+                      fontWeight: FontWeight.w500,
+                      color: Colors.black87,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            // Stop/Send Button
+            IconButton(
+              icon: const Icon(Icons.stop_circle_rounded,
+                  size: 32), // Larger stop icon
               color: const Color(0xFF8B5CF6),
-              onPressed: canSendText && allowInput ? _sendMessage : null,
-              tooltip: "Send Message",
-              disabledColor: Colors.grey[400],
+              onPressed: _stopRecordingAndSend,
+              tooltip: "Stop and Send",
             ),
           ],
         ),
       ),
     );
   }
+  // --- END NEW ---
 }
 
 // --- Keep messageInputProvider (No change needed) ---

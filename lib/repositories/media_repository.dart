@@ -6,8 +6,7 @@ import 'package:dtx/providers/auth_provider.dart';
 import 'package:dtx/utils/app_enums.dart';
 import 'package:dtx/utils/token_storage.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-// Removed unused http_parser import
-// Removed unused path import
+import 'package:flutter/foundation.dart'; // <-- ADDED for kDebugMode
 
 import '../models/media_upload_model.dart';
 import '../services/api_service.dart';
@@ -26,8 +25,10 @@ class MediaRepository {
         final authState = ref!.read(authProvider);
         token = authState.jwtToken;
       } catch (e) {
-        print(
-            "[MediaRepository _getAuthToken] Error reading auth provider: $e");
+        if (kDebugMode) {
+          print(
+              "[MediaRepository _getAuthToken] Error reading auth provider: $e");
+        }
       }
     }
     if (token == null || token.isEmpty) {
@@ -37,12 +38,17 @@ class MediaRepository {
   }
   // --- END Helper ---
 
-  // --- Method for CHAT Media Presigned URL ---
+  // --- START: Method for CHAT Media Presigned URL ---
+  /// Fetches presigned URL and final object URL for uploading media in chat.
+  ///
+  /// Throws [ApiException] on failure.
   Future<Map<String, String>> getChatMediaPresignedUrl(
       String filename, String fileType) async {
     final String methodName = 'getChatMediaPresignedUrl';
-    print(
-        '[MediaRepository $methodName] Getting chat media presigned URL for $filename ($fileType)...');
+    if (kDebugMode) {
+      print(
+          '[MediaRepository $methodName] Getting chat media presigned URL for $filename ($fileType)...');
+    }
     try {
       String? token = await _getAuthToken();
       if (token == null) {
@@ -50,7 +56,9 @@ class MediaRepository {
       }
       final headers = {'Authorization': 'Bearer $token'};
       final body = {'filename': filename, 'type': fileType};
-      print('[MediaRepository $methodName] Request Body: $body');
+      if (kDebugMode) {
+        print('[MediaRepository $methodName] Request Body: $body');
+      }
 
       final response = await _apiService.post(
         '/api/chat/upload', // Use the CHAT media endpoint
@@ -58,11 +66,15 @@ class MediaRepository {
         headers: headers,
       );
 
-      print('[MediaRepository $methodName] API Response: $response');
+      if (kDebugMode) {
+        print('[MediaRepository $methodName] API Response: $response');
+      }
       if (response['success'] == true &&
           response['presigned_url'] != null &&
           response['object_url'] != null) {
-        print('[MediaRepository $methodName] URLs received successfully.');
+        if (kDebugMode) {
+          print('[MediaRepository $methodName] URLs received successfully.');
+        }
         return {
           'presigned_url': response['presigned_url'].toString(),
           'object_url': response['object_url'].toString(),
@@ -70,15 +82,21 @@ class MediaRepository {
       } else {
         final message = response['message']?.toString() ??
             'Failed to get chat media presigned URL.';
-        print('[MediaRepository $methodName] Failed: $message');
+        if (kDebugMode) {
+          print('[MediaRepository $methodName] Failed: $message');
+        }
         throw ApiException(message);
       }
     } on ApiException catch (e) {
-      print(
-          '[MediaRepository $methodName] API Exception: ${e.message} (Status: ${e.statusCode})');
+      if (kDebugMode) {
+        print(
+            '[MediaRepository $methodName] API Exception: ${e.message} (Status: ${e.statusCode})');
+      }
       rethrow;
     } catch (e) {
-      print('[MediaRepository $methodName] Unexpected Error: $e');
+      if (kDebugMode) {
+        print('[MediaRepository $methodName] Unexpected Error: $e');
+      }
       throw ApiException('Error getting chat presigned URL: ${e.toString()}');
     }
   }

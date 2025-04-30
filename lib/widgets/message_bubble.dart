@@ -7,15 +7,15 @@ import 'package:dtx/providers/conversation_provider.dart';
 import 'package:dtx/providers/user_provider.dart';
 import 'package:dtx/providers/service_provider.dart';
 import 'package:dtx/services/chat_service.dart';
-import 'package:dtx/widgets/reaction_emoji_picker.dart'; // Make sure this path is correct
+import 'package:dtx/widgets/reaction_emoji_picker.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_fonts/google_fonts.dart';
-import 'package:audioplayers/audioplayers.dart';
+// Removed unused audioplayers import
 import 'package:path/path.dart' as p;
 import 'package:url_launcher/url_launcher.dart';
-import 'package:intl/intl.dart'; // Import for timestamp formatting
+import 'package:intl/intl.dart';
 
 class MessageBubble extends ConsumerStatefulWidget {
   final ChatMessage message;
@@ -50,7 +50,7 @@ class _MessageBubbleState extends ConsumerState<MessageBubble>
     super.dispose();
   }
 
-  // --- Helpers ---
+  // --- Helpers (Keep existing) ---
   String getFilenameFromUrl(String? url) {
     if (url == null || url.isEmpty) return "File";
     try {
@@ -111,7 +111,7 @@ class _MessageBubbleState extends ConsumerState<MessageBubble>
       );
   // --- End Helpers ---
 
-  // --- _buildReplySnippet ---
+  // --- _buildReplySnippet (Keep existing) ---
   Widget _buildReplySnippet() {
     final repliedTo = widget.message;
     final textSnippet = repliedTo.repliedMessageTextSnippet;
@@ -193,7 +193,7 @@ class _MessageBubbleState extends ConsumerState<MessageBubble>
   }
   // --- End _buildReplySnippet ---
 
-  // --- Reaction Methods ---
+  // --- Reaction Methods (Keep existing) ---
   void _showEmojiPicker(BuildContext context, Offset globalPosition) {
     if (!mounted) return;
     if (kDebugMode)
@@ -250,7 +250,6 @@ class _MessageBubbleState extends ConsumerState<MessageBubble>
               top: top,
               left: left,
               child: ReactionEmojiPicker(
-                // Assuming this is in widgets/reaction_emoji_picker.dart
                 onEmojiSelected: (emoji) {
                   _handleReaction(emoji);
                   _removeEmojiPicker();
@@ -287,6 +286,7 @@ class _MessageBubbleState extends ConsumerState<MessageBubble>
           print(
               "[MessageBubble _removeEmojiPicker] Error removing overlay (might have already been removed): $e");
       } finally {
+        // Ensure it's always set to null after attempting removal
         if (_emojiPickerOverlay != null) {
           _emojiPickerOverlay = null;
         }
@@ -394,9 +394,10 @@ class _MessageBubbleState extends ConsumerState<MessageBubble>
     final isMe = widget.isMe;
     final showTail = widget.showTail;
 
+    // ** Enhanced Logging in Build **
     if (kDebugMode) {
       print(
-          "[MessageBubble build] ID: ${message.messageID}, TempID: ${message.tempId}, isMe: $isMe, Status: ${message.status}, IsRead: ${message.isRead}");
+          "[MessageBubble build START | ID: ${message.messageID}|Temp: ${message.tempId}] isMe: $isMe, Status: ${message.status}, IsRead: ${message.isRead}, MediaType: ${message.mediaType}, HasMediaURL: ${message.mediaUrl != null && message.mediaUrl!.isNotEmpty}, HasLocalPath: ${message.localFilePath != null && message.localFilePath!.isNotEmpty}");
     }
 
     final radius = Radius.circular(18.0);
@@ -431,7 +432,7 @@ class _MessageBubbleState extends ConsumerState<MessageBubble>
     }
     // --- End Status Icon Logic ---
 
-    // --- Read Receipt Icon Logic (Phase 3) ---
+    // --- Read Receipt Icon Logic (Keep Existing) ---
     Widget? readReceiptIcon;
     if (isMe && message.status == ChatMessageStatus.sent) {
       readReceiptIcon = Icon(
@@ -441,15 +442,103 @@ class _MessageBubbleState extends ConsumerState<MessageBubble>
             ? Colors.blueAccent
             : Colors.white70, // Different color for read
       );
-      if (kDebugMode) {
-        print(
-            "[MessageBubble build] Read Receipt for Msg ID ${message.messageID}: isRead=${message.isRead}, Icon=${message.isRead ? 'done_all' : 'done'}");
-      }
+      // Removed debug print from here, added more comprehensive one at start of build
     }
     // --- End Read Receipt Icon Logic ---
 
-    // --- Content Rendering Logic (Keep Existing) ---
-    if (message.isMedia) {
+    // --- Content Rendering Logic ---
+    // --- START: Phase 4 - Audio Message Handling ---
+    if (message.isMedia && (message.mediaType?.startsWith('audio/') ?? false)) {
+      // --- Audio Message UI ---
+      final audioPlayerState = ref.watch(audioPlayerStateProvider);
+      final currentPlayingUrl = ref.watch(currentAudioUrlProvider);
+      final playerNotifier = ref.read(audioPlayerControllerProvider.notifier);
+
+      // ** Determine the actual source URL for playback **
+      // Use mediaUrl if available and message is sent, otherwise it's not playable yet
+      final String? audioSourceUrl =
+          (message.status == ChatMessageStatus.sent &&
+                  message.mediaUrl != null &&
+                  message.mediaUrl!.isNotEmpty)
+              ? message.mediaUrl
+              : null; // Cannot play local file path directly with URL player
+
+      // ** Check if this specific message's audio can be played **
+      final bool canPlay = audioSourceUrl != null;
+
+      // Determine current playback state *for this specific message's URL*
+      final bool isThisLoading = canPlay &&
+          currentPlayingUrl == audioSourceUrl &&
+          audioPlayerState == AudioPlayerState.loading;
+      final bool isThisPlaying = canPlay &&
+          currentPlayingUrl == audioSourceUrl &&
+          audioPlayerState == AudioPlayerState.playing;
+      final bool isThisPaused = canPlay &&
+          currentPlayingUrl == audioSourceUrl &&
+          audioPlayerState == AudioPlayerState.paused;
+
+      // ** Logging Specific to Audio Bubble Build **
+      if (kDebugMode) {
+        print(
+            "[MessageBubble build AUDIO | ID: ${message.messageID}|Temp: ${message.tempId}] Status=${message.status}, CanPlay=$canPlay (SourceURL: $audioSourceUrl), IsLoading=$isThisLoading, IsPlaying=$isThisPlaying, IsPaused=$isThisPaused, GlobalPlayerURL=$currentPlayingUrl");
+      }
+
+      messageContent = Row(mainAxisSize: MainAxisSize.min, children: [
+        IconButton(
+          icon: isThisLoading
+              ? SizedBox(
+                  width: 24,
+                  height: 24,
+                  child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: isMe ? Colors.white : Color(0xFF8B5CF6)))
+              : Icon(isThisPlaying
+                  ? Icons.pause_circle_filled_rounded
+                  : Icons.play_circle_fill_rounded),
+          color: isMe
+              ? Colors.white
+              : (canPlay ? const Color(0xFF8B5CF6) : Colors.grey[400]),
+          iconSize: 36,
+          padding: EdgeInsets.zero,
+          constraints: const BoxConstraints(),
+          tooltip: canPlay
+              ? (isThisPlaying ? 'Pause' : 'Play')
+              : 'Audio Message (Uploading...)',
+          // ** Disable button if canPlay is false **
+          onPressed: isThisLoading || !canPlay
+              ? null
+              : () {
+                  if (kDebugMode)
+                    print(
+                        "[MessageBubble PlayButton Tap | ID: ${message.messageID}] isPlaying: $isThisPlaying, isPaused: $isThisPaused, URL: $audioSourceUrl");
+                  if (isThisPlaying) {
+                    playerNotifier.pause();
+                  } else if (isThisPaused) {
+                    playerNotifier.resume();
+                  } else {
+                    // Ensured non-null by canPlay check
+                    playerNotifier.play(audioSourceUrl!);
+                  }
+                },
+        ),
+        const SizedBox(width: 8),
+        Expanded(
+          child: Text(
+            "Voice Note", // Simplified label
+            style: GoogleFonts.poppins(
+                fontSize: 13,
+                fontWeight: FontWeight.w500,
+                color: isMe ? Colors.white : Colors.black87),
+            overflow: TextOverflow.ellipsis,
+            maxLines: 2,
+          ),
+        ),
+      ]);
+      // --- End Audio Message UI ---
+    }
+    // --- END: Phase 4 ---
+    else if (message.isMedia) {
+      // --- Existing Media Handling (Images, Video, Files) ---
       final mediaType = message.mediaType?.toLowerCase() ?? '';
       final String? displayPath =
           (message.localFilePath != null && message.localFilePath!.isNotEmpty)
@@ -531,66 +620,6 @@ class _MessageBubbleState extends ConsumerState<MessageBubble>
             ),
           ),
         );
-      } else if (mediaType.startsWith('audio/')) {
-        // Audio placeholder/player
-        final audioPlayerState = ref.watch(audioPlayerStateProvider);
-        final currentPlayingUrl = ref.watch(currentAudioUrlProvider);
-        final playerNotifier = ref.read(audioPlayerControllerProvider.notifier);
-        final bool canPlay = isMediaSent && !isUsingLocalFile;
-        final bool isThisLoading = canPlay &&
-            currentPlayingUrl == displayPath &&
-            audioPlayerState == AudioPlayerState.loading;
-        final bool isThisPlaying = canPlay &&
-            currentPlayingUrl == displayPath &&
-            audioPlayerState == AudioPlayerState.playing;
-        final bool isThisPaused = canPlay &&
-            currentPlayingUrl == displayPath &&
-            audioPlayerState == AudioPlayerState.paused;
-        messageContent = Row(
-            /* ... audio player row ... */
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              IconButton(
-                icon: isThisLoading
-                    ? SizedBox(
-                        width: 24,
-                        height: 24,
-                        child: CircularProgressIndicator(
-                            strokeWidth: 2,
-                            color: isMe ? Colors.white : Color(0xFF8B5CF6)))
-                    : Icon(isThisPlaying
-                        ? Icons.pause_circle_filled_rounded
-                        : Icons.play_circle_fill_rounded),
-                color: isMe
-                    ? Colors.white
-                    : (canPlay ? const Color(0xFF8B5CF6) : Colors.grey[400]),
-                iconSize: 36,
-                padding: EdgeInsets.zero,
-                constraints: const BoxConstraints(),
-                tooltip: canPlay ? (isThisPlaying ? 'Pause' : 'Play') : 'Audio',
-                onPressed: isThisLoading || !canPlay
-                    ? null
-                    : () {
-                        if (isThisPlaying)
-                          playerNotifier.pause();
-                        else if (isThisPaused)
-                          playerNotifier.resume();
-                        else
-                          playerNotifier.play(displayPath!);
-                      },
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Text(
-                  getFilenameFromUrl(displayPath),
-                  style: GoogleFonts.poppins(
-                      fontSize: 13,
-                      color: isMe ? Colors.white : Colors.black87),
-                  overflow: TextOverflow.ellipsis,
-                  maxLines: 2,
-                ),
-              ),
-            ]);
       } else {
         // Generic file placeholder
         messageContent = InkWell(
@@ -617,6 +646,7 @@ class _MessageBubbleState extends ConsumerState<MessageBubble>
               ]),
         );
       }
+      // --- End Existing Media Handling ---
     } else {
       // Text message content
       messageContent = Text(
@@ -712,10 +742,24 @@ class _MessageBubbleState extends ConsumerState<MessageBubble>
                         if (message.isReply) _buildReplySnippet(),
                         // Main Content Padding and Status/Time
                         Padding(
+                          // --- ADJUSTED Padding for media types ---
                           padding: message.isMedia &&
-                                  (message.mediaType?.startsWith('image/') ??
+                                  ((message.mediaType?.startsWith('image/') ??
+                                          false) ||
+                                      // --- Phase 4: Check for audio ---
+                                      (message.mediaType
+                                              ?.startsWith('audio/') ??
+                                          false))
+                              // Use specific padding for audio/image if needed, else default
+                              ? (message.mediaType?.startsWith('audio/') ??
                                       false)
-                              ? EdgeInsets.zero // No padding for image media
+                                  ? const EdgeInsets.only(
+                                      left: 4.0,
+                                      right: 14.0,
+                                      top: 6.0,
+                                      bottom: 4.0) // Padding for audio row
+                                  : EdgeInsets
+                                      .zero // No padding for image media
                               : EdgeInsets.only(
                                   // Padding for text/other media
                                   left: 14.0,
@@ -724,8 +768,9 @@ class _MessageBubbleState extends ConsumerState<MessageBubble>
                                   bottom: 10.0 +
                                       (isMe
                                           ? 12.0
-                                          : 0.0), // Add bottom padding only for 'Me' bubbles for status
+                                          : 0.0), // Add bottom padding only for 'Me' bubbles for status/time
                                 ),
+                          // --- END Padding Adjustment ---
                           child: messageContent,
                         ),
                       ],

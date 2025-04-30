@@ -317,6 +317,9 @@ class ConversationNotifier extends StateNotifier<ConversationState> {
         mediaUrl: finalMediaUrl,
         errorMessage: errorMessage,
         clearErrorMessage: errorMessage == null,
+        // NOTE: Do not clear localFilePath based on status update alone.
+        // It should be cleared when the message is SENT and ACKNOWLEDGED potentially,
+        // or handled by the UI component. Let's keep it for now for potential retry.
         clearLocalFilePath: false,
       );
       final updatedMessages = List<ChatMessage>.from(currentMessages);

@@ -26,6 +26,7 @@ Directory structure:
     │   ├── matches_provider.dart
     │   ├── media_upload_provider.dart
     │   ├── reaction_provider.dart
+    │   ├── read_update_provider.dart
     │   ├── recieved_likes_provider.dart
     │   ├── service_provider.dart
     │   ├── status_provider.dart
@@ -2085,7 +2086,6 @@ class UserModel {
 File: models/ws_message_model.dart
 ================================================
 // START OF FILE: lib/models/ws_message_model.dart
-// NEW FILE: lib/models/ws_message_model.dart
 
 import 'dart:convert';
 
@@ -2094,8 +2094,7 @@ import 'dart:convert';
 /// Fields are nullable to accommodate different message types.
 class WsMessage {
   // General fields
-  final String
-      type; // Type sent BY backend ("chat_message", "error", "info", "status_update", etc.)
+  final String type;
   final int? id; // Message ID (usually for chat messages, sent by backend)
 
   // Chat Message specific fields
@@ -2108,7 +2107,8 @@ class WsMessage {
   final int? replyToMessageID; // Nullable
 
   // Reaction specific fields
-  final int? messageID; // The ID of the message being reacted to
+  final int?
+      messageID; // The ID of the message being reacted to OR last read message ID
   final String? emoji; // Nullable
   final int? reactorUserID; // User who reacted (sent by backend)
   final bool? isRemoved; // True if reaction was removed (sent by backend)
@@ -2117,18 +2117,24 @@ class WsMessage {
   final int? userID; // User whose status changed (sent by backend)
   final String? status; // "online" or "offline" (sent by backend)
 
-  // Read receipt specific fields (when other user reads messages)
-  final int? readerUserID; // User who read the messages (sent by backend)
-  // MessageID (re-used from reaction fields) indicates up to which message was read
+  // Read receipt specific fields
+  final int?
+      readerUserID; // User who read the messages (sent by backend for messages_read_update)
+  final int?
+      otherUserID; // <<<--- ADDED BACK: User whose messages were marked read (used for mark_read send & mark_read_ack receive)
 
-  // Generic/Error/Info fields
-  final String? content; // For error/info messages (sent by backend)
+  // Typing/Recording indicator fields
+  final int? typingUserID;
+  final bool? isTyping;
+  final int? recordingUserID;
+  final bool? isRecording;
 
-  // Acknowledgement specific fields (server confirms client message)
+  // Generic/Error/Info/Ack fields
+  final String? content; // For error/info/ack messages (sent by backend)
   final int? count; // e.g., for mark_read_ack
 
   WsMessage({
-    required this.type, // Type is always required for received messages
+    required this.type,
     this.id,
     this.senderUserID,
     this.recipientUserID,
@@ -2144,13 +2150,18 @@ class WsMessage {
     this.userID,
     this.status,
     this.readerUserID,
+    this.otherUserID, // <<<--- ADDED to constructor
+    this.typingUserID,
+    this.isTyping,
+    this.recordingUserID,
+    this.isRecording,
     this.content,
     this.count,
   });
 
   // Factory constructor for parsing JSON received from WebSocket
   factory WsMessage.fromJson(Map<String, dynamic> json) {
-    // Helper function to safely get int?
+    // Helper functions (keep as is)
     int? getInt(String key) {
       final value = json[key];
       if (value is int) return value;
@@ -2158,7 +2169,6 @@ class WsMessage {
       return null;
     }
 
-    // Helper function to safely get bool?
     bool? getBool(String key) {
       final value = json[key];
       if (value is bool) return value;
@@ -2167,7 +2177,6 @@ class WsMessage {
       return null;
     }
 
-    // Helper function to safely get String?
     String? getString(String key) {
       final value = json[key];
       if (value is String) return value;
@@ -2175,51 +2184,54 @@ class WsMessage {
     }
 
     return WsMessage(
-      type: getString('type') ?? 'unknown', // Default to 'unknown' if missing
+      type: getString('type') ?? 'unknown',
       id: getInt('id'),
       senderUserID: getInt('sender_user_id'),
       recipientUserID: getInt('recipient_user_id'),
       text: getString('text'),
       mediaURL: getString('media_url'),
       mediaType: getString('media_type'),
-      sentAt: getString('sent_at'), // Keep as string for now
+      sentAt: getString('sent_at'),
       replyToMessageID: getInt('reply_to_message_id'),
-      messageID: getInt('message_id'), // Used for reactions and read receipts
+      messageID: getInt('message_id'),
       emoji: getString('emoji'),
       reactorUserID: getInt('reactor_user_id'),
       isRemoved: getBool('is_removed'),
-      userID: getInt('user_id'), // Used for status updates
+      userID: getInt('user_id'),
       status: getString('status'),
       readerUserID: getInt('reader_user_id'),
+      otherUserID: getInt('other_user_id'), // <<<--- ADDED parsing
+      typingUserID: getInt('typing_user_id'),
+      isTyping: getBool('is_typing'),
+      recordingUserID: getInt('recording_user_id'),
+      isRecording: getBool('is_recording'),
       content: getString('content'),
       count: getInt('count'),
     );
   }
 
-  // Method to convert to JSON (mainly for debugging, sending structure is simpler)
+  // Method to convert to JSON (for sending)
   Map<String, dynamic> toJson() {
     final Map<String, dynamic> data = {
       'type': type,
     };
-    // Add fields only if they are not null
-    if (id != null) data['id'] = id;
-    if (senderUserID != null) data['sender_user_id'] = senderUserID;
+    // Add fields only if they are not null for sending
+    // (Careful not to send fields meant only for receiving)
     if (recipientUserID != null) data['recipient_user_id'] = recipientUserID;
     if (text != null) data['text'] = text;
     if (mediaURL != null) data['media_url'] = mediaURL;
     if (mediaType != null) data['media_type'] = mediaType;
-    if (sentAt != null) data['sent_at'] = sentAt;
     if (replyToMessageID != null)
       data['reply_to_message_id'] = replyToMessageID;
-    if (messageID != null) data['message_id'] = messageID;
-    if (emoji != null) data['emoji'] = emoji;
-    if (reactorUserID != null) data['reactor_user_id'] = reactorUserID;
-    if (isRemoved != null) data['is_removed'] = isRemoved;
-    if (userID != null) data['user_id'] = userID;
-    if (status != null) data['status'] = status;
-    if (readerUserID != null) data['reader_user_id'] = readerUserID;
-    if (content != null) data['content'] = content;
-    if (count != null) data['count'] = count;
+    if (messageID != null)
+      data['message_id'] = messageID; // Used for reactions and mark_read
+    if (emoji != null) data['emoji'] = emoji; // Used for reactions
+    if (otherUserID != null)
+      data['other_user_id'] = otherUserID; // Used for mark_read
+    if (isTyping != null) data['is_typing'] = isTyping; // Used for typing event
+    if (isRecording != null)
+      data['is_recording'] = isRecording; // Used for recording event
+
     return data;
   }
 }
@@ -2855,10 +2867,12 @@ class AuthNotifier extends StateNotifier<AuthState> {
 File: providers/conversation_provider.dart
 ================================================
 // File: lib/providers/conversation_provider.dart
+// --- (Keep existing imports) ---
 import 'dart:async';
 import 'package:dtx/models/chat_message.dart';
 import 'package:dtx/models/error_model.dart';
 import 'package:dtx/providers/reaction_provider.dart';
+import 'package:dtx/providers/read_update_provider.dart'; // <<<--- Ensure this is imported
 import 'package:dtx/providers/service_provider.dart';
 import 'package:dtx/providers/status_provider.dart';
 import 'package:dtx/providers/user_provider.dart';
@@ -2927,15 +2941,19 @@ class ConversationNotifier extends StateNotifier<ConversationState> {
   final int _otherUserId;
   final Ref _ref;
 
+  // *** --- MODIFIED: Constructor (Phase 2) --- ***
   ConversationNotifier(this._ref, this._chatRepository, this._otherUserId)
       : super(const ConversationState()) {
     if (kDebugMode)
       print("[Provider Init: $_otherUserId] Fetching initial messages...");
     fetchMessages();
     _listenForReactionUpdates();
+    _listenForReadUpdates(); // <-- Added call to start listening for read updates
   }
+  // *** --- END MODIFIED --- ***
 
   void _listenForReactionUpdates() {
+    // --- (Keep existing reaction listener code) ---
     if (kDebugMode)
       print(
           "[Provider ListenReactions: $_otherUserId] Setting up listener for reaction updates.");
@@ -2963,8 +2981,36 @@ class ConversationNotifier extends StateNotifier<ConversationState> {
     });
   }
 
-  // --- updateOtherUserStatus (Keep as is) ---
+  // *** --- START: _listenForReadUpdates Added (Phase 2) --- ***
+  /// Listens for read updates broadcasted by the ChatService via readUpdateProvider.
+  void _listenForReadUpdates() {
+    if (kDebugMode)
+      print(
+          "[Provider ListenRead: $_otherUserId] Setting up listener for read updates.");
+    _ref.listen<ReadUpdate?>(readUpdateProvider, (prev, next) {
+      if (next != null) {
+        if (kDebugMode)
+          print(
+              "[Provider ListenRead CB: $_otherUserId] Received read update via provider: $next");
+        // Check if the reader is the *other* user in this conversation
+        if (next.readerUserId == _otherUserId) {
+          if (kDebugMode)
+            print(
+                "[Provider ListenRead CB: $_otherUserId] Update is relevant (from other user). Applying...");
+          // Call the method to update the message states
+          _applyReadUpdate(next.lastReadMessageId);
+        } else {
+          if (kDebugMode)
+            print(
+                "[Provider ListenRead CB: $_otherUserId] Update ignored: Not from the other user in this conversation (Reader: ${next.readerUserId}).");
+        }
+      }
+    });
+  }
+  // *** --- END: _listenForReadUpdates Added --- ***
+
   void updateOtherUserStatus(bool isOnline, DateTime eventTimestamp) {
+    // --- (Keep existing implementation) ---
     if (!mounted) {
       if (kDebugMode)
         print(
@@ -2990,7 +3036,7 @@ class ConversationNotifier extends StateNotifier<ConversationState> {
     }
   }
 
-  // --- fetchMessages (Keep as is from previous step) ---
+  // --- fetchMessages (Keep as is from Phase 1) ---
   Future<void> fetchMessages() async {
     if (state.isLoading) {
       if (kDebugMode)
@@ -3002,16 +3048,15 @@ class ConversationNotifier extends StateNotifier<ConversationState> {
       print(
           "[Provider Fetch: $_otherUserId] Fetching messages/status/reactions via API...");
     state = state.copyWith(isLoading: true, error: () => null);
+    int? latestMessageIdFromOtherUser; // Variable to store the ID
+
     try {
-      // API call now returns messages with reactionsSummary and currentUserReaction parsed by ChatMessage.fromJson
       final ConversationData conversationData =
           await _chatRepository.fetchConversation(otherUserId: _otherUserId);
 
       if (!mounted) return;
 
       final List<ChatMessage> fetchedMessages = conversationData.messages;
-
-      // Update state directly
       final oldMessagesHashCode = state.messages.hashCode;
       final reversedMessages = fetchedMessages.reversed.toList();
 
@@ -3025,7 +3070,26 @@ class ConversationNotifier extends StateNotifier<ConversationState> {
 
       if (kDebugMode)
         print(
-            "[Provider Fetch: $_otherUserId] API Fetch completed. Stored ${reversedMessages.length} messages (reactions parsed by model). API Status Set: isOnline=${state.otherUserIsOnline}, lastOnline=${state.otherUserLastOnline}. List hashCode changed: ${state.messages.hashCode != oldMessagesHashCode}");
+            "[Provider Fetch: $_otherUserId] API Fetch completed. Stored ${reversedMessages.length} messages. API Status Set: isOnline=${state.otherUserIsOnline}, lastOnline=${state.otherUserLastOnline}. List hashCode changed: ${state.messages.hashCode != oldMessagesHashCode}");
+
+      // --- Find latest message ID from the OTHER user ---
+      for (final msg in fetchedMessages) {
+        // Iterate the original fetch order (oldest to newest)
+        if (msg.senderUserID == _otherUserId) {
+          if (latestMessageIdFromOtherUser == null ||
+              msg.messageID > latestMessageIdFromOtherUser!) {
+            latestMessageIdFromOtherUser = msg.messageID;
+          }
+        }
+      }
+
+      if (kDebugMode && latestMessageIdFromOtherUser != null) {
+        print(
+            "[Provider Fetch: $_otherUserId] Found latest message ID from other user: $latestMessageIdFromOtherUser");
+      } else if (kDebugMode) {
+        print(
+            "[Provider Fetch: $_otherUserId] No messages found from other user in this fetch.");
+      }
     } on ApiException catch (e) {
       print(
           "[Provider Fetch Error: $_otherUserId] API Exception: ${e.message}");
@@ -3042,11 +3106,36 @@ class ConversationNotifier extends StateNotifier<ConversationState> {
             error: () => AppError.generic("Failed to load conversation."));
       }
     }
-  }
-  // --- End fetchMessages ---
 
-  // --- addSentMessage (Keep as is) ---
+    // --- Send mark_read AFTER state update and outside try-catch ---
+    if (latestMessageIdFromOtherUser != null &&
+        latestMessageIdFromOtherUser > 0) {
+      if (kDebugMode) {
+        print(
+            "[Provider Fetch: $_otherUserId] Sending mark_read via ChatService for otherUserId: $_otherUserId, lastMessageId: $latestMessageIdFromOtherUser");
+      }
+      try {
+        _ref
+            .read(chatServiceProvider)
+            .sendMarkRead(_otherUserId, latestMessageIdFromOtherUser);
+        if (kDebugMode) {
+          print(
+              "[Provider Fetch: $_otherUserId] sendMarkRead called successfully.");
+        }
+      } catch (e) {
+        print(
+            "[Provider Fetch Error: $_otherUserId] Failed to call sendMarkRead: $e");
+      }
+    } else {
+      if (kDebugMode) {
+        print(
+            "[Provider Fetch: $_otherUserId] No relevant message ID found from other user, skipping sendMarkRead.");
+      }
+    }
+  }
+
   void addSentMessage(ChatMessage message) {
+    // ... (keep existing implementation) ...
     if (!mounted) return;
     if (kDebugMode)
       print(
@@ -3061,8 +3150,8 @@ class ConversationNotifier extends StateNotifier<ConversationState> {
           "[Provider AddSent: $_otherUserId] Message added to start. Reply state cleared. List hashCode changed: ${state.messages.hashCode != oldMessagesHashCode}. New count: ${state.messages.length}");
   }
 
-  // --- addReceivedMessage (Keep as is) ---
   void addReceivedMessage(ChatMessage message) {
+    // ... (keep existing implementation) ...
     if (!mounted) return;
     if (kDebugMode)
       print(
@@ -3074,9 +3163,9 @@ class ConversationNotifier extends StateNotifier<ConversationState> {
           "[Provider AddRcvd: $_otherUserId] Message added to start. List hashCode changed: ${state.messages.hashCode != oldMessagesHashCode}. New count: ${state.messages.length}");
   }
 
-  // --- updateMessageStatus (Keep as is) ---
   void updateMessageStatus(String tempOrRealId, ChatMessageStatus newStatus,
       {int? finalMessageId, String? finalMediaUrl, String? errorMessage}) {
+    // ... (keep existing implementation) ...
     if (!mounted) return;
     if (kDebugMode)
       print(
@@ -3114,8 +3203,8 @@ class ConversationNotifier extends StateNotifier<ConversationState> {
     }
   }
 
-  // --- Reply State Methods (Keep as is) ---
   void startReplying(ChatMessage messageToReply) {
+    // ... (keep existing implementation) ...
     if (!mounted) return;
     if (kDebugMode)
       print(
@@ -3124,6 +3213,7 @@ class ConversationNotifier extends StateNotifier<ConversationState> {
   }
 
   void cancelReply() {
+    // ... (keep existing implementation) ...
     if (!mounted) return;
     if (state.replyingToMessage != null) {
       if (kDebugMode)
@@ -3131,11 +3221,9 @@ class ConversationNotifier extends StateNotifier<ConversationState> {
       state = state.copyWith(replyingToMessage: () => null);
     }
   }
-  // --- End Reply State Methods ---
 
-  // --- optimisticallyApplyReaction (Keep as is from previous step) ---
-  /// Updates the local state immediately when the current user reacts.
   void optimisticallyApplyReaction(int messageId, String emoji) {
+    // ... (keep existing implementation) ...
     if (!mounted) return;
     final currentUserId = _ref.read(currentUserIdProvider);
     if (currentUserId == null) return; // Should not happen
@@ -3159,9 +3247,7 @@ class ConversationNotifier extends StateNotifier<ConversationState> {
     final String? previousReaction = messageToUpdate.currentUserReaction;
     String? newCurrentUserReaction;
 
-    // Logic for optimistic update:
     if (previousReaction == emoji) {
-      // User tapped the same emoji again - remove reaction
       updatedSummary[emoji] = (updatedSummary[emoji] ?? 1) - 1; // Decrement
       if (updatedSummary[emoji]! <= 0) {
         updatedSummary.remove(emoji); // Remove if count is zero or less
@@ -3172,7 +3258,6 @@ class ConversationNotifier extends StateNotifier<ConversationState> {
             "[Provider OptimisticReact: $_otherUserId] Optimistic REMOVAL of '$emoji'. New count: ${updatedSummary[emoji]}. User reaction cleared.");
     } else {
       // User is adding a new reaction or changing reaction
-      // 1. Decrement previous reaction if it exists AND is different
       if (previousReaction != null) {
         updatedSummary[previousReaction] =
             (updatedSummary[previousReaction] ?? 1) - 1; // Decrement
@@ -3183,7 +3268,6 @@ class ConversationNotifier extends StateNotifier<ConversationState> {
           print(
               "[Provider OptimisticReact: $_otherUserId] Optimistic decrement of previous '$previousReaction'. New count: ${updatedSummary[previousReaction]}.");
       }
-      // 2. Increment new reaction
       updatedSummary[emoji] = (updatedSummary[emoji] ?? 0) + 1; // Increment
       newCurrentUserReaction = emoji; // Set new reaction
       if (kDebugMode)
@@ -3204,11 +3288,9 @@ class ConversationNotifier extends StateNotifier<ConversationState> {
       print(
           "[Provider OptimisticReact: $_otherUserId] Optimistic update applied for MsgID: $messageId. List hashCode changed: ${state.messages.hashCode != oldMessagesHashCode}");
   }
-  // --- End optimisticallyApplyReaction ---
 
-  // *** --- START: _applyReactionUpdate Method MODIFIED --- ***
-  /// Reconciles the local state with updates received from the server.
   void _applyReactionUpdate(ReactionUpdate update) {
+    // ... (keep existing implementation) ...
     if (!mounted) return;
     if (kDebugMode)
       print(
@@ -3227,29 +3309,13 @@ class ConversationNotifier extends StateNotifier<ConversationState> {
     final currentUserId = _ref.read(currentUserIdProvider);
     final Map<String, int> updatedSummary =
         Map<String, int>.from(messageToUpdate.reactionsSummary ?? {});
-
-    // --- Start Reconciliation Logic ---
-
-    // 1. Handle Previous Reaction of the *Reactor* specified in the update
-    //    (Only relevant if the reactor is changing their reaction)
     String? previousEmojiForReactor = null;
     if (update.reactorUserId == currentUserId) {
       previousEmojiForReactor = messageToUpdate.currentUserReaction;
-    } else {
-      // If reactor is the *other* user, we don't store their specific previous
-      // reaction locally, so we infer based on the counts. This is less precise
-      // but necessary without storing other users' reactions explicitly.
-      // Find *an* emoji in the current summary that this other user *might* have had.
-      // This part is tricky and might not be perfectly accurate if multiple users react.
-      // For simplicity, we'll focus on accurate reconciliation for the *current* user.
-      // We'll simply adjust the counts based on the server event below.
     }
 
-    // 2. Adjust Counts based *solely* on the Server Event
     if (update.isRemoved) {
-      // Server says a reaction was removed
       if (update.emoji != null) {
-        // Server tells us which emoji was removed
         updatedSummary[update.emoji!] =
             (updatedSummary[update.emoji!] ?? 1) - 1;
         if (updatedSummary[update.emoji!]! <= 0) {
@@ -3262,13 +3328,8 @@ class ConversationNotifier extends StateNotifier<ConversationState> {
         if (kDebugMode)
           print(
               "[Provider ApplyReaction RECONCILE: $_otherUserId] WARNING: Server removal update without specific emoji for user ${update.reactorUserId}. Assuming removal based on reactor ID if it's current user.");
-        // If it was the current user removing, we handle their state below.
-        // If it was the *other* user, we can't know which emoji to decrement without the server telling us.
       }
     } else if (update.emoji != null) {
-      // Server says a reaction was added/updated
-      // If the reactor is the *current user* and they had a *different* previous reaction,
-      // we need to decrement the count for that previous reaction first.
       if (update.reactorUserId == currentUserId &&
           previousEmojiForReactor != null &&
           previousEmojiForReactor != update.emoji) {
@@ -3281,12 +3342,8 @@ class ConversationNotifier extends StateNotifier<ConversationState> {
           print(
               "[Provider ApplyReaction RECONCILE: $_otherUserId] Decremented previous reaction '$previousEmojiForReactor' for current user.");
       }
-
-      // Now, increment the count for the emoji specified in the server update.
-      // *** CRITICAL FIX: Check if this is just confirming our optimistic add ***
       bool isConfirmingOptimisticAdd = update.reactorUserId == currentUserId &&
           messageToUpdate.currentUserReaction == update.emoji;
-
       if (!isConfirmingOptimisticAdd) {
         updatedSummary[update.emoji!] =
             (updatedSummary[update.emoji!] ?? 0) + 1;
@@ -3299,9 +3356,7 @@ class ConversationNotifier extends StateNotifier<ConversationState> {
               "[Provider ApplyReaction RECONCILE: $_otherUserId] Server confirmed optimistic add of '${update.emoji}'. Count remains ${updatedSummary[update.emoji!]}.");
       }
     }
-    // --- End Reconciliation Logic ---
 
-    // Determine the current user's reaction based solely on SERVER update for *this* user
     String? serverCurrentUserReaction = messageToUpdate.currentUserReaction;
     if (update.reactorUserId == currentUserId) {
       serverCurrentUserReaction = update.isRemoved ? null : update.emoji;
@@ -3310,8 +3365,6 @@ class ConversationNotifier extends StateNotifier<ConversationState> {
             "[Provider ApplyReaction RECONCILE: $_otherUserId] Server state for current user's reaction: ${serverCurrentUserReaction ?? 'null'}");
     }
 
-    // --- State Update (if needed) ---
-    // Check if the *final calculated state* differs from the *current UI state*
     final bool summaryChanged = !mapEquals(
         updatedSummary.isEmpty ? null : updatedSummary,
         messageToUpdate.reactionsSummary);
@@ -3322,14 +3375,13 @@ class ConversationNotifier extends StateNotifier<ConversationState> {
       if (kDebugMode)
         print(
             "[Provider ApplyReaction RECONCILE: $_otherUserId] Calculated server state matches UI state for MsgID ${update.messageId}. No UI update needed.");
-      return; // No need to update state if it already matches
+      return;
     }
 
     if (kDebugMode)
       print(
           "[Provider ApplyReaction RECONCILE: $_otherUserId] State difference detected for MsgID ${update.messageId}. Updating UI state to match server.");
 
-    // Create the updated message object based on the calculated server state
     final updatedMessage = messageToUpdate.copyWith(
       reactionsSummary: () => updatedSummary.isEmpty ? null : updatedSummary,
       currentUserReaction: () => serverCurrentUserReaction,
@@ -3343,7 +3395,64 @@ class ConversationNotifier extends StateNotifier<ConversationState> {
       print(
           "[Provider ApplyReaction RECONCILE: $_otherUserId] Reconciliation update applied for MsgID: ${update.messageId}. List hashCode changed: ${state.messages.hashCode != oldMessagesHashCode}");
   }
-  // *** --- END: _applyReactionUpdate Method MODIFIED --- ***
+
+  // *** --- START: _applyReadUpdate Added (Phase 2) --- ***
+  /// Updates the isRead status of messages sent by the current user based on WS update.
+  void _applyReadUpdate(int lastReadMessageId) {
+    if (!mounted) {
+      if (kDebugMode)
+        print(
+            "[Provider ApplyReadUpdate: $_otherUserId] Not mounted, ignoring read update.");
+      return;
+    }
+
+    final currentUserId = _ref.read(currentUserIdProvider);
+    if (currentUserId == null) {
+      if (kDebugMode)
+        print(
+            "[Provider ApplyReadUpdate: $_otherUserId] Error: Current user ID is null. Cannot process read update.");
+      return; // Safety check
+    }
+
+    if (kDebugMode)
+      print(
+          "[Provider ApplyReadUpdate: $_otherUserId] Applying read update from other user. Last read ID: $lastReadMessageId");
+
+    bool stateChanged = false;
+    // Map over the *current* list of messages in the state
+    final List<ChatMessage> updatedMessages = state.messages.map((msg) {
+      // Check if it's a message SENT BY ME, not already marked read, has a real ID,
+      // AND its ID is less than or equal to the last read ID reported by the other user.
+      if (msg.senderUserID == currentUserId &&
+          !msg.isRead &&
+          msg.messageID > 0 && // Ensure it's not an unsaved message
+          msg.messageID <= lastReadMessageId) {
+        if (kDebugMode)
+          print(
+              "[Provider ApplyReadUpdate: $_otherUserId] Marking message ID ${msg.messageID} as read.");
+        stateChanged = true; // Flag that a change occurred
+        // Return a *new* ChatMessage instance with the updated isRead status
+        return msg.copyWith(isRead: true);
+      }
+      // Otherwise, return the original message object
+      return msg;
+    }).toList(); // Collect the results into a new list
+
+    // Only update the state if any message's read status actually changed
+    if (stateChanged) {
+      final oldMessagesHashCode = state.messages.hashCode;
+      state = state.copyWith(
+          messages: updatedMessages); // Update the state with the new list
+      if (kDebugMode)
+        print(
+            "[Provider ApplyReadUpdate: $_otherUserId] State updated with read receipts. List hashCode changed: ${state.messages.hashCode != oldMessagesHashCode}");
+    } else {
+      if (kDebugMode)
+        print(
+            "[Provider ApplyReadUpdate: $_otherUserId] No messages needed updating for read receipt up to ID $lastReadMessageId.");
+    }
+  }
+  // *** --- END: _applyReadUpdate Added --- ***
 } // End ConversationNotifier
 
 // --- Provider Definition (Keep as is) ---
@@ -3352,17 +3461,21 @@ final conversationProvider = StateNotifierProvider.family
         (ref, otherUserId) {
   final repo = ref.watch(chatRepositoryProvider);
   final notifier = ConversationNotifier(ref, repo, otherUserId);
+  // Listen to user status updates
   final statusSubscription =
       ref.listen<UserStatusUpdate?>(userStatusUpdateProvider, (prev, next) {
     if (next != null && next.userId == otherUserId) {
       notifier.updateOtherUserStatus(next.isOnline, next.timestamp);
     }
   });
+  // Clean up listener on dispose
   ref.onDispose(() {
     if (kDebugMode)
       print(
           "[Provider Dispose Hook: $otherUserId] Cancelling status listener subscription.");
     statusSubscription.close();
+    // No need to manually cancel readUpdateProvider or reactionUpdateProvider listeners here,
+    // Riverpod handles listeners attached via ref.listen automatically.
   });
   return notifier;
 });
@@ -4397,6 +4510,55 @@ class ReactionUpdate {
 /// Simple StateProvider to hold the *latest* reaction update received.
 /// ConversationNotifier will listen to this provider.
 final reactionUpdateProvider = StateProvider<ReactionUpdate?>((ref) {
+  // Initial state is null (no update received yet)
+  return null;
+});
+
+
+
+================================================
+File: providers/read_update_provider.dart
+================================================
+// File: lib/providers/read_update_provider.dart
+import 'package:flutter/foundation.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+
+/// Represents a single event indicating messages have been read.
+@immutable // Ensures the state object is immutable
+class ReadUpdate {
+  final int readerUserId; // ID of the user who read the messages
+  final int lastReadMessageId; // ID of the latest message they read
+  final DateTime timestamp; // Timestamp of the event
+
+  // Constructor uses DateTime.now() to differentiate events
+  ReadUpdate({
+    required this.readerUserId,
+    required this.lastReadMessageId,
+  }) : timestamp = DateTime.now();
+
+  // Optional: Override == and hashCode for potential comparisons
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is ReadUpdate &&
+          runtimeType == other.runtimeType &&
+          readerUserId == other.readerUserId &&
+          lastReadMessageId == other.lastReadMessageId &&
+          timestamp == other.timestamp; // Include timestamp for uniqueness
+
+  @override
+  int get hashCode =>
+      readerUserId.hashCode ^ lastReadMessageId.hashCode ^ timestamp.hashCode;
+
+  @override
+  String toString() {
+    return 'ReadUpdate(readerUserId: $readerUserId, lastReadMessageId: $lastReadMessageId, timestamp: $timestamp)';
+  }
+}
+
+/// Simple StateProvider to hold the *latest* read update event received.
+/// ConversationNotifier will listen to this provider to update its message states.
+final readUpdateProvider = StateProvider<ReadUpdate?>((ref) {
   // Initial state is null (no update received yet)
   return null;
 });
@@ -6483,17 +6645,18 @@ import 'package:web_socket_channel/web_socket_channel.dart';
 
 // App-specific Imports
 import 'package:dtx/models/chat_message.dart';
-import 'package:dtx/models/ws_message_model.dart'; // <<<--- ADDED Import for WsMessage model
+import 'package:dtx/models/ws_message_model.dart';
 import 'package:dtx/providers/auth_provider.dart';
 import 'package:dtx/providers/conversation_provider.dart';
-import 'package:dtx/providers/reaction_provider.dart'; // <<<--- ADDED Import for reaction provider
+import 'package:dtx/providers/reaction_provider.dart';
+import 'package:dtx/providers/read_update_provider.dart'; // <-- Phase 2 Provider
 import 'package:dtx/providers/user_provider.dart';
 import 'package:dtx/providers/status_provider.dart';
 import 'package:dtx/utils/token_storage.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-// --- WebSocketConnectionState enum and webSocketStateProvider (Keep as is) ---
+// --- WebSocketConnectionState enum and webSocketStateProvider ---
 enum WebSocketConnectionState { disconnected, connecting, connected, error }
 
 final webSocketStateProvider = StateProvider<WebSocketConnectionState>(
@@ -6511,101 +6674,125 @@ class ChatService {
   static const int _maxReconnectAttempts = 5;
   static const Duration _initialReconnectDelay = Duration(seconds: 2);
 
+  // Tracks pending text messages sent from this client, mapping tempId to recipientId
+  // Used to update the status upon receiving an ack.
   final Map<String, int> _pendingMessages = {};
 
   ChatService(this._ref, this._wsUrl) {
     print("[ChatService] Initialized with URL: $_wsUrl");
   }
 
-  // --- connect (Keep as is) ---
+  /// Establishes WebSocket connection.
   Future<void> connect() async {
-    _isManualDisconnect = false;
+    _isManualDisconnect =
+        false; // Reset manual disconnect flag on connect attempt
+    // Avoid concurrent connection attempts or connecting if already connected
     if (_channel != null &&
         _ref.read(webSocketStateProvider) ==
             WebSocketConnectionState.connected) {
-      print("[ChatService] Already connected.");
+      print("[ChatService connect] Already connected.");
       return;
     }
     if (_ref.read(webSocketStateProvider) ==
         WebSocketConnectionState.connecting) {
-      print("[ChatService] Connection attempt already in progress.");
+      print("[ChatService connect] Connection attempt already in progress.");
       return;
     }
-    print("[ChatService] Attempting to connect to $_wsUrl...");
-    _updateState(WebSocketConnectionState.connecting);
+
+    print("[ChatService connect] Attempting to connect to $_wsUrl...");
+    _updateState(
+        WebSocketConnectionState.connecting); // Update state to connecting
+
+    // Retrieve authentication token
     String? token =
         _ref.read(authProvider).jwtToken ?? await TokenStorage.getToken();
-    if (token == null) {
-      print("[ChatService] Connection failed: Auth token not found.");
-      _updateState(WebSocketConnectionState.error);
+    if (token == null || token.isEmpty) {
+      print("[ChatService connect] Connection failed: Auth token not found.");
+      _updateState(WebSocketConnectionState.error); // Update state to error
       return;
     }
+
     try {
+      // Set Authorization header
       final headers = {'Authorization': 'Bearer $token'};
+
+      // Establish WebSocket connection
       _channel = IOWebSocketChannel.connect(
         Uri.parse(_wsUrl),
         headers: headers,
-        pingInterval: const Duration(seconds: 15),
+        pingInterval: const Duration(seconds: 15), // Keep connection alive
       );
-      print("[ChatService] WebSocket channel created. Listening...");
+      print("[ChatService connect] WebSocket channel created. Listening...");
+
+      // Listen to incoming messages, completion, and errors
       _streamSubscription = _channel!.stream.listen(
-        _onMessageReceived,
-        onDone: _handleDisconnect,
-        onError: _handleError,
-        cancelOnError: false,
+        _onMessageReceived, // Handler for incoming messages
+        onDone: _handleDisconnect, // Handler for connection closed
+        onError: _handleError, // Handler for connection errors
+        cancelOnError: false, // Keep listening even after an error if possible
       );
+
+      // Update state to connected and reset reconnect attempts
       _updateState(WebSocketConnectionState.connected);
       _reconnectAttempts = 0;
-      print("[ChatService] Connection established successfully.");
+      print("[ChatService connect] Connection established successfully.");
     } catch (e) {
-      print("[ChatService] Connection failed: $e");
-      _handleError(e);
+      // Handle connection errors
+      print("[ChatService connect] Connection failed: $e");
+      _handleError(e); // Trigger error handling and potential reconnect
     }
   }
 
-  // --- *** MODIFIED: _onMessageReceived *** ---
+  /// Handles incoming messages from the WebSocket server.
   void _onMessageReceived(dynamic message) {
-    if (kDebugMode) print("[ChatService] Message received: $message");
+    if (kDebugMode) print("[ChatService _onMessageReceived] Raw: $message");
     try {
+      // Decode JSON message
       final Map<String, dynamic> decodedJson = jsonDecode(message);
-      // Use the WsMessage model to parse *incoming* messages
+      // Parse using the WsMessage model
       final WsMessage msg = WsMessage.fromJson(decodedJson);
 
-      if (kDebugMode) print("[ChatService] Parsed message type: ${msg.type}");
+      if (kDebugMode)
+        print("[ChatService _onMessageReceived] Parsed type: ${msg.type}");
 
+      // Process message based on its type
       switch (msg.type) {
+        // --- Chat Message Handling ---
         case 'chat_message':
-          // --- Existing chat message handling (No changes here) ---
+          // Validate essential fields
           if (msg.id == null ||
               msg.id! <= 0 ||
               msg.senderUserID == null ||
               msg.recipientUserID == null ||
               msg.sentAt == null) {
             print(
-                "[ChatService] Received 'chat_message' with invalid/missing essential fields. Msg: $decodedJson");
+                "[ChatService _onMessageReceived] Received 'chat_message' with invalid/missing essential fields. Msg: $decodedJson");
             return;
           }
           final currentUserId = _ref.read(currentUserIdProvider);
+          // Ignore messages not intended for the current user or self-messages
           if (currentUserId == null || msg.recipientUserID! != currentUserId) {
             if (kDebugMode)
               print(
-                  "[ChatService] Received message not intended for current user ($currentUserId). Recipient was ${msg.recipientUserID}. Ignoring.");
+                  "[ChatService _onMessageReceived] Received message not intended for current user ($currentUserId). Recipient was ${msg.recipientUserID}. Ignoring.");
             return;
           }
           if (msg.senderUserID == currentUserId) {
             if (kDebugMode)
               print(
-                  "[ChatService] Received message loopback from self (ID: ${msg.id}). Ignoring.");
+                  "[ChatService _onMessageReceived] Received message loopback from self (ID: ${msg.id}). Ignoring.");
             return;
           }
+          // Parse timestamp
           DateTime sentAt;
           try {
             sentAt = DateTime.parse(msg.sentAt!).toLocal();
           } catch (e) {
             print(
-                "[ChatService] Error parsing sent_at '${msg.sentAt}': $e. Using local time as fallback.");
+                "[ChatService _onMessageReceived] Error parsing sent_at '${msg.sentAt}': $e. Using local time as fallback.");
             sentAt = DateTime.now();
           }
+          // Create ChatMessage object
           final ChatMessage chatMessage = ChatMessage(
             messageID: msg.id!,
             senderUserID: msg.senderUserID!,
@@ -6614,114 +6801,157 @@ class ChatService {
             mediaUrl: msg.mediaURL,
             mediaType: msg.mediaType,
             sentAt: sentAt,
-            status: ChatMessageStatus.sent,
-            isRead: false,
+            status: ChatMessageStatus.sent, // WS messages are considered sent
+            isRead: false, // Initially marked as unread by this client
             readAt: null,
             replyToMessageID: msg.replyToMessageID,
-            // Note: The reply preview fields (repliedMessageSenderID etc.)
-            // are populated by the API call, not the basic WebSocket message.
-            // If the backend *did* send them via WS, you'd parse msg.replied... here.
           );
+          // Add message to the relevant conversation provider
           _ref
               .read(conversationProvider(msg.senderUserID!).notifier)
               .addReceivedMessage(chatMessage);
           if (kDebugMode)
             print(
-                "[ChatService] Added received 'chat_message' (ID: ${msg.id}) to conversation with ${msg.senderUserID}. ReplyTo: ${msg.replyToMessageID}");
+                "[ChatService _onMessageReceived] Added received 'chat_message' (ID: ${msg.id}) to conversation with ${msg.senderUserID}. ReplyTo: ${msg.replyToMessageID}");
           break;
-        // --- End existing chat message handling ---
 
+        // --- Message Acknowledgement ---
         case 'message_ack':
           if (kDebugMode)
-            print("[ChatService] Received message_ack: $decodedJson");
+            print(
+                "[ChatService _onMessageReceived] Received message_ack: $decodedJson");
           _handleMessageAck(decodedJson);
           break;
 
+        // --- User Status Update ---
         case 'status_update':
           if (kDebugMode)
-            print("[ChatService] Received status_update: $decodedJson");
-          // --- Existing status update handling (No changes here) ---
+            print(
+                "[ChatService _onMessageReceived] Received status_update: $decodedJson");
           if (msg.userID == null || msg.userID! <= 0 || msg.status == null) {
             print(
-                "[ChatService] Invalid status_update message: Missing user_id or status. Data: $decodedJson");
+                "[ChatService _onMessageReceived] Invalid status_update message: Missing user_id or status. Data: $decodedJson");
             return;
           }
           final bool isOnline = msg.status!.toLowerCase() == 'online';
           if (kDebugMode)
             print(
-                "[ChatService] Parsed status_update: UserID=${msg.userID}, isOnline=$isOnline");
+                "[ChatService _onMessageReceived] Parsed status_update: UserID=${msg.userID}, isOnline=$isOnline");
+          // Notify the status provider
           _ref
               .read(userStatusUpdateProvider.notifier)
               .updateStatus(msg.userID!, isOnline);
           break;
-        // --- End existing status update handling ---
 
-        // *** --- START: Reaction Handling ADDED --- ***
+        // --- Reaction Update ---
         case 'reaction_update':
           if (kDebugMode)
-            print("[ChatService] Received reaction_update: $decodedJson");
-          // Validate necessary fields
+            print(
+                "[ChatService _onMessageReceived] Received reaction_update: $decodedJson");
           if (msg.messageID == null ||
               msg.reactorUserID == null ||
               msg.isRemoved == null ||
               (msg.emoji == null && !msg.isRemoved!)) {
             print(
-                "[ChatService] Invalid reaction_update message: Missing required fields. Data: $decodedJson");
+                "[ChatService _onMessageReceived] Invalid reaction_update message: Missing required fields. Data: $decodedJson");
             return;
           }
-          // Create the update object
           final reactionUpdate = ReactionUpdate(
             messageId: msg.messageID!,
             reactorUserId: msg.reactorUserID!,
-            emoji: msg.emoji, // Can be null if removed
+            emoji: msg.emoji,
             isRemoved: msg.isRemoved!,
           );
           // Notify the reaction provider
           _ref.read(reactionUpdateProvider.notifier).state = reactionUpdate;
           if (kDebugMode)
             print(
-                "[ChatService] Notified reactionUpdateProvider: $reactionUpdate");
+                "[ChatService _onMessageReceived] Notified reactionUpdateProvider: $reactionUpdate");
           break;
 
+        // --- Reaction Acknowledgement ---
         case 'reaction_ack':
-          // This confirms *your* reaction was processed by the server
           if (kDebugMode)
-            print("[ChatService] Received reaction_ack: $decodedJson");
+            print(
+                "[ChatService _onMessageReceived] Received reaction_ack: $decodedJson");
           if (msg.messageID != null && msg.content != null) {
             print(
-                "[ChatService] Reaction ack for message ${msg.messageID}: ${msg.content}");
-            // Optionally show a temporary confirmation (e.g., snackbar),
-            // but the reaction_update provides the actual state change.
+                "[ChatService _onMessageReceived] Reaction ack for message ${msg.messageID}: ${msg.content}");
           } else {
             print(
-                "[ChatService] Received incomplete reaction_ack: $decodedJson");
+                "[ChatService _onMessageReceived] Received incomplete reaction_ack: $decodedJson");
           }
           break;
-        // *** --- END: Reaction Handling ADDED --- ***
 
+        // --- Messages Read Update (Phase 2 Implementation) ---
+        case 'messages_read_update':
+          if (kDebugMode)
+            print(
+                "[ChatService _onMessageReceived] Received messages_read_update: $decodedJson");
+          // Validate necessary fields from the incoming message
+          if (msg.readerUserID == null || msg.messageID == null) {
+            print(
+                "[ChatService _onMessageReceived] Invalid messages_read_update: Missing reader_user_id or message_id. Data: $decodedJson");
+            return; // Stop processing if essential data is missing
+          }
+          // Create the ReadUpdate object
+          final readUpdate = ReadUpdate(
+            readerUserId: msg.readerUserID!,
+            lastReadMessageId: msg.messageID!,
+          );
+          // Update the StateProvider with the new event
+          _ref.read(readUpdateProvider.notifier).state = readUpdate;
+          if (kDebugMode)
+            print(
+                "[ChatService _onMessageReceived] Notified readUpdateProvider: $readUpdate");
+          break;
+        // --- End messages_read_update ---
+
+        // --- Mark Read Acknowledgement (Phase 1/4 Implementation - Corrected) ---
+        case 'mark_read_ack':
+          if (kDebugMode)
+            print(
+                "[ChatService _onMessageReceived] Received mark_read_ack: $decodedJson");
+          // Use the otherUserID field from the parsed WsMessage
+          if (msg.messageID != null && msg.otherUserID != null) {
+            // *** Corrected field access ***
+            print(
+                "[ChatService _onMessageReceived] Mark read ack: Marked messages from user ${msg.otherUserID} up to ID ${msg.messageID} as seen. Count: ${msg.count ?? 'N/A'}. Server says: ${msg.content ?? ''}");
+            // No UI state change needed here, just confirmation.
+          } else {
+            print(
+                "[ChatService _onMessageReceived] Received incomplete mark_read_ack (missing messageID or otherUserID): $decodedJson");
+          }
+          break;
+        // --- End mark_read_ack ---
+
+        // --- Error from Server ---
         case 'error':
           print(
-              "[ChatService] Received error message from server: ${msg.content}");
+              "[ChatService _onMessageReceived] Received error message from server: ${msg.content}");
+          // TODO: Consider showing error to user via a provider/snackbar
           break;
 
+        // --- Info from Server ---
         case 'info':
           print(
-              "[ChatService] Received info message from server: ${msg.content}");
+              "[ChatService _onMessageReceived] Received info message from server: ${msg.content}");
           break;
 
+        // --- Default for Unhandled Types ---
         default:
           print(
-              "[ChatService] Received unhandled message type '${msg.type}': $decodedJson");
+              "[ChatService _onMessageReceived] Received unhandled message type '${msg.type}': $decodedJson");
       }
     } catch (e, stacktrace) {
-      print("[ChatService] Error processing received message: $e");
-      print("[ChatService] Stacktrace: $stacktrace");
-      // Optionally disconnect or try to handle specific parsing errors
+      // Catch JSON decoding errors or other processing errors
+      print(
+          "[ChatService _onMessageReceived] Error processing received message: $e");
+      print("[ChatService _onMessageReceived] Stacktrace: $stacktrace");
     }
   }
-  // --- *** END MODIFIED *** ---
 
-  // --- sendMessage (Keep as previously modified) ---
+  /// Sends a chat message (text or media) via WebSocket.
   void sendMessage(
     int recipientUserId, {
     String? text,
@@ -6732,112 +6962,141 @@ class ChatService {
     if (_channel == null ||
         _ref.read(webSocketStateProvider) !=
             WebSocketConnectionState.connected) {
-      print("[ChatService] Cannot send message: Not connected.");
+      print("[ChatService sendMessage] Cannot send message: Not connected.");
+      // TODO: Optionally queue the message or show an error
       return;
     }
     final currentUserId = _ref.read(currentUserIdProvider);
     if (currentUserId == null) {
-      print("[ChatService] Cannot send message: Current User ID is null.");
+      print(
+          "[ChatService sendMessage] Cannot send message: Current User ID is null.");
       return;
     }
+
+    // Construct payload
     Map<String, dynamic> payload = {
-      'type': "chat_message",
+      'type': "chat_message", // Set message type for the backend
       'recipient_user_id': recipientUserId,
     };
     bool isMediaMessage = false;
     String? optimisticTempId;
+
+    // Add text or media details
     if (mediaUrl != null &&
         mediaUrl.isNotEmpty &&
         mediaType != null &&
         mediaType.isNotEmpty) {
       payload['media_url'] = mediaUrl;
       payload['media_type'] = mediaType;
-      payload['text'] = null;
+      payload['text'] = null; // Ensure text is null for media messages
       isMediaMessage = true;
-      if (kDebugMode) print("[ChatService] Preparing media message payload.");
+      if (kDebugMode)
+        print("[ChatService sendMessage] Preparing media message payload.");
     } else if (text != null && text.trim().isNotEmpty) {
       payload['text'] = text.trim();
-      payload['media_url'] = null;
+      payload['media_url'] = null; // Ensure media fields are null for text
       payload['media_type'] = null;
       isMediaMessage = false;
-      if (kDebugMode) print("[ChatService] Preparing text message payload.");
+      if (kDebugMode)
+        print("[ChatService sendMessage] Preparing text message payload.");
     } else {
-      print("[ChatService] Cannot send: Message must have text or media.");
-      return;
+      print(
+          "[ChatService sendMessage] Cannot send: Message must have text or media.");
+      return; // Don't send empty messages
     }
+
+    // Add reply info if provided
     if (replyToMessageId != null && replyToMessageId > 0) {
       payload['reply_to_message_id'] = replyToMessageId;
       if (kDebugMode)
         print(
-            "[ChatService] Adding replyToMessageId: $replyToMessageId to payload.");
+            "[ChatService sendMessage] Adding replyToMessageId: $replyToMessageId to payload.");
     }
+
     final messageJson = jsonEncode(payload);
     if (kDebugMode)
-      print("[ChatService] Sending message (Type: chat_message): $messageJson");
+      print(
+          "[ChatService sendMessage] Sending message (Type: chat_message): $messageJson");
+
     try {
+      // --- Optimistic UI Update for TEXT messages ---
+      // Media messages are handled optimistically by ChatDetailScreen during upload
       if (!isMediaMessage) {
         optimisticTempId = DateTime.now().millisecondsSinceEpoch.toString();
         final sentMessage = ChatMessage(
           tempId: optimisticTempId,
-          messageID: 0,
+          messageID: 0, // Real ID will come from ack
           senderUserID: currentUserId,
           recipientUserID: recipientUserId,
           messageText: text!,
-          sentAt: DateTime.now().toLocal(),
-          status: ChatMessageStatus.pending,
-          isRead: false,
+          sentAt: DateTime.now().toLocal(), // Use local time for immediate UI
+          status: ChatMessageStatus.pending, // Initial status
+          isRead: false, // Sent messages start as unread by recipient
           readAt: null,
           mediaUrl: null,
           mediaType: null,
+          replyToMessageID: replyToMessageId, // Include reply info
+          // Note: Reply preview info needs to be fetched/passed if needed here
         );
+        // Track pending message and update conversation provider
         addPendingMessage(optimisticTempId, recipientUserId);
         _ref
             .read(conversationProvider(recipientUserId).notifier)
             .addSentMessage(sentMessage);
         if (kDebugMode)
           print(
-              "[ChatService] Added optimistic TEXT message (TempID: $optimisticTempId) to conversation with $recipientUserId");
+              "[ChatService sendMessage] Added optimistic TEXT message (TempID: $optimisticTempId) to conversation with $recipientUserId");
       } else {
         if (kDebugMode)
           print(
-              "[ChatService] Media message payload prepared. Optimistic message added by ChatDetailScreen.");
+              "[ChatService sendMessage] Media message payload prepared. Optimistic message added by ChatDetailScreen.");
       }
+      // --- End Optimistic UI ---
+
+      // Send the message through the WebSocket channel
       _channel!.sink.add(messageJson);
-      if (kDebugMode) print("[ChatService] Message added to WebSocket sink.");
+      if (kDebugMode)
+        print("[ChatService sendMessage] Message added to WebSocket sink.");
     } catch (e) {
-      print("[ChatService] Error adding message to WebSocket sink: $e");
+      // Handle errors during sending
+      print(
+          "[ChatService sendMessage] Error adding message to WebSocket sink: $e");
       if (optimisticTempId != null) {
+        // If it was an optimistic text message, mark it as failed
         print(
-            "[ChatService] Marking optimistic message $optimisticTempId as failed due to sink error.");
+            "[ChatService sendMessage] Marking optimistic message $optimisticTempId as failed due to sink error.");
         removePendingMessage(optimisticTempId);
         _ref
             .read(conversationProvider(recipientUserId).notifier)
             .updateMessageStatus(optimisticTempId, ChatMessageStatus.failed,
                 errorMessage: "Failed to send message.");
       }
+      // Trigger general error handling (e.g., reconnect)
       _handleError(e);
     }
   }
 
-  // --- *** START: sendReaction Method ADDED *** ---
+  /// Sends a reaction to a specific message.
   void sendReaction(int messageId, String emoji) {
     if (_channel == null ||
         _ref.read(webSocketStateProvider) !=
             WebSocketConnectionState.connected) {
-      print("[ChatService] Cannot send reaction: Not connected.");
-      // Optionally: Show a snackbar to the user
+      print("[ChatService sendReaction] Cannot send reaction: Not connected.");
+      // TODO: Optionally queue or show error
       return;
     }
+    // Validate input
     if (messageId <= 0) {
       print(
-          "[ChatService] Cannot send reaction: Invalid messageId ($messageId).");
+          "[ChatService sendReaction] Cannot send reaction: Invalid messageId ($messageId).");
       return;
     }
     if (emoji.isEmpty) {
-      print("[ChatService] Cannot send reaction: Emoji is empty.");
+      print("[ChatService sendReaction] Cannot send reaction: Emoji is empty.");
       return;
     }
 
+    // Construct payload
     final payload = {
       'type': 'react_to_message',
       'message_id': messageId,
@@ -6845,21 +7104,59 @@ class ChatService {
     };
     final messageJson = jsonEncode(payload);
     print(
-        "[ChatService] Sending reaction (Type: react_to_message): $messageJson");
+        "[ChatService sendReaction] Sending reaction (Type: react_to_message): $messageJson");
 
     try {
+      // Send via WebSocket
       _channel!.sink.add(messageJson);
-      print("[ChatService] Reaction message added to WebSocket sink.");
-    } catch (e) {
       print(
-          "[ChatService] Error adding reaction message to WebSocket sink: $e");
-      _handleError(e); // Trigger reconnect or error state
-      // Optionally: Show a snackbar to the user that reaction failed
+          "[ChatService sendReaction] Reaction message added to WebSocket sink.");
+    } catch (e) {
+      // Handle send errors
+      print(
+          "[ChatService sendReaction] Error adding reaction message to WebSocket sink: $e");
+      _handleError(e); // Trigger general error handling
+      // TODO: Optionally show specific feedback to user
     }
   }
-  // --- *** END: sendReaction Method ADDED *** ---
 
-  // --- _handleMessageAck (Keep as is) ---
+  /// Sends a 'mark_read' message to the server (Phase 1).
+  void sendMarkRead(int otherUserId, int lastMessageId) {
+    if (_channel == null ||
+        _ref.read(webSocketStateProvider) !=
+            WebSocketConnectionState.connected) {
+      print("[ChatService sendMarkRead] Cannot send: Not connected.");
+      return;
+    }
+    if (otherUserId <= 0 || lastMessageId <= 0) {
+      print(
+          "[ChatService sendMarkRead] Invalid parameters: otherUserId=$otherUserId, lastMessageId=$lastMessageId");
+      return;
+    }
+
+    // Construct payload
+    final payload = {
+      'type': 'mark_read',
+      'other_user_id': otherUserId,
+      'message_id': lastMessageId,
+    };
+    final messageJson = jsonEncode(payload);
+    print("[ChatService sendMarkRead] Sending (Type: mark_read): $messageJson");
+
+    try {
+      // Send via WebSocket
+      _channel!.sink.add(messageJson);
+      print(
+          "[ChatService sendMarkRead] Mark read message added to WebSocket sink.");
+    } catch (e) {
+      // Handle send errors
+      print(
+          "[ChatService sendMarkRead] Error adding mark_read message to WebSocket sink: $e");
+      _handleError(e); // Trigger general error handling
+    }
+  }
+
+  /// Handles message acknowledgement from the server.
   void _handleMessageAck(Map<String, dynamic> ackData) {
     final realMessageId = ackData['id'] as int?;
     final ackContent = ackData['content'] as String?;
@@ -6867,6 +7164,7 @@ class ChatService {
     if (kDebugMode)
       print(
           "[ChatService _handleMessageAck] Received: RealID=$realMessageId, Content='$ackContent', MediaURL='$mediaUrlAck'");
+
     if (realMessageId == null) {
       print("[ChatService _handleMessageAck] Invalid ack: Missing real ID.");
       return;
@@ -6877,17 +7175,13 @@ class ChatService {
           "[ChatService _handleMessageAck] Cannot process ack: Current User ID is null.");
       return;
     }
+
+    // Find and remove the corresponding pending message (simplistic FIFO)
     String? foundTempId;
     int? foundRecipientId;
-    // Find the *first* matching tempId (assuming FIFO for acks)
-    // This is a simplification; a more robust system might use message UUIDs
     if (_pendingMessages.isNotEmpty) {
-      // Find *a* pending message for the recipient associated with the ack.
-      // Since we don't get recipient ID in ack, we find the *oldest* pending msg.
-      // THIS IS A LIMITATION. A better ACK would include tempId or recipientId.
       foundTempId = _pendingMessages.keys.first;
-      foundRecipientId =
-          _pendingMessages.remove(foundTempId); // Remove it once processed
+      foundRecipientId = _pendingMessages.remove(foundTempId);
       if (kDebugMode)
         print(
             "[ChatService _handleMessageAck] Found oldest pending message via map: TempID=$foundTempId for Recipient=$foundRecipientId");
@@ -6896,27 +7190,33 @@ class ChatService {
           "[ChatService _handleMessageAck] No pending messages found in tracking map.");
     }
 
+    // Update the message status in the conversation provider
     if (foundTempId != null && foundRecipientId != null) {
       if (kDebugMode)
         print(
             "[ChatService _handleMessageAck] Updating message (TempID: $foundTempId) for ack (Real ID: $realMessageId). Status -> Sent.");
       final conversationNotifier =
           _ref.read(conversationProvider(foundRecipientId).notifier);
+      String? finalMediaUrl =
+          (mediaUrlAck != null && mediaUrlAck.isNotEmpty) ? mediaUrlAck : null;
       conversationNotifier.updateMessageStatus(
-          foundTempId, ChatMessageStatus.sent,
-          finalMessageId: realMessageId,
-          finalMediaUrl: mediaUrlAck // Pass media URL from ack if present
-          );
+        foundTempId,
+        ChatMessageStatus.sent,
+        finalMessageId: realMessageId,
+        finalMediaUrl: finalMediaUrl, // Pass URL from ack if present
+      );
       if (kDebugMode)
         print(
             "[ChatService _handleMessageAck] Message status updated successfully.");
     } else {
+      // Log warning if no matching pending message was found
       print(
           "[ChatService _handleMessageAck] WARNING: Received message_ack for Real ID $realMessageId, but couldn't find/remove a matching tracked pending message.");
+      // Media messages rely on background task success for URL update
     }
   }
 
-  // --- Public Helper methods for tracking pending messages (Keep as is) ---
+  // --- Helper methods for tracking pending messages ---
   void addPendingMessage(String tempId, int recipientId) {
     _pendingMessages[tempId] = recipientId;
     print(
@@ -6930,89 +7230,96 @@ class ChatService {
           "[ChatService removePendingMessage] Removed TempID: $tempId. Count: ${_pendingMessages.length}");
     }
   }
-  // --- End Public Helpers ---
 
-  // --- WebSocket Lifecycle Handlers (Keep as is) ---
+  // --- WebSocket Lifecycle Handlers ---
   void _handleDisconnect() {
-    print("[ChatService] WebSocket disconnected.");
+    print("[ChatService _handleDisconnect] WebSocket disconnected.");
     _channel = null;
     _streamSubscription?.cancel();
     _streamSubscription = null;
-    _pendingMessages.clear();
+    _pendingMessages.clear(); // Clear pending messages on disconnect
     print("[ChatService _handleDisconnect] Cleared pending messages map.");
     _updateState(WebSocketConnectionState.disconnected);
     if (!_isManualDisconnect) {
-      _scheduleReconnect();
+      _scheduleReconnect(); // Attempt to reconnect if not manual
     }
   }
 
   void _handleError(dynamic error) {
-    print("[ChatService] WebSocket error: $error");
+    print("[ChatService _handleError] WebSocket error: $error");
     _channel = null;
     _streamSubscription?.cancel();
     _streamSubscription = null;
-    _pendingMessages.clear();
+    _pendingMessages.clear(); // Clear pending messages on error
     print("[ChatService _handleError] Cleared pending messages map.");
     _updateState(WebSocketConnectionState.error);
     if (!_isManualDisconnect) {
-      _scheduleReconnect();
+      _scheduleReconnect(); // Attempt to reconnect if not manual
     }
   }
 
+  /// Schedules reconnection attempts with exponential backoff.
   void _scheduleReconnect() {
-    if (_reconnectTimer?.isActive ?? false) return;
+    if (_reconnectTimer?.isActive ?? false)
+      return; // Don't schedule if already scheduled
     if (_reconnectAttempts >= _maxReconnectAttempts) {
-      print("[ChatService] Max reconnect attempts reached.");
-      _updateState(WebSocketConnectionState.disconnected);
+      print("[ChatService _scheduleReconnect] Max reconnect attempts reached.");
+      _updateState(WebSocketConnectionState.disconnected); // Stay disconnected
       return;
     }
     _reconnectAttempts++;
+    // Exponential backoff calculation
     final delayMilliseconds =
         _initialReconnectDelay.inMilliseconds * (1 << (_reconnectAttempts - 1));
     final delay = Duration(milliseconds: delayMilliseconds);
     print(
-        "[ChatService] Scheduling reconnect attempt $_reconnectAttempts/$_maxReconnectAttempts in $delay...");
+        "[ChatService _scheduleReconnect] Scheduling reconnect attempt $_reconnectAttempts/$_maxReconnectAttempts in $delay...");
     _reconnectTimer = Timer(delay, () {
-      print("[ChatService] Attempting reconnect...");
-      connect();
+      print(
+          "[ChatService _scheduleReconnect] Timer fired. Attempting reconnect...");
+      connect(); // Attempt to connect again
     });
   }
 
+  /// Manually disconnects the WebSocket.
   void disconnect() {
-    print("[ChatService] Manual disconnect initiated.");
+    print("[ChatService disconnect] Manual disconnect initiated.");
     _isManualDisconnect = true;
-    _reconnectTimer?.cancel();
-    _reconnectAttempts = 0;
-    _streamSubscription?.cancel();
-    _pendingMessages.clear();
+    _reconnectTimer?.cancel(); // Cancel any pending reconnect timers
+    _reconnectAttempts = 0; // Reset attempts on manual disconnect
+    _streamSubscription?.cancel(); // Cancel the stream listener
+    _pendingMessages.clear(); // Clear pending messages
     print("[ChatService disconnect] Cleared pending messages map.");
-    _channel?.sink.close(WebSocketStatus.normalClosure);
-    _channel = null;
-    _streamSubscription = null;
-    _updateState(WebSocketConnectionState.disconnected);
-    print("[ChatService] Disconnected.");
+    _channel?.sink
+        .close(WebSocketStatus.normalClosure); // Close the channel sink
+    _channel = null; // Nullify the channel
+    _streamSubscription = null; // Nullify the subscription
+    _updateState(WebSocketConnectionState.disconnected); // Update state
+    print("[ChatService disconnect] Disconnected.");
   }
 
+  /// Updates the global WebSocket connection state provider.
   void _updateState(WebSocketConnectionState newState) {
+    // Use microtask to ensure updates happen after the current event loop
     Future.microtask(() {
-      // Check if provider is still alive before updating
       try {
+        // Check if the state actually needs changing
         if (_ref.read(webSocketStateProvider) != newState) {
           _ref.read(webSocketStateProvider.notifier).state = newState;
-          print("[ChatService] WebSocket state updated to: $newState");
+          print(
+              "[ChatService _updateState] WebSocket state updated to: $newState");
         }
       } catch (e) {
+        // Catch errors if the provider is accessed after disposal
         print(
             "[ChatService _updateState] Error accessing provider (likely disposed): $e");
       }
     });
   }
-  // --- End Lifecycle Handlers ---
-}
+} // End ChatService
 
-// --- currentUserIdProvider (Keep as is) ---
+// --- currentUserIdProvider ---
 final currentUserIdProvider = Provider<int?>((ref) {
-  // Ensure userProvider is watched correctly
   final user = ref.watch(userProvider);
   return user.id;
 });
@@ -21587,16 +21894,15 @@ class MatchListTile extends StatelessWidget {
 File: widgets/message_bubble.dart
 ================================================
 // lib/widgets/message_bubble.dart
-// import 'dart:convert'; // Keep if needed elsewhere, not strictly for this file now
 import 'dart:io';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:dtx/models/chat_message.dart';
 import 'package:dtx/providers/audio_player_provider.dart';
-import 'package:dtx/providers/conversation_provider.dart'; // <<<--- ADDED for optimistic update call
-import 'package:dtx/providers/user_provider.dart'; // <<<--- ADDED for current user ID
+import 'package:dtx/providers/conversation_provider.dart';
+import 'package:dtx/providers/user_provider.dart';
 import 'package:dtx/providers/service_provider.dart';
 import 'package:dtx/services/chat_service.dart';
-import 'package:dtx/widgets/reaction_emoji_picker.dart';
+import 'package:dtx/widgets/reaction_emoji_picker.dart'; // Make sure this path is correct
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -21604,55 +21910,7 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:audioplayers/audioplayers.dart';
 import 'package:path/path.dart' as p;
 import 'package:url_launcher/url_launcher.dart';
-
-// --- Simple Emoji Picker (Keep as is) ---
-class SimpleEmojiPicker extends StatelessWidget {
-  final Function(String) onEmojiSelected;
-  final List<String> reactionEmojis = const [
-    '👍',
-    '❤️',
-    '😂',
-    '😮',
-    '😢',
-    '😠'
-  ];
-
-  const SimpleEmojiPicker({Key? key, required this.onEmojiSelected})
-      : super(key: key);
-
-  @override
-  Widget build(BuildContext context) {
-    if (kDebugMode) print("[ReactionEmojiPicker] Building picker widget.");
-    return Material(
-      elevation: 6.0,
-      borderRadius: BorderRadius.circular(25.0),
-      color: Colors.white,
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 10.0, vertical: 6.0),
-        child: Wrap(
-          spacing: 6.0,
-          runSpacing: 0.0,
-          alignment: WrapAlignment.center,
-          children: reactionEmojis.map((emoji) {
-            return InkWell(
-              onTap: () {
-                if (kDebugMode)
-                  print("[ReactionEmojiPicker] Emoji selected: $emoji");
-                onEmojiSelected(emoji);
-              },
-              borderRadius: BorderRadius.circular(20),
-              child: Padding(
-                padding: const EdgeInsets.all(7.0),
-                child: Text(emoji, style: const TextStyle(fontSize: 25)),
-              ),
-            );
-          }).toList(),
-        ),
-      ),
-    );
-  }
-}
-// --- End Simple Emoji Picker ---
+import 'package:intl/intl.dart'; // Import for timestamp formatting
 
 class MessageBubble extends ConsumerStatefulWidget {
   final ChatMessage message;
@@ -21687,9 +21945,8 @@ class _MessageBubbleState extends ConsumerState<MessageBubble>
     super.dispose();
   }
 
-  // --- Helpers (Keep as is) ---
+  // --- Helpers ---
   String getFilenameFromUrl(String? url) {
-    /* ... no changes ... */
     if (url == null || url.isEmpty) return "File";
     try {
       final uri = Uri.parse(url);
@@ -21711,7 +21968,6 @@ class _MessageBubbleState extends ConsumerState<MessageBubble>
   }
 
   Future<void> _openMedia(BuildContext context, String url) async {
-    /* ... no changes ... */
     final Uri uri = Uri.parse(url);
     if (!await canLaunchUrl(uri)) {
       if (context.mounted)
@@ -21741,6 +21997,7 @@ class _MessageBubbleState extends ConsumerState<MessageBubble>
               strokeWidth: 2, color: Color(0xFF8B5CF6)),
         ),
       );
+
   Widget _buildMediaErrorPlaceholder({required bool isMe}) => Container(
         color: Colors.grey[isMe ? 700 : 200]?.withOpacity(0.3),
         child: Center(
@@ -21749,9 +22006,8 @@ class _MessageBubbleState extends ConsumerState<MessageBubble>
       );
   // --- End Helpers ---
 
-  // --- _buildReplySnippet (Keep as is) ---
+  // --- _buildReplySnippet ---
   Widget _buildReplySnippet() {
-    /* ... no changes ... */
     final repliedTo = widget.message;
     final textSnippet = repliedTo.repliedMessageTextSnippet;
     final mediaType = repliedTo.repliedMessageMediaType;
@@ -21833,9 +22089,7 @@ class _MessageBubbleState extends ConsumerState<MessageBubble>
   // --- End _buildReplySnippet ---
 
   // --- Reaction Methods ---
-
   void _showEmojiPicker(BuildContext context, Offset globalPosition) {
-    /* ... keep previous implementation ... */
     if (!mounted) return;
     if (kDebugMode)
       print(
@@ -21891,6 +22145,7 @@ class _MessageBubbleState extends ConsumerState<MessageBubble>
               top: top,
               left: left,
               child: ReactionEmojiPicker(
+                // Assuming this is in widgets/reaction_emoji_picker.dart
                 onEmojiSelected: (emoji) {
                   _handleReaction(emoji);
                   _removeEmojiPicker();
@@ -21916,7 +22171,6 @@ class _MessageBubbleState extends ConsumerState<MessageBubble>
   }
 
   void _removeEmojiPicker() {
-    /* ... keep previous implementation ... */
     if (_emojiPickerOverlay != null) {
       try {
         _emojiPickerOverlay!.remove();
@@ -21935,36 +22189,30 @@ class _MessageBubbleState extends ConsumerState<MessageBubble>
     }
   }
 
-  // *** --- START: MODIFIED _handleReaction --- ***
   void _handleReaction(String emoji) {
-    // Basic validation
     if (widget.message.messageID <= 0) {
       if (kDebugMode)
         print(
             "[MessageBubble _handleReaction] Error: Cannot react to unsaved message ID: ${widget.message.messageID}.");
       return;
     }
-    if (!mounted) return; // Check if widget is still mounted
+    if (!mounted) return;
 
     if (kDebugMode)
       print(
           "[MessageBubble _handleReaction] Optimistically applying & sending reaction: MsgID=${widget.message.messageID}, Emoji=$emoji");
 
-    // --- 1. Apply Optimistically ---
-    // Find the other user's ID to get the correct provider instance
     final currentUserId = ref.read(currentUserIdProvider);
     if (currentUserId == null) {
       if (kDebugMode)
         print(
             "[MessageBubble _handleReaction] Error: Could not get current user ID for optimistic update.");
-      return; // Should not happen if user is in chat
+      return;
     }
     final otherUserId = widget.message.senderUserID == currentUserId
         ? widget.message.recipientUserID
         : widget.message.senderUserID;
 
-    // Call the new optimistic method on the correct ConversationNotifier
-    // IMPORTANT: Ensure ConversationNotifier has the optimisticApplyReaction method
     ref
         .read(conversationProvider(otherUserId).notifier)
         .optimisticallyApplyReaction(widget.message.messageID, emoji);
@@ -21972,17 +22220,13 @@ class _MessageBubbleState extends ConsumerState<MessageBubble>
       print(
           "[MessageBubble _handleReaction] Optimistic update called for ConversationNotifier($otherUserId).");
 
-    // --- 2. Send to Backend ---
     ref.read(chatServiceProvider).sendReaction(widget.message.messageID, emoji);
     if (kDebugMode)
       print(
           "[MessageBubble _handleReaction] Reaction sent to backend via ChatService.");
   }
-  // *** --- END: MODIFIED _handleReaction --- ***
 
-  // _buildReactionsDisplay (Keep as is)
   Widget _buildReactionsDisplay() {
-    /* ... keep previous implementation ... */
     final reactions = widget.message.reactionsSummary;
     final currentUserReaction = widget.message.currentUserReaction;
     if (reactions == null || reactions.isEmpty) return const SizedBox.shrink();
@@ -22039,13 +22283,16 @@ class _MessageBubbleState extends ConsumerState<MessageBubble>
 
   @override
   Widget build(BuildContext context) {
-    super.build(context);
+    super.build(context); // Keep the mixin happy
 
     final message = widget.message;
     final isMe = widget.isMe;
     final showTail = widget.showTail;
 
-    // Logging kept as is
+    if (kDebugMode) {
+      print(
+          "[MessageBubble build] ID: ${message.messageID}, TempID: ${message.tempId}, isMe: $isMe, Status: ${message.status}, IsRead: ${message.isRead}");
+    }
 
     final radius = Radius.circular(18.0);
     final borderRadius = BorderRadius.only(
@@ -22058,7 +22305,7 @@ class _MessageBubbleState extends ConsumerState<MessageBubble>
     Widget messageContent;
     Widget? statusIcon;
 
-    // Status Icon Logic (Keep as is)
+    // --- Status Icon Logic (Keep Existing) ---
     if (isMe && message.status != ChatMessageStatus.sent) {
       switch (message.status) {
         case ChatMessageStatus.pending:
@@ -22074,13 +22321,30 @@ class _MessageBubbleState extends ConsumerState<MessageBubble>
           );
           break;
         case ChatMessageStatus.sent:
-          break;
+          break; // Will be handled by read receipt logic below
       }
     }
+    // --- End Status Icon Logic ---
 
-    // Content Rendering Logic (Keep as is)
+    // --- Read Receipt Icon Logic (Phase 3) ---
+    Widget? readReceiptIcon;
+    if (isMe && message.status == ChatMessageStatus.sent) {
+      readReceiptIcon = Icon(
+        message.isRead ? Icons.done_all : Icons.done, // Double tick if read
+        size: 16,
+        color: message.isRead
+            ? Colors.blueAccent
+            : Colors.white70, // Different color for read
+      );
+      if (kDebugMode) {
+        print(
+            "[MessageBubble build] Read Receipt for Msg ID ${message.messageID}: isRead=${message.isRead}, Icon=${message.isRead ? 'done_all' : 'done'}");
+      }
+    }
+    // --- End Read Receipt Icon Logic ---
+
+    // --- Content Rendering Logic (Keep Existing) ---
     if (message.isMedia) {
-      // ... (existing media rendering logic) ...
       final mediaType = message.mediaType?.toLowerCase() ?? '';
       final String? displayPath =
           (message.localFilePath != null && message.localFilePath!.isNotEmpty)
@@ -22089,13 +22353,15 @@ class _MessageBubbleState extends ConsumerState<MessageBubble>
       final bool isUsingLocalFile =
           displayPath == message.localFilePath && message.localFilePath != null;
       final bool isMediaSent = message.status == ChatMessageStatus.sent;
+
       if (displayPath == null || displayPath.isEmpty) {
         messageContent = Text(
           "[Media Error]",
           style: GoogleFonts.poppins(color: Colors.red, fontSize: 14),
         );
       } else if (mediaType.startsWith('image/')) {
-        /* ... image rendering ... */ Widget imageToShow;
+        // Image rendering
+        Widget imageToShow;
         if (isUsingLocalFile) {
           imageToShow = Image.file(File(displayPath),
               key: ValueKey(displayPath),
@@ -22118,11 +22384,13 @@ class _MessageBubbleState extends ConsumerState<MessageBubble>
           child: imageToShow,
         );
       } else if (mediaType.startsWith('video/')) {
-        /* ... video rendering ... */ messageContent = InkWell(
+        // Video placeholder
+        messageContent = InkWell(
           onTap: isMediaSent && !isUsingLocalFile
               ? () => _openMedia(context, displayPath)
               : null,
           child: Container(
+            /* ... video placeholder container ... */
             padding: const EdgeInsets.all(10),
             constraints: BoxConstraints(
                 maxWidth: MediaQuery.of(context).size.width * 0.65,
@@ -22131,6 +22399,7 @@ class _MessageBubbleState extends ConsumerState<MessageBubble>
                 color: Colors.grey[isMe ? 700 : 300],
                 borderRadius: BorderRadius.circular(8)),
             child: Column(
+              /* ... video details ... */
               mainAxisSize: MainAxisSize.min,
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
@@ -22158,8 +22427,8 @@ class _MessageBubbleState extends ConsumerState<MessageBubble>
           ),
         );
       } else if (mediaType.startsWith('audio/')) {
-        /* ... audio rendering ... */ final audioPlayerState =
-            ref.watch(audioPlayerStateProvider);
+        // Audio placeholder/player
+        final audioPlayerState = ref.watch(audioPlayerStateProvider);
         final currentPlayingUrl = ref.watch(currentAudioUrlProvider);
         final playerNotifier = ref.read(audioPlayerControllerProvider.notifier);
         final bool canPlay = isMediaSent && !isUsingLocalFile;
@@ -22172,102 +22441,117 @@ class _MessageBubbleState extends ConsumerState<MessageBubble>
         final bool isThisPaused = canPlay &&
             currentPlayingUrl == displayPath &&
             audioPlayerState == AudioPlayerState.paused;
-        messageContent = Row(mainAxisSize: MainAxisSize.min, children: [
-          IconButton(
-            icon: isThisLoading
-                ? SizedBox(
-                    width: 24,
-                    height: 24,
-                    child: CircularProgressIndicator(
-                        strokeWidth: 2,
-                        color: isMe ? Colors.white : Color(0xFF8B5CF6)))
-                : Icon(isThisPlaying
-                    ? Icons.pause_circle_filled_rounded
-                    : Icons.play_circle_fill_rounded),
-            color: isMe
-                ? Colors.white
-                : (canPlay ? const Color(0xFF8B5CF6) : Colors.grey[400]),
-            iconSize: 36,
-            padding: EdgeInsets.zero,
-            constraints: const BoxConstraints(),
-            tooltip: canPlay ? (isThisPlaying ? 'Pause' : 'Play') : 'Audio',
-            onPressed: isThisLoading || !canPlay
-                ? null
-                : () {
-                    if (isThisPlaying)
-                      playerNotifier.pause();
-                    else if (isThisPaused)
-                      playerNotifier.resume();
-                    else
-                      playerNotifier.play(displayPath!);
-                  },
-          ),
-          const SizedBox(width: 8),
-          Expanded(
-            child: Text(
-              getFilenameFromUrl(displayPath),
-              style: GoogleFonts.poppins(
-                  fontSize: 13, color: isMe ? Colors.white : Colors.black87),
-              overflow: TextOverflow.ellipsis,
-              maxLines: 2,
-            ),
-          ),
-        ]);
+        messageContent = Row(
+            /* ... audio player row ... */
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              IconButton(
+                icon: isThisLoading
+                    ? SizedBox(
+                        width: 24,
+                        height: 24,
+                        child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: isMe ? Colors.white : Color(0xFF8B5CF6)))
+                    : Icon(isThisPlaying
+                        ? Icons.pause_circle_filled_rounded
+                        : Icons.play_circle_fill_rounded),
+                color: isMe
+                    ? Colors.white
+                    : (canPlay ? const Color(0xFF8B5CF6) : Colors.grey[400]),
+                iconSize: 36,
+                padding: EdgeInsets.zero,
+                constraints: const BoxConstraints(),
+                tooltip: canPlay ? (isThisPlaying ? 'Pause' : 'Play') : 'Audio',
+                onPressed: isThisLoading || !canPlay
+                    ? null
+                    : () {
+                        if (isThisPlaying)
+                          playerNotifier.pause();
+                        else if (isThisPaused)
+                          playerNotifier.resume();
+                        else
+                          playerNotifier.play(displayPath!);
+                      },
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  getFilenameFromUrl(displayPath),
+                  style: GoogleFonts.poppins(
+                      fontSize: 13,
+                      color: isMe ? Colors.white : Colors.black87),
+                  overflow: TextOverflow.ellipsis,
+                  maxLines: 2,
+                ),
+              ),
+            ]);
       } else {
-        /* ... generic file rendering ... */ messageContent = InkWell(
+        // Generic file placeholder
+        messageContent = InkWell(
           onTap: isMediaSent && !isUsingLocalFile
               ? () => _openMedia(context, displayPath)
               : null,
-          child: Row(mainAxisSize: MainAxisSize.min, children: [
-            Icon(Icons.insert_drive_file_outlined,
-                color: isMe ? Colors.white70 : Colors.grey[600], size: 30),
-            const SizedBox(width: 10),
-            Expanded(
-              child: Text(
-                getFilenameFromUrl(displayPath),
-                style: GoogleFonts.poppins(
-                    fontSize: 13, color: isMe ? Colors.white : Colors.black87),
-                overflow: TextOverflow.ellipsis,
-                maxLines: 2,
-              ),
-            ),
-          ]),
+          child: Row(
+              /* ... generic file row ... */
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(Icons.insert_drive_file_outlined,
+                    color: isMe ? Colors.white70 : Colors.grey[600], size: 30),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    getFilenameFromUrl(displayPath),
+                    style: GoogleFonts.poppins(
+                        fontSize: 13,
+                        color: isMe ? Colors.white : Colors.black87),
+                    overflow: TextOverflow.ellipsis,
+                    maxLines: 2,
+                  ),
+                ),
+              ]),
         );
       }
     } else {
+      // Text message content
       messageContent = Text(
         message.messageText,
         style: GoogleFonts.poppins(
           color: isMe ? Colors.white : Colors.black87,
           fontSize: 15,
+          height: 1.4, // Add line height for better readability
         ),
       );
     }
+    // --- End Content Rendering ---
 
-    // Final Bubble Structure (Keep as is, uses modified _handleReaction)
+    // --- Main Bubble Structure ---
     return Align(
       alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
       child: Padding(
         padding: EdgeInsets.only(
-            bottom:
-                (message.reactionsSummary?.isNotEmpty ?? false) ? 18.0 : 0.0),
+            bottom: (message.reactionsSummary?.isNotEmpty ?? false)
+                ? 18.0
+                : 0.0), // Adjust bottom padding for reactions
         child: Stack(
           clipBehavior: Clip.none,
           children: [
+            // Dismissible for Reply Swipe
             Dismissible(
               key: Key(message.messageID.toString() +
                   (message.tempId ?? '') +
                   '_dismissible'),
-              direction: DismissDirection.startToEnd,
+              direction: DismissDirection.startToEnd, // Swipe right to reply
               confirmDismiss: (direction) async {
                 if (!mounted) return false;
                 if (kDebugMode)
                   print(
                       "[MessageBubble] Swiped message ID: ${message.messageID}");
                 widget.onReplyInitiated(message);
-                return false;
+                return false; // Don't actually dismiss the widget
               },
               background: Container(
+                /* ... Reply background ... */
                 decoration: BoxDecoration(
                     color: Colors.blue.withOpacity(0.1),
                     borderRadius: borderRadius),
@@ -22277,19 +22561,10 @@ class _MessageBubbleState extends ConsumerState<MessageBubble>
               ),
               child: GestureDetector(
                 onLongPressStart: (LongPressStartDetails details) {
-                  if (!widget.isMe) {
-                    if (message.status != ChatMessageStatus.sent) {
-                      if (kDebugMode)
-                        print(
-                            "[MessageBubble onLongPressStart] Ignoring long press for non-sent message (status: ${message.status})");
-                      return;
-                    }
-                    if (message.messageID <= 0) {
-                      if (kDebugMode)
-                        print(
-                            "[MessageBubble onLongPressStart] Ignoring long press for message with invalid ID: ${message.messageID}.");
-                      return;
-                    }
+                  // Enable reactions only for received messages that are sent
+                  if (!widget.isMe &&
+                      message.status == ChatMessageStatus.sent &&
+                      message.messageID > 0) {
                     if (kDebugMode)
                       print(
                           "[MessageBubble onLongPressStart] Long press detected on message ID: ${message.messageID}");
@@ -22297,10 +22572,11 @@ class _MessageBubbleState extends ConsumerState<MessageBubble>
                   } else {
                     if (kDebugMode)
                       print(
-                          "[MessageBubble onLongPressStart] Ignoring long press on own message.");
+                          "[MessageBubble onLongPressStart] Ignoring long press. isMe=${widget.isMe}, status=${message.status}, id=${message.messageID}");
                   }
                 },
                 child: Container(
+                  // Bubble Container
                   constraints: BoxConstraints(
                     maxWidth: MediaQuery.of(context).size.width * 0.75,
                   ),
@@ -22314,6 +22590,7 @@ class _MessageBubbleState extends ConsumerState<MessageBubble>
                     color: isMe ? const Color(0xFF8B5CF6) : Colors.white,
                     borderRadius: borderRadius,
                     boxShadow: [
+                      /* ... Shadow ... */
                       BoxShadow(
                         color: Colors.black.withOpacity(0.05),
                         blurRadius: 3,
@@ -22326,31 +22603,25 @@ class _MessageBubbleState extends ConsumerState<MessageBubble>
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
+                        // Show Reply Snippet if it's a reply
                         if (message.isReply) _buildReplySnippet(),
-                        Stack(
-                          children: [
-                            Padding(
-                              padding: message.isMedia &&
-                                      (message.mediaType
-                                              ?.startsWith('image/') ??
-                                          false)
-                                  ? EdgeInsets.zero
-                                  : EdgeInsets.only(
-                                      left: 14.0,
-                                      right: 14.0,
-                                      top: message.isReply ? 6.0 : 10.0,
-                                      bottom: 10.0,
-                                    ),
-                              child: messageContent,
-                            ),
-                            if (statusIcon != null)
-                              Positioned(
-                                bottom: 4,
-                                right: isMe ? 4 : null,
-                                left: isMe ? null : 4,
-                                child: statusIcon,
-                              ),
-                          ],
+                        // Main Content Padding and Status/Time
+                        Padding(
+                          padding: message.isMedia &&
+                                  (message.mediaType?.startsWith('image/') ??
+                                      false)
+                              ? EdgeInsets.zero // No padding for image media
+                              : EdgeInsets.only(
+                                  // Padding for text/other media
+                                  left: 14.0,
+                                  right: 14.0,
+                                  top: message.isReply ? 6.0 : 10.0,
+                                  bottom: 10.0 +
+                                      (isMe
+                                          ? 12.0
+                                          : 0.0), // Add bottom padding only for 'Me' bubbles for status
+                                ),
+                          child: messageContent,
                         ),
                       ],
                     ),
@@ -22358,6 +22629,41 @@ class _MessageBubbleState extends ConsumerState<MessageBubble>
                 ),
               ),
             ),
+
+            // --- START: Timestamp and Status Icons Positioned ---
+            Positioned(
+              bottom: 4, // Adjust vertical position as needed
+              right: isMe
+                  ? (showTail ? 12 : 22)
+                  : null, // Position based on tail & isMe
+              left: !isMe ? (showTail ? 12 : 22) : null,
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  // Timestamp
+                  Text(
+                    DateFormat.jm().format(message.sentAt), // Format time
+                    style: GoogleFonts.poppins(
+                      fontSize: 11,
+                      color: isMe
+                          ? Colors.white.withOpacity(0.7)
+                          : Colors.grey[500],
+                    ),
+                  ),
+                  // Space before status icon (only for 'Me' messages)
+                  if (isMe) const SizedBox(width: 4),
+                  // Status Icon OR Read Receipt Icon (only for 'Me' messages)
+                  if (isMe)
+                    statusIcon ??
+                        readReceiptIcon ??
+                        const SizedBox
+                            .shrink(), // Show status, then read, then nothing
+                ],
+              ),
+            ),
+            // --- END: Timestamp and Status Icons ---
+
+            // Reactions Display (Keep as is)
             _buildReactionsDisplay(),
           ],
         ),
