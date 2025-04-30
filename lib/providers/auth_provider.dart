@@ -1,6 +1,6 @@
 // File: providers/auth_provider.dart
 import 'package:dtx/models/auth_model.dart';
-import 'package:dtx/providers/feed_provider.dart'; // Import providers to invalidate
+import 'package:dtx/providers/feed_provider.dart';
 import 'package:dtx/providers/filter_provider.dart';
 import 'package:dtx/providers/matches_provider.dart';
 import 'package:dtx/providers/recieved_likes_provider.dart';
@@ -12,7 +12,8 @@ import '../repositories/auth_repository.dart';
 import '../services/api_service.dart';
 import '../utils/token_storage.dart';
 import 'error_provider.dart';
-import 'service_provider.dart';
+import 'service_provider.dart'; // Ensure this is imported
+import 'package:dtx/services/chat_service.dart'; // <<<--- ADD Import for ChatService
 
 // Provider for GoogleSignIn instance (remains the same)
 final googleSignInProvider = Provider<GoogleSignIn>((ref) {
@@ -21,25 +22,26 @@ final googleSignInProvider = Provider<GoogleSignIn>((ref) {
   );
 });
 
-// AuthProvider definition (remains the same)
+// AuthProvider definition
 final authProvider = StateNotifierProvider<AuthNotifier, AuthState>((ref) {
   final authRepository = ref.watch(authRepositoryProvider);
   // *** Pass ref to the notifier ***
-  return AuthNotifier(ref, authRepository);
+  return AuthNotifier(ref, authRepository); // <<<--- MODIFIED: Pass ref
 });
 
 class AuthNotifier extends StateNotifier<AuthState> {
   // *** Store the Ref object ***
-  final Ref ref;
+  final Ref ref; // <<<--- ADDED: Store ref
   final AuthRepository _authRepository;
 
   // *** Modify constructor to accept Ref ***
   AuthNotifier(this.ref, this._authRepository) : super(const AuthState()) {
+    // <<<--- MODIFIED: Accept ref
     _loadTokenAndCheckStatus();
   }
 
   // _loadTokenAndCheckStatus, checkAuthStatus, signInWithGoogle remain the same
-
+  // ... (keep existing _loadTokenAndCheckStatus, checkAuthStatus, signInWithGoogle methods) ...
   Future<void> _loadTokenAndCheckStatus() async {
     print('[AuthNotifier] Loading token and checking initial status...');
     state = state.copyWith(isLoading: true);
@@ -190,47 +192,51 @@ class AuthNotifier extends StateNotifier<AuthState> {
   // Logout user
   Future<void> logout() async {
     print('[AuthNotifier] Logging out...');
-    final currentToken = state.jwtToken ?? await TokenStorage.getToken();
+    // final currentToken = state.jwtToken ?? await TokenStorage.getToken(); // Keep if needed for backend logout
 
     try {
       final googleSignIn = ref.read(googleSignInProvider);
       await googleSignIn.signOut(); // Sign out from Google
       await googleSignIn.disconnect().catchError((e) {
-        // Catch errors during disconnect specifically, as it can sometimes fail
         print('[AuthNotifier] Non-critical error during Google disconnect: $e');
       });
     } catch (e) {
       print('[AuthNotifier] Error during Google Sign Out: $e');
-      // Decide if you want to proceed with app logout even if Google logout fails
     } finally {
-      await TokenStorage.removeToken(); // Remove app token *always*
+      // Use finally to ensure cleanup happens
+
+      // *** --- START: Call ChatService Disconnect --- ***
+      try {
+        print('[AuthNotifier] Attempting to disconnect ChatService...');
+        // Access ChatService via the stored ref
+        ref.read(chatServiceProvider).disconnect();
+        print('[AuthNotifier] ChatService disconnect called.');
+      } catch (e) {
+        // Log error but don't prevent logout if ChatService interaction fails
+        print(
+            '[AuthNotifier] Error disconnecting ChatService (might not have been connected): $e');
+      }
+      // *** --- END: Call ChatService Disconnect --- ***
+
+      await TokenStorage.removeToken();
       print('[AuthNotifier] Token removed from storage.');
 
-      // Reset auth state *first*
+      // Reset auth state *after* cleanup actions
       state = const AuthState(authStatus: AuthStatus.login);
       print('[AuthNotifier] Auth state reset to login.');
 
-      // *** Invalidate other user-specific providers ***
+      // Invalidate other user-specific providers
       print('[AuthNotifier] Invalidating user-specific providers...');
       ref.invalidate(userProvider);
       ref.invalidate(feedProvider);
       ref.invalidate(receivedLikesProvider);
       ref.invalidate(filterProvider);
-      ref.invalidate(matchesProvider); // <--- ADD THIS LINE
+      ref.invalidate(matchesProvider);
       // Add any other providers that store user-specific data here
-      // e.g., ref.invalidate(chatProvider);
-      // e.g., ref.invalidate(likerProfileProvider); // .family needs specific handling if needed globally
       print('[AuthNotifier] Providers invalidated.');
 
-      // Optionally, you could call a backend logout endpoint if you have one
-      // if (currentToken != null) {
-      //   try {
-      //     await _authRepository.logoutBackend(currentToken);
-      //     print('[AuthNotifier] Backend logout successful.');
-      //   } catch (e) {
-      //     print('[AuthNotifier] Backend logout failed (non-critical): $e');
-      //   }
-      // }
+      // Optional backend logout call (keep if you have it)
+      // if (currentToken != null) { ... }
 
       print('[AuthNotifier] Local logout complete.');
     }

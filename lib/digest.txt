@@ -3185,6 +3185,9 @@ class ConversationNotifier extends StateNotifier<ConversationState> {
         mediaUrl: finalMediaUrl,
         errorMessage: errorMessage,
         clearErrorMessage: errorMessage == null,
+        // NOTE: Do not clear localFilePath based on status update alone.
+        // It should be cleared when the message is SENT and ACKNOWLEDGED potentially,
+        // or handled by the UI component. Let's keep it for now for potential retry.
         clearLocalFilePath: false,
       );
       final updatedMessages = List<ChatMessage>.from(currentMessages);
@@ -5966,8 +5969,7 @@ import 'package:dtx/providers/auth_provider.dart';
 import 'package:dtx/utils/app_enums.dart';
 import 'package:dtx/utils/token_storage.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-// Removed unused http_parser import
-// Removed unused path import
+import 'package:flutter/foundation.dart'; // <-- ADDED for kDebugMode
 
 import '../models/media_upload_model.dart';
 import '../services/api_service.dart';
@@ -5986,8 +5988,10 @@ class MediaRepository {
         final authState = ref!.read(authProvider);
         token = authState.jwtToken;
       } catch (e) {
-        print(
-            "[MediaRepository _getAuthToken] Error reading auth provider: $e");
+        if (kDebugMode) {
+          print(
+              "[MediaRepository _getAuthToken] Error reading auth provider: $e");
+        }
       }
     }
     if (token == null || token.isEmpty) {
@@ -5997,12 +6001,17 @@ class MediaRepository {
   }
   // --- END Helper ---
 
-  // --- Method for CHAT Media Presigned URL ---
+  // --- START: Method for CHAT Media Presigned URL ---
+  /// Fetches presigned URL and final object URL for uploading media in chat.
+  ///
+  /// Throws [ApiException] on failure.
   Future<Map<String, String>> getChatMediaPresignedUrl(
       String filename, String fileType) async {
     final String methodName = 'getChatMediaPresignedUrl';
-    print(
-        '[MediaRepository $methodName] Getting chat media presigned URL for $filename ($fileType)...');
+    if (kDebugMode) {
+      print(
+          '[MediaRepository $methodName] Getting chat media presigned URL for $filename ($fileType)...');
+    }
     try {
       String? token = await _getAuthToken();
       if (token == null) {
@@ -6010,7 +6019,9 @@ class MediaRepository {
       }
       final headers = {'Authorization': 'Bearer $token'};
       final body = {'filename': filename, 'type': fileType};
-      print('[MediaRepository $methodName] Request Body: $body');
+      if (kDebugMode) {
+        print('[MediaRepository $methodName] Request Body: $body');
+      }
 
       final response = await _apiService.post(
         '/api/chat/upload', // Use the CHAT media endpoint
@@ -6018,11 +6029,15 @@ class MediaRepository {
         headers: headers,
       );
 
-      print('[MediaRepository $methodName] API Response: $response');
+      if (kDebugMode) {
+        print('[MediaRepository $methodName] API Response: $response');
+      }
       if (response['success'] == true &&
           response['presigned_url'] != null &&
           response['object_url'] != null) {
-        print('[MediaRepository $methodName] URLs received successfully.');
+        if (kDebugMode) {
+          print('[MediaRepository $methodName] URLs received successfully.');
+        }
         return {
           'presigned_url': response['presigned_url'].toString(),
           'object_url': response['object_url'].toString(),
@@ -6030,15 +6045,21 @@ class MediaRepository {
       } else {
         final message = response['message']?.toString() ??
             'Failed to get chat media presigned URL.';
-        print('[MediaRepository $methodName] Failed: $message');
+        if (kDebugMode) {
+          print('[MediaRepository $methodName] Failed: $message');
+        }
         throw ApiException(message);
       }
     } on ApiException catch (e) {
-      print(
-          '[MediaRepository $methodName] API Exception: ${e.message} (Status: ${e.statusCode})');
+      if (kDebugMode) {
+        print(
+            '[MediaRepository $methodName] API Exception: ${e.message} (Status: ${e.statusCode})');
+      }
       rethrow;
     } catch (e) {
-      print('[MediaRepository $methodName] Unexpected Error: $e');
+      if (kDebugMode) {
+        print('[MediaRepository $methodName] Unexpected Error: $e');
+      }
       throw ApiException('Error getting chat presigned URL: ${e.toString()}');
     }
   }
@@ -6649,19 +6670,34 @@ import 'package:dtx/models/ws_message_model.dart';
 import 'package:dtx/providers/auth_provider.dart';
 import 'package:dtx/providers/conversation_provider.dart';
 import 'package:dtx/providers/reaction_provider.dart';
-import 'package:dtx/providers/read_update_provider.dart'; // <-- Phase 2 Provider
+import 'package:dtx/providers/read_update_provider.dart';
 import 'package:dtx/providers/user_provider.dart';
 import 'package:dtx/providers/status_provider.dart';
 import 'package:dtx/utils/token_storage.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-// --- WebSocketConnectionState enum and webSocketStateProvider ---
+// --- WebSocketConnectionState enum and webSocketStateProvider (Keep as is) ---
 enum WebSocketConnectionState { disconnected, connecting, connected, error }
 
 final webSocketStateProvider = StateProvider<WebSocketConnectionState>(
     (ref) => WebSocketConnectionState.disconnected);
 // ---
+
+// --- START: Helper Class for Pending Messages ---
+/// Holds information about a message sent optimistically, waiting for ack.
+class PendingMessageInfo {
+  final int recipientId;
+  final String? mediaUrl; // Store the final S3 URL if it's a media message
+
+  PendingMessageInfo({required this.recipientId, this.mediaUrl});
+
+  @override
+  String toString() {
+    return 'PendingMessageInfo(recipientId: $recipientId, hasMediaUrl: ${mediaUrl != null})';
+  }
+}
+// --- END: Helper Class ---
 
 class ChatService {
   final Ref _ref;
@@ -6674,12 +6710,13 @@ class ChatService {
   static const int _maxReconnectAttempts = 5;
   static const Duration _initialReconnectDelay = Duration(seconds: 2);
 
-  // Tracks pending text messages sent from this client, mapping tempId to recipientId
-  // Used to update the status upon receiving an ack.
-  final Map<String, int> _pendingMessages = {};
+  // --- MODIFIED: Use PendingMessageInfo ---
+  // Tracks pending messages sent from this client, mapping tempId to its info.
+  final Map<String, PendingMessageInfo> _pendingMessages = {};
+  // --- END MODIFICATION ---
 
   ChatService(this._ref, this._wsUrl) {
-    print("[ChatService] Initialized with URL: $_wsUrl");
+    if (kDebugMode) print("[ChatService] Initialized with URL: $_wsUrl");
   }
 
   /// Establishes WebSocket connection.
@@ -6690,16 +6727,18 @@ class ChatService {
     if (_channel != null &&
         _ref.read(webSocketStateProvider) ==
             WebSocketConnectionState.connected) {
-      print("[ChatService connect] Already connected.");
+      if (kDebugMode) print("[ChatService connect] Already connected.");
       return;
     }
     if (_ref.read(webSocketStateProvider) ==
         WebSocketConnectionState.connecting) {
-      print("[ChatService connect] Connection attempt already in progress.");
+      if (kDebugMode)
+        print("[ChatService connect] Connection attempt already in progress.");
       return;
     }
 
-    print("[ChatService connect] Attempting to connect to $_wsUrl...");
+    if (kDebugMode)
+      print("[ChatService connect] Attempting to connect to $_wsUrl...");
     _updateState(
         WebSocketConnectionState.connecting); // Update state to connecting
 
@@ -6707,7 +6746,8 @@ class ChatService {
     String? token =
         _ref.read(authProvider).jwtToken ?? await TokenStorage.getToken();
     if (token == null || token.isEmpty) {
-      print("[ChatService connect] Connection failed: Auth token not found.");
+      if (kDebugMode)
+        print("[ChatService connect] Connection failed: Auth token not found.");
       _updateState(WebSocketConnectionState.error); // Update state to error
       return;
     }
@@ -6722,7 +6762,8 @@ class ChatService {
         headers: headers,
         pingInterval: const Duration(seconds: 15), // Keep connection alive
       );
-      print("[ChatService connect] WebSocket channel created. Listening...");
+      if (kDebugMode)
+        print("[ChatService connect] WebSocket channel created. Listening...");
 
       // Listen to incoming messages, completion, and errors
       _streamSubscription = _channel!.stream.listen(
@@ -6735,10 +6776,11 @@ class ChatService {
       // Update state to connected and reset reconnect attempts
       _updateState(WebSocketConnectionState.connected);
       _reconnectAttempts = 0;
-      print("[ChatService connect] Connection established successfully.");
+      if (kDebugMode)
+        print("[ChatService connect] Connection established successfully.");
     } catch (e) {
       // Handle connection errors
-      print("[ChatService connect] Connection failed: $e");
+      if (kDebugMode) print("[ChatService connect] Connection failed: $e");
       _handleError(e); // Trigger error handling and potential reconnect
     }
   }
@@ -6765,8 +6807,9 @@ class ChatService {
               msg.senderUserID == null ||
               msg.recipientUserID == null ||
               msg.sentAt == null) {
-            print(
-                "[ChatService _onMessageReceived] Received 'chat_message' with invalid/missing essential fields. Msg: $decodedJson");
+            if (kDebugMode)
+              print(
+                  "[ChatService _onMessageReceived] Received 'chat_message' with invalid/missing essential fields. Msg: $decodedJson");
             return;
           }
           final currentUserId = _ref.read(currentUserIdProvider);
@@ -6788,8 +6831,9 @@ class ChatService {
           try {
             sentAt = DateTime.parse(msg.sentAt!).toLocal();
           } catch (e) {
-            print(
-                "[ChatService _onMessageReceived] Error parsing sent_at '${msg.sentAt}': $e. Using local time as fallback.");
+            if (kDebugMode)
+              print(
+                  "[ChatService _onMessageReceived] Error parsing sent_at '${msg.sentAt}': $e. Using local time as fallback.");
             sentAt = DateTime.now();
           }
           // Create ChatMessage object
@@ -6829,8 +6873,9 @@ class ChatService {
             print(
                 "[ChatService _onMessageReceived] Received status_update: $decodedJson");
           if (msg.userID == null || msg.userID! <= 0 || msg.status == null) {
-            print(
-                "[ChatService _onMessageReceived] Invalid status_update message: Missing user_id or status. Data: $decodedJson");
+            if (kDebugMode)
+              print(
+                  "[ChatService _onMessageReceived] Invalid status_update message: Missing user_id or status. Data: $decodedJson");
             return;
           }
           final bool isOnline = msg.status!.toLowerCase() == 'online';
@@ -6852,8 +6897,9 @@ class ChatService {
               msg.reactorUserID == null ||
               msg.isRemoved == null ||
               (msg.emoji == null && !msg.isRemoved!)) {
-            print(
-                "[ChatService _onMessageReceived] Invalid reaction_update message: Missing required fields. Data: $decodedJson");
+            if (kDebugMode)
+              print(
+                  "[ChatService _onMessageReceived] Invalid reaction_update message: Missing required fields. Data: $decodedJson");
             return;
           }
           final reactionUpdate = ReactionUpdate(
@@ -6875,11 +6921,13 @@ class ChatService {
             print(
                 "[ChatService _onMessageReceived] Received reaction_ack: $decodedJson");
           if (msg.messageID != null && msg.content != null) {
-            print(
-                "[ChatService _onMessageReceived] Reaction ack for message ${msg.messageID}: ${msg.content}");
+            if (kDebugMode)
+              print(
+                  "[ChatService _onMessageReceived] Reaction ack for message ${msg.messageID}: ${msg.content}");
           } else {
-            print(
-                "[ChatService _onMessageReceived] Received incomplete reaction_ack: $decodedJson");
+            if (kDebugMode)
+              print(
+                  "[ChatService _onMessageReceived] Received incomplete reaction_ack: $decodedJson");
           }
           break;
 
@@ -6890,8 +6938,9 @@ class ChatService {
                 "[ChatService _onMessageReceived] Received messages_read_update: $decodedJson");
           // Validate necessary fields from the incoming message
           if (msg.readerUserID == null || msg.messageID == null) {
-            print(
-                "[ChatService _onMessageReceived] Invalid messages_read_update: Missing reader_user_id or message_id. Data: $decodedJson");
+            if (kDebugMode)
+              print(
+                  "[ChatService _onMessageReceived] Invalid messages_read_update: Missing reader_user_id or message_id. Data: $decodedJson");
             return; // Stop processing if essential data is missing
           }
           // Create the ReadUpdate object
@@ -6915,39 +6964,46 @@ class ChatService {
           // Use the otherUserID field from the parsed WsMessage
           if (msg.messageID != null && msg.otherUserID != null) {
             // *** Corrected field access ***
-            print(
-                "[ChatService _onMessageReceived] Mark read ack: Marked messages from user ${msg.otherUserID} up to ID ${msg.messageID} as seen. Count: ${msg.count ?? 'N/A'}. Server says: ${msg.content ?? ''}");
+            if (kDebugMode)
+              print(
+                  "[ChatService _onMessageReceived] Mark read ack: Marked messages from user ${msg.otherUserID} up to ID ${msg.messageID} as seen. Count: ${msg.count ?? 'N/A'}. Server says: ${msg.content ?? ''}");
             // No UI state change needed here, just confirmation.
           } else {
-            print(
-                "[ChatService _onMessageReceived] Received incomplete mark_read_ack (missing messageID or otherUserID): $decodedJson");
+            if (kDebugMode)
+              print(
+                  "[ChatService _onMessageReceived] Received incomplete mark_read_ack (missing messageID or otherUserID): $decodedJson");
           }
           break;
         // --- End mark_read_ack ---
 
         // --- Error from Server ---
         case 'error':
-          print(
-              "[ChatService _onMessageReceived] Received error message from server: ${msg.content}");
+          if (kDebugMode)
+            print(
+                "[ChatService _onMessageReceived] Received error message from server: ${msg.content}");
           // TODO: Consider showing error to user via a provider/snackbar
           break;
 
         // --- Info from Server ---
         case 'info':
-          print(
-              "[ChatService _onMessageReceived] Received info message from server: ${msg.content}");
+          if (kDebugMode)
+            print(
+                "[ChatService _onMessageReceived] Received info message from server: ${msg.content}");
           break;
 
         // --- Default for Unhandled Types ---
         default:
-          print(
-              "[ChatService _onMessageReceived] Received unhandled message type '${msg.type}': $decodedJson");
+          if (kDebugMode)
+            print(
+                "[ChatService _onMessageReceived] Received unhandled message type '${msg.type}': $decodedJson");
       }
     } catch (e, stacktrace) {
       // Catch JSON decoding errors or other processing errors
-      print(
-          "[ChatService _onMessageReceived] Error processing received message: $e");
-      print("[ChatService _onMessageReceived] Stacktrace: $stacktrace");
+      if (kDebugMode)
+        print(
+            "[ChatService _onMessageReceived] Error processing received message: $e");
+      if (kDebugMode)
+        print("[ChatService _onMessageReceived] Stacktrace: $stacktrace");
     }
   }
 
@@ -6962,14 +7018,16 @@ class ChatService {
     if (_channel == null ||
         _ref.read(webSocketStateProvider) !=
             WebSocketConnectionState.connected) {
-      print("[ChatService sendMessage] Cannot send message: Not connected.");
+      if (kDebugMode)
+        print("[ChatService sendMessage] Cannot send message: Not connected.");
       // TODO: Optionally queue the message or show an error
       return;
     }
     final currentUserId = _ref.read(currentUserIdProvider);
     if (currentUserId == null) {
-      print(
-          "[ChatService sendMessage] Cannot send message: Current User ID is null.");
+      if (kDebugMode)
+        print(
+            "[ChatService sendMessage] Cannot send message: Current User ID is null.");
       return;
     }
 
@@ -6991,7 +7049,8 @@ class ChatService {
       payload['text'] = null; // Ensure text is null for media messages
       isMediaMessage = true;
       if (kDebugMode)
-        print("[ChatService sendMessage] Preparing media message payload.");
+        print(
+            "[ChatService sendMessage] Preparing media message payload with URL: $mediaUrl");
     } else if (text != null && text.trim().isNotEmpty) {
       payload['text'] = text.trim();
       payload['media_url'] = null; // Ensure media fields are null for text
@@ -7000,8 +7059,9 @@ class ChatService {
       if (kDebugMode)
         print("[ChatService sendMessage] Preparing text message payload.");
     } else {
-      print(
-          "[ChatService sendMessage] Cannot send: Message must have text or media.");
+      if (kDebugMode)
+        print(
+            "[ChatService sendMessage] Cannot send: Message must have text or media.");
       return; // Don't send empty messages
     }
 
@@ -7020,7 +7080,6 @@ class ChatService {
 
     try {
       // --- Optimistic UI Update for TEXT messages ---
-      // Media messages are handled optimistically by ChatDetailScreen during upload
       if (!isMediaMessage) {
         optimisticTempId = DateTime.now().millisecondsSinceEpoch.toString();
         final sentMessage = ChatMessage(
@@ -7036,22 +7095,19 @@ class ChatService {
           mediaUrl: null,
           mediaType: null,
           replyToMessageID: replyToMessageId, // Include reply info
-          // Note: Reply preview info needs to be fetched/passed if needed here
         );
         // Track pending message and update conversation provider
-        addPendingMessage(optimisticTempId, recipientUserId);
+        // Pass null for mediaUrl when tracking text messages
+        addPendingMessage(optimisticTempId, recipientUserId, null);
         _ref
             .read(conversationProvider(recipientUserId).notifier)
             .addSentMessage(sentMessage);
         if (kDebugMode)
           print(
               "[ChatService sendMessage] Added optimistic TEXT message (TempID: $optimisticTempId) to conversation with $recipientUserId");
-      } else {
-        if (kDebugMode)
-          print(
-              "[ChatService sendMessage] Media message payload prepared. Optimistic message added by ChatDetailScreen.");
       }
-      // --- End Optimistic UI ---
+      // Media messages are added optimistically by ChatDetailScreen before calling this.
+      // The addPendingMessage call happens in ChatDetailScreen *after* upload, passing the mediaUrl.
 
       // Send the message through the WebSocket channel
       _channel!.sink.add(messageJson);
@@ -7059,12 +7115,14 @@ class ChatService {
         print("[ChatService sendMessage] Message added to WebSocket sink.");
     } catch (e) {
       // Handle errors during sending
-      print(
-          "[ChatService sendMessage] Error adding message to WebSocket sink: $e");
+      if (kDebugMode)
+        print(
+            "[ChatService sendMessage] Error adding message to WebSocket sink: $e");
       if (optimisticTempId != null) {
         // If it was an optimistic text message, mark it as failed
-        print(
-            "[ChatService sendMessage] Marking optimistic message $optimisticTempId as failed due to sink error.");
+        if (kDebugMode)
+          print(
+              "[ChatService sendMessage] Marking optimistic message $optimisticTempId as failed due to sink error.");
         removePendingMessage(optimisticTempId);
         _ref
             .read(conversationProvider(recipientUserId).notifier)
@@ -7081,18 +7139,23 @@ class ChatService {
     if (_channel == null ||
         _ref.read(webSocketStateProvider) !=
             WebSocketConnectionState.connected) {
-      print("[ChatService sendReaction] Cannot send reaction: Not connected.");
+      if (kDebugMode)
+        print(
+            "[ChatService sendReaction] Cannot send reaction: Not connected.");
       // TODO: Optionally queue or show error
       return;
     }
     // Validate input
     if (messageId <= 0) {
-      print(
-          "[ChatService sendReaction] Cannot send reaction: Invalid messageId ($messageId).");
+      if (kDebugMode)
+        print(
+            "[ChatService sendReaction] Cannot send reaction: Invalid messageId ($messageId).");
       return;
     }
     if (emoji.isEmpty) {
-      print("[ChatService sendReaction] Cannot send reaction: Emoji is empty.");
+      if (kDebugMode)
+        print(
+            "[ChatService sendReaction] Cannot send reaction: Emoji is empty.");
       return;
     }
 
@@ -7103,18 +7166,21 @@ class ChatService {
       'emoji': emoji,
     };
     final messageJson = jsonEncode(payload);
-    print(
-        "[ChatService sendReaction] Sending reaction (Type: react_to_message): $messageJson");
+    if (kDebugMode)
+      print(
+          "[ChatService sendReaction] Sending reaction (Type: react_to_message): $messageJson");
 
     try {
       // Send via WebSocket
       _channel!.sink.add(messageJson);
-      print(
-          "[ChatService sendReaction] Reaction message added to WebSocket sink.");
+      if (kDebugMode)
+        print(
+            "[ChatService sendReaction] Reaction message added to WebSocket sink.");
     } catch (e) {
       // Handle send errors
-      print(
-          "[ChatService sendReaction] Error adding reaction message to WebSocket sink: $e");
+      if (kDebugMode)
+        print(
+            "[ChatService sendReaction] Error adding reaction message to WebSocket sink: $e");
       _handleError(e); // Trigger general error handling
       // TODO: Optionally show specific feedback to user
     }
@@ -7125,12 +7191,14 @@ class ChatService {
     if (_channel == null ||
         _ref.read(webSocketStateProvider) !=
             WebSocketConnectionState.connected) {
-      print("[ChatService sendMarkRead] Cannot send: Not connected.");
+      if (kDebugMode)
+        print("[ChatService sendMarkRead] Cannot send: Not connected.");
       return;
     }
     if (otherUserId <= 0 || lastMessageId <= 0) {
-      print(
-          "[ChatService sendMarkRead] Invalid parameters: otherUserId=$otherUserId, lastMessageId=$lastMessageId");
+      if (kDebugMode)
+        print(
+            "[ChatService sendMarkRead] Invalid parameters: otherUserId=$otherUserId, lastMessageId=$lastMessageId");
       return;
     }
 
@@ -7141,104 +7209,126 @@ class ChatService {
       'message_id': lastMessageId,
     };
     final messageJson = jsonEncode(payload);
-    print("[ChatService sendMarkRead] Sending (Type: mark_read): $messageJson");
+    if (kDebugMode)
+      print(
+          "[ChatService sendMarkRead] Sending (Type: mark_read): $messageJson");
 
     try {
       // Send via WebSocket
       _channel!.sink.add(messageJson);
-      print(
-          "[ChatService sendMarkRead] Mark read message added to WebSocket sink.");
+      if (kDebugMode)
+        print(
+            "[ChatService sendMarkRead] Mark read message added to WebSocket sink.");
     } catch (e) {
       // Handle send errors
-      print(
-          "[ChatService sendMarkRead] Error adding mark_read message to WebSocket sink: $e");
+      if (kDebugMode)
+        print(
+            "[ChatService sendMarkRead] Error adding mark_read message to WebSocket sink: $e");
       _handleError(e); // Trigger general error handling
     }
   }
 
-  /// Handles message acknowledgement from the server.
+  /// Handles message acknowledgement from the server. (Modified)
   void _handleMessageAck(Map<String, dynamic> ackData) {
     final realMessageId = ackData['id'] as int?;
     final ackContent = ackData['content'] as String?;
-    final mediaUrlAck = ackData['media_url'] as String?;
+    // Note: media_url is NOT expected in the ack from backend for chat messages
+
     if (kDebugMode)
       print(
-          "[ChatService _handleMessageAck] Received: RealID=$realMessageId, Content='$ackContent', MediaURL='$mediaUrlAck'");
+          "[ChatService _handleMessageAck] Received: RealID=$realMessageId, Content='$ackContent'");
 
-    if (realMessageId == null) {
-      print("[ChatService _handleMessageAck] Invalid ack: Missing real ID.");
+    if (realMessageId == null || realMessageId <= 0) {
+      if (kDebugMode)
+        print(
+            "[ChatService _handleMessageAck] Invalid ack: Missing or invalid real ID ($realMessageId).");
       return;
     }
     final currentUserId = _ref.read(currentUserIdProvider);
     if (currentUserId == null) {
-      print(
-          "[ChatService _handleMessageAck] Cannot process ack: Current User ID is null.");
+      if (kDebugMode)
+        print(
+            "[ChatService _handleMessageAck] Cannot process ack: Current User ID is null.");
       return;
     }
 
-    // Find and remove the corresponding pending message (simplistic FIFO)
+    // --- MODIFIED: Find pending message and its stored URL ---
     String? foundTempId;
-    int? foundRecipientId;
-    if (_pendingMessages.isNotEmpty) {
-      foundTempId = _pendingMessages.keys.first;
-      foundRecipientId = _pendingMessages.remove(foundTempId);
+    PendingMessageInfo? foundInfo;
+    // Iterate to find the FIRST matching tempId (simple FIFO assumption)
+    for (var entry in _pendingMessages.entries) {
+      foundTempId = entry.key;
+      foundInfo = entry.value;
+      _pendingMessages.remove(foundTempId); // Remove the matched entry
       if (kDebugMode)
         print(
-            "[ChatService _handleMessageAck] Found oldest pending message via map: TempID=$foundTempId for Recipient=$foundRecipientId");
-    } else {
-      print(
-          "[ChatService _handleMessageAck] No pending messages found in tracking map.");
+            "[ChatService _handleMessageAck] Found & removed pending message: TempID=$foundTempId, Info: $foundInfo");
+      break; // Stop after finding the first (oldest)
     }
+    // --- END MODIFICATION ---
 
-    // Update the message status in the conversation provider
-    if (foundTempId != null && foundRecipientId != null) {
+    if (foundTempId != null && foundInfo != null) {
       if (kDebugMode)
         print(
-            "[ChatService _handleMessageAck] Updating message (TempID: $foundTempId) for ack (Real ID: $realMessageId). Status -> Sent.");
+            "[ChatService _handleMessageAck] Updating message (TempID: $foundTempId) for ack (Real ID: $realMessageId). Status -> Sent. Passing MediaURL: ${foundInfo.mediaUrl}");
       final conversationNotifier =
-          _ref.read(conversationProvider(foundRecipientId).notifier);
-      String? finalMediaUrl =
-          (mediaUrlAck != null && mediaUrlAck.isNotEmpty) ? mediaUrlAck : null;
+          _ref.read(conversationProvider(foundInfo.recipientId).notifier);
+
+      // *** PASS the stored mediaUrl (foundInfo.mediaUrl) ***
       conversationNotifier.updateMessageStatus(
         foundTempId,
         ChatMessageStatus.sent,
         finalMessageId: realMessageId,
-        finalMediaUrl: finalMediaUrl, // Pass URL from ack if present
+        finalMediaUrl: foundInfo.mediaUrl, // Use the URL stored with the tempId
       );
       if (kDebugMode)
         print(
             "[ChatService _handleMessageAck] Message status updated successfully.");
     } else {
-      // Log warning if no matching pending message was found
-      print(
-          "[ChatService _handleMessageAck] WARNING: Received message_ack for Real ID $realMessageId, but couldn't find/remove a matching tracked pending message.");
-      // Media messages rely on background task success for URL update
+      if (kDebugMode)
+        print(
+            "[ChatService _handleMessageAck] WARNING: Received message_ack for Real ID $realMessageId, but couldn't find/remove a matching tracked pending message. This might be okay if it was a pure text message ack or if tracking failed.");
     }
   }
 
-  // --- Helper methods for tracking pending messages ---
-  void addPendingMessage(String tempId, int recipientId) {
-    _pendingMessages[tempId] = recipientId;
-    print(
-        "[ChatService addPendingMessage] Added TempID: $tempId for Recipient: $recipientId. Count: ${_pendingMessages.length}");
+  // --- MODIFIED: Helper methods for tracking pending messages ---
+  /// Stores info about a message sent optimistically.
+  /// [mediaUrl] should be the final S3 URL if it's a media message.
+  void addPendingMessage(String tempId, int recipientId, String? mediaUrl) {
+    _pendingMessages[tempId] = PendingMessageInfo(
+        recipientId: recipientId,
+        mediaUrl: mediaUrl // Store the URL along with recipient
+        );
+    if (kDebugMode)
+      print(
+          "[ChatService addPendingMessage] Added TempID: $tempId | Recipient: $recipientId | MediaURL: ${mediaUrl != null} | Pending Count: ${_pendingMessages.length}");
   }
 
+  /// Removes a message from tracking (e.g., after ack or failure).
   void removePendingMessage(String tempId) {
     if (_pendingMessages.containsKey(tempId)) {
       _pendingMessages.remove(tempId);
-      print(
-          "[ChatService removePendingMessage] Removed TempID: $tempId. Count: ${_pendingMessages.length}");
+      if (kDebugMode)
+        print(
+            "[ChatService removePendingMessage] Removed TempID: $tempId. Pending Count: ${_pendingMessages.length}");
+    } else {
+      if (kDebugMode)
+        print(
+            "[ChatService removePendingMessage] Attempted to remove TempID $tempId, but it was not found in the map.");
     }
   }
+  // --- END MODIFICATION ---
 
   // --- WebSocket Lifecycle Handlers ---
   void _handleDisconnect() {
-    print("[ChatService _handleDisconnect] WebSocket disconnected.");
+    if (kDebugMode)
+      print("[ChatService _handleDisconnect] WebSocket disconnected.");
     _channel = null;
     _streamSubscription?.cancel();
     _streamSubscription = null;
     _pendingMessages.clear(); // Clear pending messages on disconnect
-    print("[ChatService _handleDisconnect] Cleared pending messages map.");
+    if (kDebugMode)
+      print("[ChatService _handleDisconnect] Cleared pending messages map.");
     _updateState(WebSocketConnectionState.disconnected);
     if (!_isManualDisconnect) {
       _scheduleReconnect(); // Attempt to reconnect if not manual
@@ -7246,12 +7336,13 @@ class ChatService {
   }
 
   void _handleError(dynamic error) {
-    print("[ChatService _handleError] WebSocket error: $error");
+    if (kDebugMode) print("[ChatService _handleError] WebSocket error: $error");
     _channel = null;
     _streamSubscription?.cancel();
     _streamSubscription = null;
     _pendingMessages.clear(); // Clear pending messages on error
-    print("[ChatService _handleError] Cleared pending messages map.");
+    if (kDebugMode)
+      print("[ChatService _handleError] Cleared pending messages map.");
     _updateState(WebSocketConnectionState.error);
     if (!_isManualDisconnect) {
       _scheduleReconnect(); // Attempt to reconnect if not manual
@@ -7263,7 +7354,9 @@ class ChatService {
     if (_reconnectTimer?.isActive ?? false)
       return; // Don't schedule if already scheduled
     if (_reconnectAttempts >= _maxReconnectAttempts) {
-      print("[ChatService _scheduleReconnect] Max reconnect attempts reached.");
+      if (kDebugMode)
+        print(
+            "[ChatService _scheduleReconnect] Max reconnect attempts reached.");
       _updateState(WebSocketConnectionState.disconnected); // Stay disconnected
       return;
     }
@@ -7272,30 +7365,34 @@ class ChatService {
     final delayMilliseconds =
         _initialReconnectDelay.inMilliseconds * (1 << (_reconnectAttempts - 1));
     final delay = Duration(milliseconds: delayMilliseconds);
-    print(
-        "[ChatService _scheduleReconnect] Scheduling reconnect attempt $_reconnectAttempts/$_maxReconnectAttempts in $delay...");
-    _reconnectTimer = Timer(delay, () {
+    if (kDebugMode)
       print(
-          "[ChatService _scheduleReconnect] Timer fired. Attempting reconnect...");
+          "[ChatService _scheduleReconnect] Scheduling reconnect attempt $_reconnectAttempts/$_maxReconnectAttempts in $delay...");
+    _reconnectTimer = Timer(delay, () {
+      if (kDebugMode)
+        print(
+            "[ChatService _scheduleReconnect] Timer fired. Attempting reconnect...");
       connect(); // Attempt to connect again
     });
   }
 
   /// Manually disconnects the WebSocket.
   void disconnect() {
-    print("[ChatService disconnect] Manual disconnect initiated.");
+    if (kDebugMode)
+      print("[ChatService disconnect] Manual disconnect initiated.");
     _isManualDisconnect = true;
     _reconnectTimer?.cancel(); // Cancel any pending reconnect timers
     _reconnectAttempts = 0; // Reset attempts on manual disconnect
     _streamSubscription?.cancel(); // Cancel the stream listener
     _pendingMessages.clear(); // Clear pending messages
-    print("[ChatService disconnect] Cleared pending messages map.");
+    if (kDebugMode)
+      print("[ChatService disconnect] Cleared pending messages map.");
     _channel?.sink
         .close(WebSocketStatus.normalClosure); // Close the channel sink
     _channel = null; // Nullify the channel
     _streamSubscription = null; // Nullify the subscription
     _updateState(WebSocketConnectionState.disconnected); // Update state
-    print("[ChatService disconnect] Disconnected.");
+    if (kDebugMode) print("[ChatService disconnect] Disconnected.");
   }
 
   /// Updates the global WebSocket connection state provider.
@@ -7306,13 +7403,15 @@ class ChatService {
         // Check if the state actually needs changing
         if (_ref.read(webSocketStateProvider) != newState) {
           _ref.read(webSocketStateProvider.notifier).state = newState;
-          print(
-              "[ChatService _updateState] WebSocket state updated to: $newState");
+          if (kDebugMode)
+            print(
+                "[ChatService _updateState] WebSocket state updated to: $newState");
         }
       } catch (e) {
         // Catch errors if the provider is accessed after disposal
-        print(
-            "[ChatService _updateState] Error accessing provider (likely disposed): $e");
+        if (kDebugMode)
+          print(
+              "[ChatService _updateState] Error accessing provider (likely disposed): $e");
       }
     });
   }
@@ -9045,9 +9144,7 @@ import 'dart:typed_data';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:dtx/models/chat_message.dart';
 import 'package:dtx/models/media_upload_model.dart';
-// *** ADDED: Import UserProvider for sender name check ***
 import 'package:dtx/models/user_model.dart';
-// *** END ADDED ***
 import 'package:dtx/providers/conversation_provider.dart';
 import 'package:dtx/providers/error_provider.dart';
 import 'package:dtx/providers/matches_provider.dart';
@@ -9071,6 +9168,11 @@ import 'package:image_picker/image_picker.dart';
 import 'package:mime/mime.dart';
 import 'package:path/path.dart' as p;
 import 'package:url_launcher/url_launcher.dart';
+// --- Phase 1 & 2 Imports ---
+import 'package:permission_handler/permission_handler.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:record/record.dart';
+// --- End Imports ---
 
 class ChatDetailScreen extends ConsumerStatefulWidget {
   final int matchUserId;
@@ -9095,10 +9197,20 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
   bool _isUploadingMedia = false;
   bool _isInteracting = false;
 
+  // --- Phase 1: Recording State ---
+  final AudioRecorder _audioRecorder = AudioRecorder();
+  bool _isRecording = false;
+  String? _recordingPath;
+  Timer? _recordingTimer;
+  int _recordingDurationSeconds = 0;
+  final int _maxRecordingDuration = 60; // Max 60 seconds
+  // --- End Recording State ---
+
   // --- File Type Constants (Keep as is) ---
   static const int _maxImageSizeBytes = 10 * 1024 * 1024;
   static const int _maxVideoSizeBytes = 50 * 1024 * 1024;
-  static const int _maxAudioSizeBytes = 10 * 1024 * 1024;
+  static const int _maxAudioSizeBytes =
+      10 * 1024 * 1024; // Adjusted for consistency
   static const int _maxFileSizeBytes = 25 * 1024 * 1024;
   static final Set<String> _allowedMimeTypes = {
     // Images
@@ -9109,6 +9221,7 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
     // Audio
     'audio/mpeg', 'audio/ogg', 'audio/wav', 'audio/aac', 'audio/opus',
     'audio/webm', 'audio/mp4', 'audio/x-m4a',
+    'audio/m4a', // Ensure m4a is allowed
     // Documents
     'application/pdf', 'application/msword',
     'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
@@ -9122,14 +9235,16 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
   @override
   void initState() {
     super.initState();
-    print("[ChatDetailScreen Init: ${widget.matchUserId}] Initializing...");
+    if (kDebugMode)
+      print("[ChatDetailScreen Init: ${widget.matchUserId}] Initializing...");
     _inputFocusNode.addListener(_handleFocusChange);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       final chatService = ref.read(chatServiceProvider);
       if (ref.read(webSocketStateProvider) !=
           WebSocketConnectionState.connected) {
-        print(
-            "[ChatDetailScreen Init: ${widget.matchUserId}] Connecting WebSocket...");
+        if (kDebugMode)
+          print(
+              "[ChatDetailScreen Init: ${widget.matchUserId}] Connecting WebSocket...");
         chatService.connect();
       }
       // Fetch initial state which includes status
@@ -9141,11 +9256,16 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
 
   @override
   void dispose() {
-    print("[ChatDetailScreen Dispose: ${widget.matchUserId}] Disposing...");
+    if (kDebugMode)
+      print("[ChatDetailScreen Dispose: ${widget.matchUserId}] Disposing...");
     _messageController.dispose();
     _scrollController.dispose();
     _inputFocusNode.removeListener(_handleFocusChange);
     _inputFocusNode.dispose();
+    // --- Dispose Recorder and Timer ---
+    _recordingTimer?.cancel();
+    _audioRecorder.dispose();
+    // --- End Dispose ---
     super.dispose();
   }
 
@@ -9165,41 +9285,40 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
       );
       return await completer.future;
     } catch (e) {
-      print("Error reading header bytes: $e");
+      if (kDebugMode) print("Error reading header bytes: $e");
       return null;
     }
   }
 
   // --- MODIFIED: _sendMessage ---
   void _sendMessage() {
+    // --- Add check: Don't send if recording ---
+    if (_isRecording) return;
+    // --- End check ---
     final text = _messageController.text.trim();
     if (text.isEmpty || _isUploadingMedia || _isInteracting) return;
 
     final chatService = ref.read(chatServiceProvider);
     final wsState = ref.read(webSocketStateProvider);
-    // *** CORRECTED: Watch provider to get state, then access property ***
     final conversationState =
         ref.read(conversationProvider(widget.matchUserId));
     final replyingTo = conversationState.replyingToMessage;
-    // *** END CORRECTION ***
 
     if (wsState == WebSocketConnectionState.connected) {
-      print(
-          "[ChatDetailScreen _sendMessage] Sending text. Replying to: ${replyingTo?.messageID}");
-      // *** Pass replyToMessageId if available ***
+      if (kDebugMode)
+        print(
+            "[ChatDetailScreen _sendMessage] Sending text. Replying to: ${replyingTo?.messageID}");
       chatService.sendMessage(
         widget.matchUserId,
         text: text,
-        replyToMessageId: replyingTo?.messageID, // Pass the ID if replying
+        replyToMessageId: replyingTo?.messageID,
       );
-      // *** END ADDED ***
 
       _messageController.clear();
       ref.read(messageInputProvider.notifier).state = false;
-      // *** No need to call cancelReply here, addSentMessage handles it ***
     } else {
       _showErrorSnackbar("Cannot send message. Not connected.");
-      chatService.connect(); // Attempt to reconnect
+      chatService.connect();
     }
   }
   // --- END MODIFIED ---
@@ -9207,21 +9326,24 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
   // --- _scrollToBottom, _showAttachmentOptions, _handleFileSelection, _handleMediaSelection (Keep as is) ---
   void _scrollToBottom() {
     if (_scrollController.hasClients) {
-      print(
-          "[ChatDetailScreen Scroll: ${widget.matchUserId}] Animating scroll to top (0.0)");
+      if (kDebugMode)
+        print(
+            "[ChatDetailScreen Scroll: ${widget.matchUserId}] Animating scroll to top (0.0)");
       _scrollController.animateTo(
         0.0,
         duration: const Duration(milliseconds: 300),
         curve: Curves.easeOut,
       );
     } else {
-      print(
-          "[ChatDetailScreen Scroll: ${widget.matchUserId}] Cannot scroll, no clients.");
+      if (kDebugMode)
+        print(
+            "[ChatDetailScreen Scroll: ${widget.matchUserId}] Cannot scroll, no clients.");
     }
   }
 
   void _showAttachmentOptions() {
-    if (_isUploadingMedia || _isInteracting) return;
+    if (_isUploadingMedia || _isInteracting || _isRecording)
+      return; // Added recording check
     FocusScope.of(context).unfocus();
     showModalBottomSheet(
       context: context,
@@ -9269,7 +9391,8 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
   }
 
   Future<void> _handleFileSelection() async {
-    if (_isUploadingMedia || _isInteracting) return;
+    if (_isUploadingMedia || _isInteracting || _isRecording)
+      return; // Added recording check
     try {
       FilePickerResult? result =
           await FilePicker.platform.pickFiles(type: FileType.any);
@@ -9314,16 +9437,17 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
         }
         _initiateMediaSend(file, fileName, mimeType);
       } else {
-        print("[ChatDetailScreen] File picking cancelled.");
+        if (kDebugMode) print("[ChatDetailScreen] File picking cancelled.");
       }
     } catch (e) {
-      print("[ChatDetailScreen] Error picking file: $e");
+      if (kDebugMode) print("[ChatDetailScreen] Error picking file: $e");
       _showErrorSnackbar("Error selecting file: ${e.toString()}");
     }
   }
 
   Future<void> _handleMediaSelection(ImageSource source) async {
-    if (_isUploadingMedia || _isInteracting) return;
+    if (_isUploadingMedia || _isInteracting || _isRecording)
+      return; // Added recording check
     final ImagePicker picker = ImagePicker();
     try {
       final XFile? pickedFile = await picker.pickMedia();
@@ -9356,10 +9480,10 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
         }
         _initiateMediaSend(file, fileName, mimeType);
       } else {
-        print("[ChatDetailScreen] Media picking cancelled.");
+        if (kDebugMode) print("[ChatDetailScreen] Media picking cancelled.");
       }
     } catch (e) {
-      print("[ChatDetailScreen] Error picking media: $e");
+      if (kDebugMode) print("[ChatDetailScreen] Error picking media: $e");
       _showErrorSnackbar("Error selecting media: ${e.toString()}");
     }
   }
@@ -9372,11 +9496,9 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
         ref.read(conversationProvider(widget.matchUserId).notifier);
     final currentUserId = ref.read(currentUserIdProvider);
     final chatService = ref.read(chatServiceProvider);
-    // *** CORRECTED: Get reply state ***
     final conversationState =
         ref.read(conversationProvider(widget.matchUserId));
     final replyingTo = conversationState.replyingToMessage;
-    // *** END CORRECTION ***
 
     if (currentUserId == null) {
       _showErrorSnackbar("Cannot send media: User not identified.");
@@ -9396,26 +9518,26 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
       status: ChatMessageStatus.pending,
       localFilePath: file.path,
       errorMessage: null,
-      // *** Include reply info if available ***
       replyToMessageID: replyingTo?.messageID,
       repliedMessageSenderID: replyingTo?.repliedMessageSenderID,
       repliedMessageTextSnippet: replyingTo?.repliedMessageTextSnippet,
       repliedMessageMediaType: replyingTo?.repliedMessageMediaType,
-      // *** END ADDED ***
     );
-    print(
-        "[ChatDetailScreen _initiateMediaSend: ${widget.matchUserId}] Adding optimistic media message TempID: $tempId. Replying to: ${replyingTo?.messageID}");
+    if (kDebugMode)
+      print(
+          "[ChatDetailScreen _initiateMediaSend: ${widget.matchUserId}] Adding optimistic media message TempID: $tempId. Replying to: ${replyingTo?.messageID}");
 
     // Add to pending messages and conversation state
-    chatService.addPendingMessage(tempId, widget.matchUserId);
-    conversationNotifier.addSentMessage(
-        optimisticMessage); // This now also clears reply state in provider
+    // --- ** FIX: Pass null for mediaUrl here initially ** ---
+    chatService.addPendingMessage(tempId, widget.matchUserId, null);
+    // --- ** END FIX ** ---
+    conversationNotifier.addSentMessage(optimisticMessage);
 
     setState(() => _isUploadingMedia = true);
 
     // Start background upload/send
-    _uploadAndSendMediaInBackground(file, fileName, mimeType, tempId,
-            replyingTo?.messageID) // *** Pass reply ID ***
+    _uploadAndSendMediaInBackground(
+            file, fileName, mimeType, tempId, replyingTo?.messageID)
         .then((_) {
       if (mounted) {
         final stillProcessing = ref
@@ -9426,52 +9548,61 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
                 (m.status == ChatMessageStatus.uploading ||
                     m.status == ChatMessageStatus.pending));
         if (!stillProcessing) {
-          print(
-              "[ChatDetailScreen _initiateMediaSend: ${widget.matchUserId}] All uploads/acks seem finished for current user. Re-enabling input.");
+          if (kDebugMode)
+            print(
+                "[ChatDetailScreen _initiateMediaSend: ${widget.matchUserId}] All uploads/acks seem finished for current user. Re-enabling input.");
           setState(() => _isUploadingMedia = false);
         } else {
-          print(
-              "[ChatDetailScreen _initiateMediaSend: ${widget.matchUserId}] Background task for $tempId finished, but others might be pending/uploading. Input remains disabled.");
+          if (kDebugMode)
+            print(
+                "[ChatDetailScreen _initiateMediaSend: ${widget.matchUserId}] Background task for $tempId finished, but others might be pending/uploading. Input remains disabled.");
         }
       }
     });
   }
   // --- END MODIFIED ---
 
-  // --- MODIFIED: _uploadAndSendMediaInBackground ---
-  Future<void> _uploadAndSendMediaInBackground(
-      File file,
-      String fileName,
-      String mimeType,
-      String tempId,
-      int? replyToMessageId // <<< ADDED parameter
-      ) async {
+  // --- MODIFIED: _uploadAndSendMediaInBackground (With Pending Message Tracking Fix) ---
+  Future<void> _uploadAndSendMediaInBackground(File file, String fileName,
+      String mimeType, String tempId, int? replyToMessageId) async {
+    // Ensure mounted at the start
+    if (!mounted) {
+      if (kDebugMode)
+        print("[ChatBG Task $tempId] Not mounted, aborting background task.");
+      return;
+    }
+
     final conversationNotifier =
         ref.read(conversationProvider(widget.matchUserId).notifier);
     final mediaRepo = ref.read(mediaRepositoryProvider);
     final chatService = ref.read(chatServiceProvider);
     final bool isImage = mimeType.startsWith('image/');
+    final bool isAudio = mimeType.startsWith('audio/');
 
-    // Update status to Uploading
+    // Update status to Uploading (use addPostFrameCallback for safety)
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) {
-        print("[ChatBG Task $tempId] Updating status to Uploading");
+        if (kDebugMode)
+          print("[ChatBG Task $tempId] Updating status to Uploading");
         conversationNotifier.updateMessageStatus(
             tempId, ChatMessageStatus.uploading);
       }
     });
 
-    String? objectUrl;
+    String? objectUrl; // Store the final S3 URL
     try {
-      print("[ChatBG Task $tempId] Getting chat presigned URL...");
+      if (kDebugMode)
+        print("[ChatBG Task $tempId] Getting chat presigned URL...");
       final urls = await mediaRepo.getChatMediaPresignedUrl(fileName, mimeType);
       final presignedUrl = urls['presigned_url'];
-      objectUrl = urls['object_url'];
+      objectUrl = urls['object_url']; // Assign objectUrl here
       if (presignedUrl == null || objectUrl == null) {
         throw ApiException("Failed to get upload URLs from server.");
       }
+      if (kDebugMode)
+        print("[ChatBG Task $tempId] Received URLs. ObjectURL: $objectUrl");
 
-      print("[ChatBG Task $tempId] Uploading to S3...");
+      if (kDebugMode) print("[ChatBG Task $tempId] Uploading to S3...");
       final uploadModel = MediaUploadModel(
           file: file,
           fileName: fileName,
@@ -9482,54 +9613,88 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
       if (!uploadSuccess) {
         throw ApiException("Failed to upload media to storage.");
       }
+      // --- Upload Successful ---
+      if (kDebugMode) print("[ChatBG Task $tempId] Upload successful.");
 
-      // Pre-cache image
+      // Pre-cache image (only if it's an image)
       if (isImage && objectUrl != null) {
-        print("[ChatBG Task $tempId] Pre-caching image: $objectUrl");
+        if (kDebugMode)
+          print("[ChatBG Task $tempId] Pre-caching image: $objectUrl");
         try {
           await DefaultCacheManager().downloadFile(objectUrl);
-          print("[ChatBG Task $tempId] Image pre-caching completed");
+          if (kDebugMode)
+            print("[ChatBG Task $tempId] Image pre-caching completed");
         } catch (cacheErr) {
-          print(
-              "[ChatBG Task $tempId] WARNING: Image pre-caching failed: $cacheErr");
+          if (kDebugMode)
+            print(
+                "[ChatBG Task $tempId] WARNING: Image pre-caching failed: $cacheErr");
         }
       }
 
-      print(
-          "[ChatBG Task $tempId] Upload successful. Sending WebSocket message. ReplyTo: $replyToMessageId");
-      // *** Pass replyToMessageId to sendMessage ***
+      // --- **START: FIX - Add Pending Message WITH URL *before* sending WS msg** ---
+      if (objectUrl != null) {
+        if (kDebugMode)
+          print(
+              "[ChatBG Task $tempId] Adding pending message tracker with URL.");
+        // Track the message with its final URL
+        chatService.addPendingMessage(tempId, widget.matchUserId, objectUrl);
+      } else {
+        if (kDebugMode)
+          print(
+              "[ChatBG Task $tempId] WARNING: objectUrl is null after successful upload. Cannot track media URL for ack.");
+        // Still track it, but without the URL (ack won't be able to add URL later)
+        chatService.addPendingMessage(tempId, widget.matchUserId, null);
+      }
+      // --- **END: FIX** ---
+
+      // --- Send WebSocket message ---
+      if (kDebugMode)
+        print(
+            "[ChatBG Task $tempId] Sending WebSocket message. ReplyTo: $replyToMessageId, URL: $objectUrl, Type: $mimeType");
       chatService.sendMessage(
         widget.matchUserId,
-        mediaUrl: objectUrl,
+        mediaUrl: objectUrl, // Pass the final S3 URL
         mediaType: mimeType,
         replyToMessageId: replyToMessageId,
       );
-      // *** END ADDED ***
-
-      print("[ChatBG Task $tempId] WebSocket message sent. Awaiting ack...");
+      if (kDebugMode)
+        print("[ChatBG Task $tempId] WebSocket message sent. Awaiting ack...");
+      // --- End Send ---
     } on ApiException catch (e) {
-      print("[ChatBG Task $tempId] API Error: ${e.message}");
+      if (kDebugMode) print("[ChatBG Task $tempId] API Error: ${e.message}");
+      // --- **START: FIX - Remove pending message on failure** ---
+      chatService.removePendingMessage(tempId);
+      // --- **END: FIX** ---
       if (mounted) {
-        print("[ChatBG Task $tempId] Updating status to Failed (API Error)");
+        if (kDebugMode)
+          print("[ChatBG Task $tempId] Updating status to Failed (API Error)");
         conversationNotifier.updateMessageStatus(
             tempId, ChatMessageStatus.failed,
-            errorMessage: e.message, finalMediaUrl: objectUrl);
+            errorMessage: e.message,
+            // Keep objectUrl if upload failed but URL was obtained, helps UI potentially
+            finalMediaUrl: objectUrl);
       }
     } catch (e, stacktrace) {
-      print("[ChatBG Task $tempId] General Error: $e");
-      print("[ChatBG Task $tempId] Stacktrace: $stacktrace");
+      if (kDebugMode) print("[ChatBG Task $tempId] General Error: $e");
+      if (kDebugMode) print("[ChatBG Task $tempId] Stacktrace: $stacktrace");
+      // --- **START: FIX - Remove pending message on failure** ---
+      chatService.removePendingMessage(tempId);
+      // --- **END: FIX** ---
       if (mounted) {
-        print(
-            "[ChatBG Task $tempId] Updating status to Failed (General Error)");
+        if (kDebugMode)
+          print(
+              "[ChatBG Task $tempId] Updating status to Failed (General Error)");
         conversationNotifier.updateMessageStatus(
             tempId, ChatMessageStatus.failed,
             errorMessage: "Upload/Send failed: ${e.toString()}",
+            // Keep objectUrl if upload failed but URL was obtained
             finalMediaUrl: objectUrl);
       }
     }
+    // Note: _isUploadingMedia is handled in the .then() block of _initiateMediaSend
   }
-  // --- END MODIFIED ---
 
+  // --- END MODIFIED ---
   // --- _showSnackbar, _showErrorSnackbar, _showMoreOptions, _confirmAndUnmatch, _reportUser (Keep as is) ---
   void _showSnackbar(String message,
       {bool isError = false, Duration duration = const Duration(seconds: 3)}) {
@@ -9546,7 +9711,7 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
   }
 
   void _showMoreOptions() {
-    if (_isInteracting) return;
+    if (_isInteracting || _isRecording) return; // Added recording check
     showModalBottomSheet(
       context: context,
       shape: const RoundedRectangleBorder(
@@ -9776,7 +9941,8 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
             constraints: const BoxConstraints(),
             tooltip: "Cancel Reply",
             onPressed: () {
-              print("[ChatDetailScreen CancelReplyButton] Cancelling reply.");
+              if (kDebugMode)
+                print("[ChatDetailScreen CancelReplyButton] Cancelling reply.");
               ref
                   .read(conversationProvider(widget.matchUserId).notifier)
                   .cancelReply();
@@ -9788,11 +9954,207 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
   }
   // --- END CORRECTED ---
 
+  // --- Phase 1: Recording Methods ---
+  Future<void> _startRecording() async {
+    if (_isUploadingMedia || _isInteracting)
+      return; // Don't allow during other ops
+    if (_isRecording) return; // Prevent starting if already recording
+
+    if (kDebugMode)
+      print(
+          "[ChatDetailScreen _startRecording] Attempting to start recording...");
+
+    // 1. Request Permission
+    final status = await Permission.microphone.request();
+    if (!status.isGranted) {
+      if (kDebugMode)
+        print(
+            "[ChatDetailScreen _startRecording] Microphone permission denied.");
+      if (mounted) {
+        _showErrorSnackbar(
+            'Microphone permission is required to record audio.');
+      }
+      // Optionally open settings: await openAppSettings();
+      return;
+    }
+    if (kDebugMode)
+      print(
+          "[ChatDetailScreen _startRecording] Microphone permission granted.");
+
+    // 2. Get Temp Path
+    try {
+      final directory = await getTemporaryDirectory(); // Use temporary dir
+      _recordingPath =
+          '${directory.path}/recording_${DateTime.now().millisecondsSinceEpoch}.m4a'; // Using m4a format
+      if (kDebugMode)
+        print(
+            "[ChatDetailScreen _startRecording] Recording path set to: $_recordingPath");
+
+      // 3. Start Recorder
+      // Ensure recorder is not already recording
+      if (await _audioRecorder.isRecording()) {
+        await _audioRecorder.stop();
+      }
+      await _audioRecorder.start(
+          const RecordConfig(
+              encoder: AudioEncoder.aacLc), // Use a common encoder
+          path: _recordingPath!);
+
+      // 4. Update State & Start Timer
+      _recordingDurationSeconds = 0;
+      if (mounted) {
+        setState(() {
+          _isRecording = true;
+        });
+        // Start timer to update UI and stop recording after max duration
+        _recordingTimer?.cancel(); // Cancel any previous timer
+        _recordingTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
+          if (!_isRecording || !mounted) {
+            timer.cancel();
+            return;
+          }
+          setState(() {
+            _recordingDurationSeconds++;
+          });
+          if (_recordingDurationSeconds >= _maxRecordingDuration) {
+            if (kDebugMode)
+              print(
+                  "[ChatDetailScreen _startRecording] Max recording time reached.");
+            _stopRecordingAndSend(); // Auto-stop and send
+          }
+        });
+        if (kDebugMode)
+          print(
+              "[ChatDetailScreen _startRecording] Recording started successfully.");
+      }
+    } catch (e) {
+      if (kDebugMode)
+        print('[ChatDetailScreen _startRecording] Recording error: $e');
+      if (mounted) {
+        _showErrorSnackbar('Recording failed: ${e.toString()}');
+        setState(() {
+          _isRecording = false; // Reset state on error
+          _recordingPath = null;
+          _recordingDurationSeconds = 0;
+        });
+      }
+    }
+  }
+
+  Future<void> _stopRecordingAndSend() async {
+    if (!_isRecording) return;
+    if (kDebugMode)
+      print("[ChatDetailScreen _stopRecordingAndSend] Stopping recording...");
+
+    _recordingTimer?.cancel(); // Stop the timer
+    try {
+      final path = await _audioRecorder.stop();
+      if (kDebugMode)
+        print(
+            '[ChatDetailScreen _stopRecordingAndSend] Recording stopped. Path from recorder: $path');
+      // Use the internally stored path if recorder doesn't return one reliably
+      final finalPath = path ?? _recordingPath;
+
+      if (finalPath == null) {
+        throw Exception("Recording path is null after stopping.");
+      }
+
+      final file = File(finalPath);
+      if (!await file.exists() || await file.length() == 0) {
+        if (kDebugMode)
+          print(
+              '[ChatDetailScreen _stopRecordingAndSend] Error: Recording file missing or empty at $finalPath');
+        throw Exception("Recording file error.");
+      }
+
+      // Reset UI state *before* starting background task
+      if (mounted) {
+        setState(() {
+          _isRecording = false;
+          _recordingDurationSeconds = 0;
+        });
+      }
+
+      // --- Phase 2: Initiate Optimistic UI & Upload ---
+      final fileName = p.basename(finalPath);
+      // Detect MIME type (fallback to m4a if needed)
+      String? mimeType = lookupMimeType(finalPath) ?? 'audio/m4a';
+      if (kDebugMode)
+        print(
+            "[ChatDetailScreen _stopRecordingAndSend] Detected MIME: $mimeType for $fileName");
+
+      // Validate size
+      final fileSize = await file.length();
+      if (fileSize > _maxAudioSizeBytes) {
+        throw Exception(
+            "Audio file exceeds maximum size (${_maxAudioSizeBytes / 1024 / 1024} MB).");
+      }
+      if (!_allowedMimeTypes.contains(mimeType)) {
+        throw Exception("Unsupported audio format: $mimeType");
+      }
+
+      _initiateMediaSend(file, fileName, mimeType); // Pass audio file details
+      // --- End Phase 2 ---
+
+      _recordingPath = null; // Clear path after initiating send
+    } catch (e) {
+      if (kDebugMode)
+        print(
+            '[ChatDetailScreen _stopRecordingAndSend] Error stopping/sending: $e');
+      if (mounted) {
+        _showErrorSnackbar('Error processing recording: ${e.toString()}');
+        setState(() {
+          // Reset state fully on error
+          _isRecording = false;
+          _recordingPath = null;
+          _recordingDurationSeconds = 0;
+        });
+      }
+    }
+  }
+
+  Future<void> _cancelRecording() async {
+    if (!_isRecording) return;
+    if (kDebugMode)
+      print("[ChatDetailScreen _cancelRecording] Cancelling recording...");
+
+    _recordingTimer?.cancel();
+    try {
+      await _audioRecorder.stop();
+      if (kDebugMode)
+        print("[ChatDetailScreen _cancelRecording] Recorder stopped.");
+      // Delete the partial/cancelled recording file
+      if (_recordingPath != null) {
+        final file = File(_recordingPath!);
+        if (await file.exists()) {
+          await file.delete();
+          if (kDebugMode)
+            print(
+                "[ChatDetailScreen _cancelRecording] Deleted temporary file: $_recordingPath");
+        }
+      }
+    } catch (e) {
+      if (kDebugMode)
+        print(
+            "[ChatDetailScreen _cancelRecording] Error stopping/deleting recording: $e");
+      // Don't necessarily show error to user, just reset state
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isRecording = false;
+          _recordingPath = null;
+          _recordingDurationSeconds = 0;
+        });
+      }
+    }
+  }
+  // --- End Recording Methods ---
+
   @override
   Widget build(BuildContext context) {
     if (kDebugMode)
       print(
-          "[ChatDetailScreen Build: ${widget.matchUserId}] Rebuilding Widget... IsUploading: $_isUploadingMedia, IsInteracting: $_isInteracting");
+          "[ChatDetailScreen Build: ${widget.matchUserId}] Rebuilding Widget... IsUploading: $_isUploadingMedia, IsInteracting: $_isInteracting, IsRecording: $_isRecording"); // Added recording state
     final state = ref.watch(conversationProvider(widget.matchUserId));
     final currentUserId = ref.watch(currentUserIdProvider);
 
@@ -9819,28 +10181,34 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
             "[ChatDetailScreen Listener: ${widget.matchUserId}] State changed. PrevLen=$prevLength, NextLen=$nextLength. IsNewFromMe=$isNewMessageFromMe, IsStatusUpdate=$isMessageStatusUpdate");
 
       if (isNewMessageFromMe) {
-        print(
-            "[ChatDetailScreen Listener: ${widget.matchUserId}] New PENDING message added by me. Scheduling scroll.");
+        if (kDebugMode)
+          print(
+              "[ChatDetailScreen Listener: ${widget.matchUserId}] New PENDING message added by me. Scheduling scroll.");
         WidgetsBinding.instance.addPostFrameCallback((_) {
           // Add check if scrollController has clients before scrolling
           if (_scrollController.hasClients) {
-            print(
-                "[ChatDetailScreen Listener: ${widget.matchUserId}] Executing scroll after frame callback.");
+            if (kDebugMode)
+              print(
+                  "[ChatDetailScreen Listener: ${widget.matchUserId}] Executing scroll after frame callback.");
             _scrollToBottom();
           } else {
-            print(
-                "[ChatDetailScreen Listener: ${widget.matchUserId}] ScrollController has no clients, skipping scroll.");
+            if (kDebugMode)
+              print(
+                  "[ChatDetailScreen Listener: ${widget.matchUserId}] ScrollController has no clients, skipping scroll.");
           }
         });
       } else if (isMessageStatusUpdate) {
-        print(
-            "[ChatDetailScreen Listener: ${widget.matchUserId}] Message status updated. No scroll triggered.");
+        if (kDebugMode)
+          print(
+              "[ChatDetailScreen Listener: ${widget.matchUserId}] Message status updated. No scroll triggered.");
       } else if (nextLength > prevLength && !isNewMessageFromMe) {
-        print(
-            "[ChatDetailScreen Listener: ${widget.matchUserId}] New message received from other user. No scroll triggered.");
+        if (kDebugMode)
+          print(
+              "[ChatDetailScreen Listener: ${widget.matchUserId}] New message received from other user. No scroll triggered.");
       } else {
-        print(
-            "[ChatDetailScreen Listener: ${widget.matchUserId}] No scroll triggered (Other state change).");
+        if (kDebugMode)
+          print(
+              "[ChatDetailScreen Listener: ${widget.matchUserId}] No scroll triggered (Other state change).");
       }
     });
 
@@ -9916,7 +10284,9 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
           IconButton(
             icon: Icon(Icons.more_vert_rounded, color: Colors.grey[600]),
             tooltip: "More Options",
-            onPressed: _isInteracting ? null : _showMoreOptions,
+            onPressed: _isInteracting || _isRecording
+                ? null
+                : _showMoreOptions, // Disable during recording
             disabledColor: Colors.grey[300],
           ),
         ],
@@ -9929,19 +10299,19 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
               child: _buildMessagesList(state, currentUserId),
             ),
           ),
-          // *** ADDED: Reply Preview Widget ***
           _buildReplyPreviewWidget(),
-          // *** END ADDED ***
-          if (_isInteracting)
+          if (_isInteracting) // Show generic loading if unmatching/reporting
             Container(
-              // Keep loading indicator
               padding: const EdgeInsets.symmetric(vertical: 8.0),
               color: Colors.white.withOpacity(0.8),
               child: const Center(
                   child: CircularProgressIndicator(color: Color(0xFF8B5CF6))),
             )
+          // Show recording UI or input area
+          else if (_isRecording)
+            _buildRecordingInputArea()
           else
-            _buildMessageInputArea(), // Keep input area
+            _buildMessageInputArea(),
         ],
       ),
     );
@@ -10017,8 +10387,9 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
                   originalSenderDisplayName, // *** ADDED ***
               // Call startReplying when bubble signals reply initiation
               onReplyInitiated: (messageToReply) {
-                print(
-                    "[ChatDetailScreen onReplyInitiated] Triggered for message ID: ${messageToReply.messageID}");
+                if (kDebugMode)
+                  print(
+                      "[ChatDetailScreen onReplyInitiated] Triggered for message ID: ${messageToReply.messageID}");
                 ref
                     .read(conversationProvider(widget.matchUserId).notifier)
                     .startReplying(messageToReply);
@@ -10030,10 +10401,10 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
   }
   // --- END MODIFIED ---
 
-  // --- _buildMessageInputArea (Keep as is) ---
+  // --- MODIFIED: _buildMessageInputArea ---
   Widget _buildMessageInputArea() {
     final canSendText = ref.watch(messageInputProvider);
-    final bool allowInput = !_isUploadingMedia && !_isInteracting;
+    final allowInput = !_isUploadingMedia && !_isInteracting;
 
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12.0, vertical: 8.0),
@@ -10048,7 +10419,7 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
         ],
       ),
       child: SafeArea(
-        top: false, // Don't add padding for top safe area here
+        top: false,
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.center,
           children: [
@@ -10098,18 +10469,92 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
               ),
             ),
             const SizedBox(width: 8.0),
+            // --- Conditionally show Send or Mic button ---
+            if (canSendText)
+              IconButton(
+                icon: const Icon(Icons.send_rounded),
+                color: const Color(0xFF8B5CF6),
+                onPressed: allowInput ? _sendMessage : null,
+                tooltip: "Send Message",
+                disabledColor: Colors.grey[400],
+              )
+            else
+              IconButton(
+                icon: const Icon(Icons.mic_none_rounded),
+                color: allowInput ? const Color(0xFF8B5CF6) : Colors.grey[300],
+                onPressed: allowInput ? _startRecording : null,
+                tooltip: "Record Voice Note",
+              ),
+            // --- End Conditional Button ---
+          ],
+        ),
+      ),
+    );
+  }
+  // --- END MODIFIED ---
+
+  // --- NEW: _buildRecordingInputArea ---
+  Widget _buildRecordingInputArea() {
+    final displayDuration = Duration(seconds: _recordingDurationSeconds);
+    final minutes = displayDuration.inMinutes.remainder(60).toString();
+    final seconds =
+        displayDuration.inSeconds.remainder(60).toString().padLeft(2, '0');
+    final timerText = "$minutes:$seconds / 0:${_maxRecordingDuration}";
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12.0, vertical: 8.0),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        boxShadow: [
+          BoxShadow(
+              color: Colors.grey.withOpacity(0.15),
+              spreadRadius: 1,
+              blurRadius: 5,
+              offset: const Offset(0, -2))
+        ],
+      ),
+      child: SafeArea(
+        top: false,
+        child: Row(
+          children: [
+            // Cancel Button
             IconButton(
-              icon: const Icon(Icons.send_rounded),
+              icon: Icon(Icons.delete_outline_rounded, color: Colors.grey[600]),
+              onPressed: _cancelRecording,
+              tooltip: "Cancel Recording",
+            ),
+            // Recording Indicator / Timer
+            Expanded(
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(Icons.mic, color: Colors.redAccent, size: 20),
+                  const SizedBox(width: 8),
+                  Text(
+                    timerText,
+                    style: GoogleFonts.poppins(
+                      fontSize: 15,
+                      fontWeight: FontWeight.w500,
+                      color: Colors.black87,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            // Stop/Send Button
+            IconButton(
+              icon: const Icon(Icons.stop_circle_rounded,
+                  size: 32), // Larger stop icon
               color: const Color(0xFF8B5CF6),
-              onPressed: canSendText && allowInput ? _sendMessage : null,
-              tooltip: "Send Message",
-              disabledColor: Colors.grey[400],
+              onPressed: _stopRecordingAndSend,
+              tooltip: "Stop and Send",
             ),
           ],
         ),
       ),
     );
   }
+  // --- END NEW ---
 }
 
 // --- Keep messageInputProvider (No change needed) ---
@@ -12132,17 +12577,18 @@ import 'package:dtx/providers/service_provider.dart';
 import 'package:dtx/providers/user_provider.dart';
 import 'package:dtx/services/api_service.dart';
 import 'package:dtx/views/filter_settings_dialog.dart';
-import 'package:dtx/views/name.dart';
+import 'package:dtx/views/name.dart'; // Keep for profile completion dialog
 import 'package:dtx/models/user_model.dart';
 import 'package:dtx/widgets/home_profile_card.dart';
 import 'package:dtx/models/like_models.dart';
 import 'package:dtx/repositories/like_repository.dart';
-import 'package:dtx/widgets/report_reason_dialog.dart'; // Added
+import 'package:dtx/widgets/report_reason_dialog.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:dtx/models/filter_model.dart';
 import 'package:dtx/utils/app_enums.dart';
+import 'package:flutter/foundation.dart'; // For kDebugMode
 
 class HomeScreen extends ConsumerStatefulWidget {
   const HomeScreen({super.key});
@@ -12152,33 +12598,38 @@ class HomeScreen extends ConsumerStatefulWidget {
 }
 
 class _HomeScreenState extends ConsumerState<HomeScreen> {
+  // Use local state to manage the currently displayed list
+  // Initialize from the provider, but allow local removal for optimism
   List<UserModel> _feedProfiles = [];
-  bool _isInteracting = false; // To show overlay during API call
+  bool _isInteracting = false; // Track interaction state locally
 
-  // --- initState, dispose, _fetchFeed, _showCompleteProfileDialog, _removeTopCard ---
-  // --- _callLikeRepository, _callDislikeRepository, _showErrorSnackbar ---
-  // --- _openFilterDialog, _showMiniFilterEditor, _buildFilterChips, _buildFilterChip ---
-  // --- Remain the same ---
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       final feedState = ref.read(feedProvider);
-      if (!feedState.hasFetchedOnce && !feedState.isLoading) {
-        print("[HomeScreen initState] Feed not fetched yet, triggering fetch.");
+      // Initialize local state from provider if it has data
+      if (feedState.profiles.isNotEmpty) {
+        setState(() {
+          _feedProfiles = List.from(feedState.profiles);
+          if (kDebugMode)
+            print(
+                "[HomeScreen initState] Initialized local _feedProfiles from provider. Count: ${_feedProfiles.length}");
+        });
+      } else if (!feedState.hasFetchedOnce && !feedState.isLoading) {
+        // Fetch only if provider hasn't fetched yet and isn't loading
+        if (kDebugMode)
+          print(
+              "[HomeScreen initState] Feed not fetched yet, triggering fetch.");
         _fetchFeed();
-      } else {
-        if (mounted) {
-          setState(() {
-            _feedProfiles = feedState.profiles;
-          });
-        }
       }
+      // Fetch filters if they seem default
       final filterState = ref.read(filterProvider);
       final filterNotifier = ref.read(filterProvider.notifier);
       if (filterState == const FilterSettings() && !filterNotifier.isLoading) {
-        print(
-            "[HomeScreen initState] Filters appear default, triggering load.");
+        if (kDebugMode)
+          print(
+              "[HomeScreen initState] Filters appear default, triggering load.");
         filterNotifier.loadFilters();
       }
     });
@@ -12190,13 +12641,15 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
   }
 
   Future<void> _fetchFeed({bool force = false}) async {
-    print("[HomeScreen _fetchFeed] Fetching home feed. Force: $force");
+    if (kDebugMode)
+      print("[HomeScreen _fetchFeed] Fetching home feed. Force: $force");
     ref.read(errorProvider.notifier).clearError();
     await ref.read(feedProvider.notifier).fetchFeed(forceRefresh: force);
+    // Listener below will update _feedProfiles
   }
 
   void _showCompleteProfileDialog() {
-    /* ... keep existing implementation ... */
+    // (No changes needed)
     showDialog(
         context: context,
         barrierDismissible: false,
@@ -12227,98 +12680,200 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
         });
   }
 
+  // --- OPTIMISTIC: Remove card locally AND notify provider ---
   void _removeTopCard() {
-    print("[HomeScreen _removeTopCard] Removing top card from local state.");
-    if (!mounted) return;
-    if (_feedProfiles.isNotEmpty) {
-      final removedUserId = _feedProfiles[0].id!;
-      setState(() {
-        _feedProfiles.removeAt(0);
-      });
+    if (kDebugMode)
       print(
-          "[HomeScreen _removeTopCard] Notifying FeedProvider to remove profile ID: $removedUserId");
-      ref.read(feedProvider.notifier).removeProfile(removedUserId);
+          "[HomeScreen _removeTopCard] Removing top card from local state and notifying provider.");
+    if (!mounted) {
+      if (kDebugMode)
+        print(
+            "[HomeScreen _removeTopCard] Widget not mounted, skipping removal.");
+      return;
+    }
+    if (_feedProfiles.isNotEmpty) {
+      final removedUserId = _feedProfiles[0].id; // Get ID before removing
+      setState(() {
+        _feedProfiles
+            .removeAt(0); // Remove from local list for immediate UI update
+        if (kDebugMode)
+          print(
+              "[HomeScreen _removeTopCard] Local _feedProfiles count after removal: ${_feedProfiles.length}");
+      });
+      if (removedUserId != null) {
+        // Notify provider to remove from its source list
+        if (kDebugMode)
+          print(
+              "[HomeScreen _removeTopCard] Notifying FeedProvider to remove profile ID: $removedUserId");
+        ref.read(feedProvider.notifier).removeProfile(removedUserId);
+      } else {
+        if (kDebugMode)
+          print(
+              "[HomeScreen _removeTopCard] Warning: Removed card had null ID.");
+      }
+    } else {
+      if (kDebugMode)
+        print(
+            "[HomeScreen _removeTopCard] Warning: Attempted to remove card but local list is empty.");
     }
   }
+  // --- END OPTIMISTIC CHANGE ---
 
-  Future<bool> _callLikeRepository(
-      {required int targetUserId,
-      required ContentLikeType contentType,
-      required String contentIdentifier,
-      required LikeInteractionType interactionType,
-      String? comment}) async {
+  // --- START: Optimistic Swipe Handlers ---
+  void _handleSwipeLeft() {
+    if (kDebugMode)
+      print("[HomeScreen _handleSwipeLeft] Swiped Left (Dislike)");
+    if (_feedProfiles.isEmpty) return;
+    final profileToDislike = _feedProfiles[0];
+    if (profileToDislike.id == null) {
+      if (kDebugMode)
+        print(
+            "[HomeScreen _handleSwipeLeft] Cannot dislike, top profile has null ID.");
+      return;
+    }
+
+    // 1. Optimistic UI Update
+    _removeTopCard();
+
+    // 2. Background API Call
+    _callDislikeRepository(profileToDislike.id!);
+  }
+
+  void _handleSwipeRight() {
+    if (kDebugMode) print("[HomeScreen _handleSwipeRight] Swiped Right (Like)");
+    if (_feedProfiles.isEmpty) return;
+    final profileToLike = _feedProfiles[0];
+    if (profileToLike.id == null) {
+      if (kDebugMode)
+        print(
+            "[HomeScreen _handleSwipeRight] Cannot like, top profile has null ID.");
+      return;
+    }
+
+    // 1. Optimistic UI Update
+    _removeTopCard();
+
+    // 2. Background API Call (Default profile like)
+    _callLikeRepository(
+      targetUserId: profileToLike.id!,
+      contentType: ContentLikeType.profile, // Standard profile like on swipe
+      contentIdentifier: 'profile', // Standard profile like on swipe
+      interactionType: LikeInteractionType.standard,
+      comment: null, // No comment on swipe like
+    );
+  }
+  // --- END: Optimistic Swipe Handlers ---
+
+  // --- MODIFIED: API Call Handlers (Now fire-and-forget for background) ---
+  Future<void> _callLikeRepository({
+    required int targetUserId,
+    required ContentLikeType contentType,
+    required String contentIdentifier,
+    required LikeInteractionType interactionType,
+    String? comment,
+  }) async {
+    // Check profile completion status
     final authStatus = ref.read(authProvider).authStatus;
     if (authStatus == AuthStatus.onboarding2) {
       _showCompleteProfileDialog();
-      return false;
+      return; // Don't proceed if profile incomplete
     }
-    if (_isInteracting) return false;
-    if (mounted) setState(() => _isInteracting = true);
+
+    if (kDebugMode)
+      print(
+          "[HomeScreen _callLikeRepository BG] Firing API call for UserID: $targetUserId, Type: $contentType, ID: $contentIdentifier, Interaction: $interactionType");
+
     final errorNotifier = ref.read(errorProvider.notifier)..clearError();
-    bool success = false;
+
     try {
       final likeRepo = ref.read(likeRepositoryProvider);
-      success = await likeRepo.likeContent(
-          likedUserId: targetUserId,
-          contentType: contentType,
-          contentIdentifier: contentIdentifier,
-          interactionType: interactionType,
-          comment: comment);
-      if (!success && mounted && ref.read(errorProvider) == null) {
-        errorNotifier.setError(
-            AppError.server("Could not send ${interactionType.value}."));
-        _showErrorSnackbar("Could not send ${interactionType.value}.");
+      // Call API but don't block UI
+      final success = await likeRepo.likeContent(
+        likedUserId: targetUserId,
+        contentType: contentType,
+        contentIdentifier: contentIdentifier,
+        interactionType: interactionType,
+        comment: comment,
+      );
+
+      if (!success && mounted) {
+        // If the background call fails, show an error snackbar
+        final defaultError = "Could not send ${interactionType.value}.";
+        final currentError = ref.read(errorProvider);
+        // Use the error set by the repo if available, else use default
+        _showErrorSnackbar(currentError?.message ?? defaultError);
+      } else if (success) {
+        if (kDebugMode)
+          print(
+              "[HomeScreen _callLikeRepository BG] Background API call successful for UserID: $targetUserId");
       }
     } on LikeLimitExceededException catch (e) {
-      if (mounted) errorNotifier.setError(AppError.validation(e.message));
-      _showErrorSnackbar(e.message);
+      if (mounted) {
+        errorNotifier.setError(AppError.validation(e.message));
+        _showErrorSnackbar(e.message);
+      }
     } on InsufficientRosesException catch (e) {
-      if (mounted) errorNotifier.setError(AppError.validation(e.message));
-      _showErrorSnackbar(e.message);
+      if (mounted) {
+        errorNotifier.setError(AppError.validation(e.message));
+        _showErrorSnackbar(e.message);
+      }
     } on ApiException catch (e) {
-      if (mounted) errorNotifier.setError(AppError.server(e.message));
-      _showErrorSnackbar(e.message);
+      if (mounted) {
+        errorNotifier.setError(AppError.server(e.message));
+        _showErrorSnackbar(e.message);
+      }
     } catch (e) {
-      if (mounted)
+      if (kDebugMode) print("[HomeScreen _callLikeRepository BG] Error: $e");
+      if (mounted) {
         errorNotifier
             .setError(AppError.generic("An unexpected error occurred."));
-      _showErrorSnackbar("An unexpected error occurred.");
-    } finally {
-      if (mounted) setState(() => _isInteracting = false);
+        _showErrorSnackbar("An unexpected error occurred.");
+      }
     }
-    return success;
   }
 
-  Future<bool> _callDislikeRepository(int targetUserId) async {
+  Future<void> _callDislikeRepository(int targetUserId) async {
+    // Check profile completion status
     final authStatus = ref.read(authProvider).authStatus;
     if (authStatus == AuthStatus.onboarding2) {
       _showCompleteProfileDialog();
-      return false;
+      return; // Don't proceed if profile incomplete
     }
-    if (_isInteracting) return false;
-    if (mounted) setState(() => _isInteracting = true);
+
+    if (kDebugMode)
+      print(
+          "[HomeScreen _callDislikeRepository BG] Firing API call for UserID: $targetUserId");
+
     final errorNotifier = ref.read(errorProvider.notifier)..clearError();
-    bool success = false;
+
     try {
       final likeRepo = ref.read(likeRepositoryProvider);
-      success = await likeRepo.dislikeUser(dislikedUserId: targetUserId);
-      if (!success && mounted && ref.read(errorProvider) == null) {
-        errorNotifier.setError(AppError.server("Could not dislike user."));
-        _showErrorSnackbar("Could not dislike user.");
+      final success = await likeRepo.dislikeUser(dislikedUserId: targetUserId);
+
+      if (!success && mounted) {
+        final defaultError = "Could not dislike user.";
+        final currentError = ref.read(errorProvider);
+        _showErrorSnackbar(currentError?.message ?? defaultError);
+      } else if (success) {
+        if (kDebugMode)
+          print(
+              "[HomeScreen _callDislikeRepository BG] Background API call successful for UserID: $targetUserId");
       }
     } on ApiException catch (e) {
-      if (mounted) errorNotifier.setError(AppError.server(e.message));
-      _showErrorSnackbar(e.message);
+      if (mounted) {
+        errorNotifier.setError(AppError.server(e.message));
+        _showErrorSnackbar(e.message);
+      }
     } catch (e) {
-      if (mounted)
+      if (kDebugMode) print("[HomeScreen _callDislikeRepository BG] Error: $e");
+      if (mounted) {
         errorNotifier
             .setError(AppError.generic("An unexpected error occurred."));
-      _showErrorSnackbar("An unexpected error occurred.");
-    } finally {
-      if (mounted) setState(() => _isInteracting = false);
+        _showErrorSnackbar("An unexpected error occurred.");
+      }
     }
-    return success;
   }
+  // --- END MODIFIED API Call Handlers ---
 
   void _showSnackbar(String message, {bool isError = false}) {
     // Added snackbar helper
@@ -12329,23 +12884,24 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
         backgroundColor: isError ? Colors.redAccent : Colors.green));
   }
 
-  void _showErrorSnackbar(String message) {
-    _showSnackbar(message, isError: true);
-  } // Added error snackbar helper
+  void _showErrorSnackbar(String message,
+      [String defaultMsg = "An error occurred."]) {
+    _showSnackbar(message.isNotEmpty ? message : defaultMsg, isError: true);
+  }
 
   Future<void> _openFilterDialog() async {
-    /* ... keep existing implementation ... */
-    print("[HomeScreen] Opening Full Filter Dialog.");
+    // (No changes needed)
+    if (kDebugMode) print("[HomeScreen] Opening Full Filter Dialog.");
     await showDialog<bool>(
         context: context, builder: (context) => const FilterSettingsDialog());
   }
 
   Future<void> _showMiniFilterEditor(FilterField filterType) async {
-    /* ... keep existing implementation ... */
+    // (No changes needed)
     final filterNotifier = ref.read(filterProvider.notifier);
     final currentFilters = ref.read(filterProvider);
     bool changesMade = false;
-    print("[HomeScreen] Opening mini-editor for: $filterType");
+    if (kDebugMode) print("[HomeScreen] Opening mini-editor for: $filterType");
     final initialGender = currentFilters.whoYouWantToSee;
     final initialAgeRange = RangeValues(
         currentFilters.ageMin?.toDouble() ??
@@ -12383,8 +12939,9 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                           onChanged: (FilterGenderPref? value) {
                             if (value != null) {
                               stfSetState(() {
-                                print(
-                                    "[MiniDialog stfSetState] Updating tempGender from $tempGender to $value");
+                                if (kDebugMode)
+                                  print(
+                                      "[MiniDialog stfSetState] Updating tempGender from $tempGender to $value");
                                 tempGender = value;
                               });
                             }
@@ -12410,8 +12967,9 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                       onChanged: (RangeValues values) {
                         stfSetState(() {
                           if (values.start <= values.end) {
-                            print(
-                                "[MiniDialog stfSetState] Updating tempAgeRange from $tempAgeRange to $values");
+                            if (kDebugMode)
+                              print(
+                                  "[MiniDialog stfSetState] Updating tempAgeRange from $tempAgeRange to $values");
                             tempAgeRange = values;
                           }
                         });
@@ -12438,8 +12996,9 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                       inactiveColor: const Color(0xFF8B5CF6).withOpacity(0.3),
                       onChanged: (double value) {
                         stfSetState(() {
-                          print(
-                              "[MiniDialog stfSetState] Updating tempRadius from $tempRadius to $value");
+                          if (kDebugMode)
+                            print(
+                                "[MiniDialog stfSetState] Updating tempRadius from $tempRadius to $value");
                           tempRadius = value;
                         });
                       }),
@@ -12460,8 +13019,9 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                     contentPadding: EdgeInsets.zero,
                     onChanged: (bool value) {
                       stfSetState(() {
-                        print(
-                            "[MiniDialog stfSetState] Updating tempActive from $tempActive to $value");
+                        if (kDebugMode)
+                          print(
+                              "[MiniDialog stfSetState] Updating tempActive from $tempActive to $value");
                         tempActive = value;
                       });
                     });
@@ -12521,11 +13081,13 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                         }
                         if (valueChanged) {
                           changesMade = true;
-                          print(
-                              "[HomeScreen] Mini-editor change confirmed for $filterType.");
+                          if (kDebugMode)
+                            print(
+                                "[HomeScreen] Mini-editor change confirmed for $filterType.");
                         } else {
-                          print(
-                              "[HomeScreen] Mini-editor no change detected for $filterType.");
+                          if (kDebugMode)
+                            print(
+                                "[HomeScreen] Mini-editor no change detected for $filterType.");
                         }
                         Navigator.of(dialogContext).pop();
                       })
@@ -12535,19 +13097,23 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
           });
         });
     if (changesMade && mounted) {
-      print("[HomeScreen] Mini-filter changed. Saving current state via API.");
+      if (kDebugMode)
+        print(
+            "[HomeScreen] Mini-filter changed. Saving current state via API.");
       await Future.delayed(const Duration(milliseconds: 50));
       final bool saveSuccess = await filterNotifier.saveCurrentFilterState();
       if (!saveSuccess && mounted) {
         _showErrorSnackbar("Failed to save filter change.");
       }
     } else if (!changesMade) {
-      print("[HomeScreen] No changes made in mini-filter editor, not saving.");
+      if (kDebugMode)
+        print(
+            "[HomeScreen] No changes made in mini-filter editor, not saving.");
     }
   }
 
   List<Widget> _buildFilterChips(FilterSettings filters) {
-    /* ... keep existing implementation ... */
+    // (No changes needed)
     List<Widget> chips = [];
     chips.add(_buildFilterChip(
         Icons.wc_rounded,
@@ -12583,7 +13149,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
 
   Widget _buildFilterChip(
       IconData icon, String label, FilterField type, VoidCallback onTap) {
-    /* ... keep existing implementation ... */
+    // (No changes needed)
     const Color themeColor = Color(0xFF8B5CF6);
     const Color themeBgColor = Color(0xFFEDE9FE);
     const Color themeTextColor = themeColor;
@@ -12609,16 +13175,14 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                 shadowColor: themeColor.withOpacity(0.2))));
   }
 
-  // --- ADDED: _callReportRepository ---
   Future<bool> _callReportRepository(
       int targetUserId, ReportReason reason) async {
-    // Check if user needs to complete profile first
+    // (No changes needed, but now returns bool for consistency, though not used)
     final authStatus = ref.read(authProvider).authStatus;
     if (authStatus == AuthStatus.onboarding2) {
       _showCompleteProfileDialog();
       return false;
     }
-    // Prevent multiple interactions
     if (_isInteracting) return false;
     setState(() => _isInteracting = true);
     final errorNotifier = ref.read(errorProvider.notifier)..clearError();
@@ -12639,6 +13203,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
       if (mounted) errorNotifier.setError(AppError.server(e.message));
       _showErrorSnackbar(e.message);
     } catch (e) {
+      if (kDebugMode) print("[HomeScreen _callReportRepository] Error: $e");
       if (mounted)
         errorNotifier
             .setError(AppError.generic("An unexpected error occurred."));
@@ -12648,24 +13213,27 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     }
     return success;
   }
-  // --- END ADDED ---
 
   @override
   Widget build(BuildContext context) {
-    // ... (keep existing build setup) ...
     final feedState = ref.watch(feedProvider);
     final filters = ref.watch(filterProvider);
+    // Listen to provider changes to update local state
     ref.listen<HomeFeedState>(feedProvider, (_, next) {
       if (mounted && _feedProfiles != next.profiles) {
+        // Check if the list reference is actually different
         setState(() {
-          _feedProfiles = next.profiles;
-          print(
-              "[HomeScreen Listener] Updated local _feedProfiles. Count: ${_feedProfiles.length}");
+          _feedProfiles = List.from(
+              next.profiles); // Update local copy when provider changes
+          if (kDebugMode)
+            print(
+                "[HomeScreen Listener] Updated local _feedProfiles from provider. New Count: ${_feedProfiles.length}");
         });
       }
     });
     final error = feedState.error ?? ref.watch(errorProvider);
     final isLoadingFeed = feedState.isLoading && !feedState.hasFetchedOnce;
+    // Use local list for UI building
     final bool hasProfilesToShow = _feedProfiles.isNotEmpty;
 
     return Scaffold(
@@ -12686,6 +13254,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
       ),
       body: Column(
         children: [
+          // Filter Chips Row (No changes needed)
           Padding(
             padding:
                 const EdgeInsets.symmetric(horizontal: 12.0, vertical: 10.0),
@@ -12697,18 +13266,23 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                     physics: const BouncingScrollPhysics(),
                     child: Row(children: _buildFilterChips(filters)))),
           ),
+          // Main Content Area
           Expanded(
             child: Stack(
               alignment: Alignment.center,
               children: [
                 if (isLoadingFeed)
                   const CircularProgressIndicator(color: Color(0xFF8B5CF6))
+                // --- Build based on local _feedProfiles ---
                 else if (error != null && !hasProfilesToShow)
                   _buildErrorState(error)
                 else if (!hasProfilesToShow)
                   _buildEmptyState()
                 else
-                  _buildProfileCardAtIndex(0),
+                  _buildProfileCardAtIndex(0), // Only build the top card
+                // --- End Local List Build ---
+
+                // Interaction overlay remains the same BUT is now less used visually
                 if (_isInteracting)
                   Positioned.fill(
                       child: Container(
@@ -12724,47 +13298,59 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     );
   }
 
-  // --- Modified _buildProfileCardAtIndex ---
+  // --- Modified to pass Optimistic Swipe Handlers ---
   Widget _buildProfileCardAtIndex(int index) {
     if (index >= 0 && index < _feedProfiles.length) {
       final currentProfile = _feedProfiles[index];
       return HomeProfileCard(
-        key: ValueKey(currentProfile.id),
+        key: ValueKey(currentProfile.id), // Use profile ID as key
         profile: currentProfile,
+        // Pass background API handlers
         performLikeApiCall: (
             {required contentType,
             required contentIdentifier,
             required interactionType,
             comment}) async {
-          if (currentProfile.id == null) return false;
-          return await _callLikeRepository(
+          // Call background API call, return true optimistically
+          _callLikeRepository(
               targetUserId: currentProfile.id!,
               contentType: contentType,
               contentIdentifier: contentIdentifier,
               interactionType: interactionType,
               comment: comment);
+          return true;
         },
         performDislikeApiCall: () async {
-          if (currentProfile.id == null) return false;
-          return await _callDislikeRepository(currentProfile.id!);
+          // Call background API call, return true optimistically
+          _callDislikeRepository(currentProfile.id!);
+          return true;
         },
-        // --- ADDED: Pass Report Callback ---
         performReportApiCall: ({required reason}) async {
-          if (currentProfile.id == null) return false;
-          return await _callReportRepository(currentProfile.id!, reason);
+          // Keep reporting synchronous for now? Or make optimistic too?
+          // Let's make it optimistic for consistency.
+          _callReportRepository(currentProfile.id!, reason);
+          return true;
         },
-        // --- END ADDED ---
-        onInteractionComplete: _removeTopCard,
+        onInteractionComplete: _removeTopCard, // Optimistic UI removal
+        // *** Pass SWIPE Handlers ***
+        onSwiped: (direction) {
+          if (direction == DismissDirection.endToStart) {
+            _handleSwipeLeft(); // Dislike
+          } else if (direction == DismissDirection.startToEnd) {
+            _handleSwipeRight(); // Like
+          }
+        },
+        // *** END SWIPE Handlers ***
       );
     }
-    return Container(
-        alignment: Alignment.center,
-        child: Text("No more profiles.", style: GoogleFonts.poppins()));
+    // Show empty state if local list is empty AFTER loading/error checks
+    return _buildEmptyState();
   }
+  // --- End Modification ---
 
-  // --- _buildEmptyState, _buildErrorState (keep as is) ---
+  // --- Helper methods (_buildEmptyState, _buildErrorState, etc.) remain unchanged ---
   Widget _buildEmptyState() {
-    /* ... keep existing implementation ... */
+    // (No changes needed)
     return LayoutBuilder(builder: (context, constraints) {
       return SingleChildScrollView(
           physics: const AlwaysScrollableScrollPhysics(),
@@ -12802,7 +13388,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
   }
 
   Widget _buildErrorState(AppError error) {
-    /* ... keep existing implementation ... */
+    // (No changes needed)
     return LayoutBuilder(builder: (context, constraints) {
       return SingleChildScrollView(
           physics: const AlwaysScrollableScrollPhysics(),
@@ -20925,6 +21511,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:cached_network_image/cached_network_image.dart';
+import 'package:flutter/foundation.dart'; // Added for kDebugMode
 
 // Function Type Definitions
 typedef PerformLikeApiCall = Future<bool> Function({
@@ -20946,6 +21533,9 @@ class HomeProfileCard extends ConsumerWidget {
   final PerformDislikeApiCall performDislikeApiCall;
   final PerformReportApiCall performReportApiCall;
   final InteractionCompleteCallback onInteractionComplete;
+  // *** --- START: Added onSwiped Callback --- ***
+  final Function(DismissDirection)? onSwiped;
+  // *** --- END: Added onSwiped Callback --- ***
 
   const HomeProfileCard({
     super.key,
@@ -20954,6 +21544,7 @@ class HomeProfileCard extends ConsumerWidget {
     required this.performDislikeApiCall,
     required this.performReportApiCall,
     required this.onInteractionComplete,
+    this.onSwiped, // *** ADDED: Make onSwiped optional in constructor ***
   });
 
   // --- Interaction Dialog (Like/Rose/Comment) ---
@@ -20964,28 +21555,24 @@ class HomeProfileCard extends ConsumerWidget {
     String contentIdentifier,
     String? previewImageUrl,
   ) async {
+    // (Implementation remains the same)
     final currentUserGender = ref.read(userProvider).gender;
     final isMale = currentUserGender == Gender.man;
     final FocusNode commentFocusNode = FocusNode();
     final TextEditingController commentController = TextEditingController();
-    // Notifier tracks if the comment field allows sending (non-empty for males)
     final ValueNotifier<bool> sendLikeEnabledNotifier =
         ValueNotifier<bool>(!isMale);
-    // Notifier tracks if an API call (like/rose) is in progress within the dialog
     final ValueNotifier<bool> _isDialogInteractionActive =
         ValueNotifier<bool>(false);
-    VoidCallback? listenerCallback; // To hold the listener function reference
+    VoidCallback? listenerCallback;
 
-    // Add listener only if the user is male to enable/disable based on comment
     if (isMale) {
       listenerCallback = () {
-        // Check if the widget is still mounted and the notifier hasn't been disposed
         if (context.mounted && commentController.hasListeners) {
           try {
             sendLikeEnabledNotifier.value =
                 commentController.text.trim().isNotEmpty;
           } catch (e) {
-            // Handle cases where the notifier might be disposed prematurely
             print(
                 "Error accessing sendLikeEnabledNotifier in listener (might be disposed): $e");
           }
@@ -20994,54 +21581,38 @@ class HomeProfileCard extends ConsumerWidget {
       commentController.addListener(listenerCallback);
     }
 
-    // --- Handle Like/Rose Submission ---
     Future<void> _handleInteraction(LikeInteractionType interactionType) async {
-      // Prevent multiple simultaneous submissions
       if (_isDialogInteractionActive.value) return;
-
-      // Safely get comment text
       String comment = "";
       try {
         comment = commentController.text.trim();
       } catch (e) {
         print("Error reading commentController text (already disposed?): $e");
-        return; // Cannot proceed if controller is disposed
+        return;
       }
-
-      // Unfocus text field
       commentFocusNode.unfocus();
-      // Short delay allows keyboard to retract smoothly before showing loading
       await Future.delayed(const Duration(milliseconds: 100));
-
-      // Set interaction active state safely
       try {
         _isDialogInteractionActive.value = true;
       } catch (e) {
         print(
             "Error setting _isDialogInteractionActive to true (notifier disposed?): $e");
-        return; // Cannot proceed if notifier is disposed
+        return;
       }
-
       bool success = false;
       try {
-        // Perform the API call passed from the HomeScreen
         success = await performLikeApiCall(
           contentType: contentType,
           contentIdentifier: contentIdentifier,
           interactionType: interactionType,
           comment: comment.isNotEmpty ? comment : null,
         );
-
-        // Close dialog and trigger card removal ONLY on success
         if (success && context.mounted) {
-          Navigator.of(context, rootNavigator: true).pop(); // Close dialog
-          onInteractionComplete(); // Trigger card removal etc. in HomeScreen
+          Navigator.of(context, rootNavigator: true).pop();
+          onInteractionComplete();
         }
-        // Error snackbars/handling is managed within performLikeApiCall (in HomeScreen)
       } finally {
-        // Reset interaction state safely, even if API call failed
         try {
-          // Check context AND if the value is actually true before setting false
           if (context.mounted && _isDialogInteractionActive.value) {
             _isDialogInteractionActive.value = false;
           }
@@ -21051,13 +21622,11 @@ class HomeProfileCard extends ConsumerWidget {
         }
       }
     }
-    // --- End Handle Like/Rose Submission ---
 
     try {
-      // --- Show Dialog ---
       await showDialog<void>(
         context: context,
-        barrierDismissible: true, // Allow dismissing by tapping outside
+        barrierDismissible: true,
         builder: (BuildContext dialogContext) {
           return AlertDialog(
             contentPadding: const EdgeInsets.all(16),
@@ -21065,223 +21634,177 @@ class HomeProfileCard extends ConsumerWidget {
               borderRadius: BorderRadius.circular(20.0),
             ),
             content: SizedBox(
-              width: MediaQuery.of(dialogContext).size.width *
-                  0.8, // Constrain width
+              width: MediaQuery.of(dialogContext).size.width * 0.8,
               child: SingleChildScrollView(
-                // Allow scrolling if content overflows
                 child: Column(
-                  mainAxisSize: MainAxisSize.min, // Fit content vertically
+                  mainAxisSize: MainAxisSize.min,
                   children: [
-                    // Image Preview (if applicable)
                     if (previewImageUrl != null)
                       ClipRRect(
-                        borderRadius: BorderRadius.circular(12.0),
-                        child: CachedNetworkImage(
-                          imageUrl: previewImageUrl,
+                          borderRadius: BorderRadius.circular(12.0),
+                          child: CachedNetworkImage(
+                              imageUrl: previewImageUrl,
+                              height: 100,
+                              width: double.infinity,
+                              fit: BoxFit.cover,
+                              placeholder: (context, url) => Container(
+                                  height: 100,
+                                  color: Colors.grey[200],
+                                  child: const Center(
+                                      child: CircularProgressIndicator(
+                                          strokeWidth: 2,
+                                          color: Color(0xAA8B5CF6)))),
+                              errorWidget: (context, url, error) => Container(
+                                  height: 100,
+                                  color: Colors.grey[200],
+                                  child: Icon(Icons.broken_image,
+                                      color: Colors.grey[400]))))
+                    else if (contentType == ContentLikeType.audioPrompt)
+                      Container(
                           height: 100,
                           width: double.infinity,
-                          fit: BoxFit.cover,
-                          placeholder: (context, url) => Container(
-                            height: 100,
-                            color: Colors.grey[200],
-                            child: const Center(
-                                child: CircularProgressIndicator(
-                                    strokeWidth: 2, color: Color(0xAA8B5CF6))),
-                          ),
-                          errorWidget: (context, url, error) => Container(
-                              height: 100,
-                              color: Colors.grey[200],
-                              child: Icon(Icons.broken_image,
-                                  color: Colors.grey[400])),
-                        ),
-                      ),
-                    // Audio Prompt Placeholder (if applicable)
-                    if (previewImageUrl == null &&
-                        contentType == ContentLikeType.audioPrompt)
+                          decoration: BoxDecoration(
+                              color: Colors.grey[100],
+                              borderRadius: BorderRadius.circular(12.0)),
+                          child: Center(
+                              child: Icon(Icons.multitrack_audio_rounded,
+                                  size: 40, color: Colors.grey[500])))
+                    else
                       Container(
-                        height: 100,
-                        width: double.infinity,
-                        decoration: BoxDecoration(
-                          color: Colors.grey[100],
-                          borderRadius: BorderRadius.circular(12.0),
-                        ),
-                        child: Center(
-                            child: Icon(Icons.multitrack_audio_rounded,
-                                size: 40, color: Colors.grey[500])),
-                      ),
-                    // Text Prompt Placeholder (if applicable)
-                    if (previewImageUrl == null &&
-                        contentType != ContentLikeType.audioPrompt)
-                      Container(
-                        height: 100,
-                        width: double.infinity,
-                        decoration: BoxDecoration(
-                          color: Colors.grey[100],
-                          borderRadius: BorderRadius.circular(12.0),
-                        ),
-                        child: Center(
-                            child: Icon(Icons.article_outlined,
-                                size: 40, color: Colors.grey[500])),
-                      ),
-
+                          height: 100,
+                          width: double.infinity,
+                          decoration: BoxDecoration(
+                              color: Colors.grey[100],
+                              borderRadius: BorderRadius.circular(12.0)),
+                          child: Center(
+                              child: Icon(Icons.article_outlined,
+                                  size: 40, color: Colors.grey[500]))),
                     const SizedBox(height: 16),
-
-                    // Comment TextField
                     TextField(
-                      controller: commentController,
-                      focusNode: commentFocusNode,
-                      decoration: InputDecoration(
-                        hintText: "Add a comment...",
-                        border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(12.0),
-                          borderSide: BorderSide(color: Colors.grey.shade300),
-                        ),
-                        focusedBorder: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(12.0),
-                          borderSide:
-                              const BorderSide(color: Color(0xFF8B5CF6)),
-                        ),
-                        contentPadding: const EdgeInsets.symmetric(
-                            horizontal: 12, vertical: 10),
-                        counterText: "", // Hide default counter
-                      ),
-                      maxLength: maxCommentLength, // Use constant
-                      maxLines: 3,
-                      minLines: 1,
-                      textCapitalization: TextCapitalization.sentences,
-                    ),
-
+                        controller: commentController,
+                        focusNode: commentFocusNode,
+                        decoration: InputDecoration(
+                            hintText: "Add a comment...",
+                            border: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(12.0),
+                                borderSide:
+                                    BorderSide(color: Colors.grey.shade300)),
+                            focusedBorder: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(12.0),
+                                borderSide:
+                                    const BorderSide(color: Color(0xFF8B5CF6))),
+                            contentPadding: const EdgeInsets.symmetric(
+                                horizontal: 12, vertical: 10),
+                            counterText: ""),
+                        maxLength: maxCommentLength,
+                        maxLines: 3,
+                        minLines: 1,
+                        textCapitalization: TextCapitalization.sentences),
                     const SizedBox(height: 16),
-
-                    // Action Buttons (Rose/Like)
                     Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                      children: [
-                        // Rose Button
-                        ValueListenableBuilder<bool>(
-                          valueListenable: sendLikeEnabledNotifier,
-                          builder: (context, isCommentValid, child) {
-                            final bool roseButtonEnabled =
-                                !isMale || isCommentValid;
-                            return ValueListenableBuilder<bool>(
-                              valueListenable: _isDialogInteractionActive,
-                              builder: (context, isInteractionActive, child) {
-                                final bool effectiveEnabled =
-                                    roseButtonEnabled && !isInteractionActive;
-                                return OutlinedButton.icon(
-                                  icon: Icon(
-                                    Icons.star_rounded,
-                                    color: effectiveEnabled
-                                        ? Colors.purple.shade300
-                                        : Colors.grey.shade400,
-                                    size: 18,
-                                  ),
-                                  label: Text(
-                                    "Send Rose",
-                                    style: GoogleFonts.poppins(
-                                      fontWeight: FontWeight.w500,
-                                      color: effectiveEnabled
-                                          ? Colors.purple.shade400
-                                          : Colors.grey.shade500,
-                                      fontSize: 13,
-                                    ),
-                                    overflow: TextOverflow.ellipsis,
-                                  ),
-                                  style: OutlinedButton.styleFrom(
-                                    foregroundColor: effectiveEnabled
-                                        ? Colors.purple.shade400
-                                        : Colors.grey.shade500,
-                                    side: BorderSide(
-                                      color: effectiveEnabled
-                                          ? Colors.purple.shade100
-                                          : Colors.grey.shade300,
-                                    ),
-                                    shape: RoundedRectangleBorder(
-                                      borderRadius: BorderRadius.circular(25),
-                                    ),
-                                    padding: const EdgeInsets.symmetric(
-                                        vertical: 10, horizontal: 12),
-                                  ),
-                                  onPressed: effectiveEnabled
-                                      ? () => _handleInteraction(
-                                          LikeInteractionType.rose)
-                                      : null,
-                                );
-                              },
-                            );
-                          },
-                        ),
-                        // Like Button
-                        ValueListenableBuilder<bool>(
-                          valueListenable: sendLikeEnabledNotifier,
-                          builder: (context, isCommentValid, child) {
-                            final bool likeButtonEnabled =
-                                !isMale || isCommentValid;
-                            return ValueListenableBuilder<bool>(
-                              valueListenable: _isDialogInteractionActive,
-                              builder: (context, isInteractionActive, child) {
-                                final bool effectiveEnabled =
-                                    likeButtonEnabled && !isInteractionActive;
-                                return ElevatedButton.icon(
-                                  icon: Icon(
-                                    Icons.favorite_rounded,
-                                    color: effectiveEnabled
-                                        ? Colors.white
-                                        : Colors.grey.shade400,
-                                    size: 18,
-                                  ),
-                                  label: Text(
-                                    "Send Like",
-                                    style: GoogleFonts.poppins(
-                                      fontWeight: FontWeight.w600,
-                                      color: effectiveEnabled
-                                          ? Colors.white
-                                          : Colors.grey.shade500,
-                                      fontSize: 13,
-                                    ),
-                                    overflow: TextOverflow.ellipsis,
-                                  ),
-                                  style: ElevatedButton.styleFrom(
-                                    backgroundColor: effectiveEnabled
-                                        ? Colors.pink.shade300
-                                        : Colors.grey.shade200,
-                                    disabledBackgroundColor:
-                                        Colors.grey.shade200,
-                                    shape: RoundedRectangleBorder(
-                                      borderRadius: BorderRadius.circular(25),
-                                    ),
-                                    padding: const EdgeInsets.symmetric(
-                                        vertical: 10, horizontal: 12),
-                                    elevation: effectiveEnabled ? 2 : 0,
-                                  ),
-                                  onPressed: effectiveEnabled
-                                      ? () => _handleInteraction(
-                                          LikeInteractionType.standard)
-                                      : null,
-                                );
-                              },
-                            );
-                          },
-                        ),
-                      ],
-                    ),
-
-                    // Cancel Button
+                        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                        children: [
+                          ValueListenableBuilder<bool>(
+                              valueListenable: sendLikeEnabledNotifier,
+                              builder: (context, isCommentValid, child) {
+                                final bool roseButtonEnabled =
+                                    !isMale || isCommentValid;
+                                return ValueListenableBuilder<bool>(
+                                    valueListenable: _isDialogInteractionActive,
+                                    builder:
+                                        (context, isInteractionActive, child) {
+                                      final bool effectiveEnabled =
+                                          roseButtonEnabled &&
+                                              !isInteractionActive;
+                                      return OutlinedButton.icon(
+                                          icon: Icon(Icons.star_rounded,
+                                              color: effectiveEnabled
+                                                  ? Colors.purple.shade300
+                                                  : Colors.grey.shade400,
+                                              size: 18),
+                                          label: Text("Send Rose",
+                                              style: GoogleFonts.poppins(
+                                                  fontWeight: FontWeight.w500,
+                                                  color: effectiveEnabled
+                                                      ? Colors.purple.shade400
+                                                      : Colors.grey.shade500,
+                                                  fontSize: 13),
+                                              overflow: TextOverflow.ellipsis),
+                                          style: OutlinedButton.styleFrom(
+                                              foregroundColor: effectiveEnabled
+                                                  ? Colors.purple.shade400
+                                                  : Colors.grey.shade500,
+                                              side: BorderSide(
+                                                  color: effectiveEnabled
+                                                      ? Colors.purple.shade100
+                                                      : Colors.grey.shade300),
+                                              shape: RoundedRectangleBorder(
+                                                  borderRadius:
+                                                      BorderRadius.circular(
+                                                          25)),
+                                              padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 12)),
+                                          onPressed: effectiveEnabled ? () => _handleInteraction(LikeInteractionType.rose) : null);
+                                    });
+                              }),
+                          ValueListenableBuilder<bool>(
+                              valueListenable: sendLikeEnabledNotifier,
+                              builder: (context, isCommentValid, child) {
+                                final bool likeButtonEnabled =
+                                    !isMale || isCommentValid;
+                                return ValueListenableBuilder<bool>(
+                                    valueListenable: _isDialogInteractionActive,
+                                    builder:
+                                        (context, isInteractionActive, child) {
+                                      final bool effectiveEnabled =
+                                          likeButtonEnabled &&
+                                              !isInteractionActive;
+                                      return ElevatedButton.icon(
+                                          icon: Icon(Icons.favorite_rounded,
+                                              color: effectiveEnabled
+                                                  ? Colors.white
+                                                  : Colors.grey.shade400,
+                                              size: 18),
+                                          label: Text("Send Like",
+                                              style: GoogleFonts.poppins(
+                                                  fontWeight: FontWeight.w600,
+                                                  color: effectiveEnabled
+                                                      ? Colors.white
+                                                      : Colors.grey.shade500,
+                                                  fontSize: 13),
+                                              overflow: TextOverflow.ellipsis),
+                                          style: ElevatedButton.styleFrom(
+                                              backgroundColor: effectiveEnabled
+                                                  ? Colors.pink.shade300
+                                                  : Colors.grey.shade200,
+                                              disabledBackgroundColor:
+                                                  Colors.grey.shade200,
+                                              shape: RoundedRectangleBorder(
+                                                  borderRadius:
+                                                      BorderRadius.circular(
+                                                          25)),
+                                              padding:
+                                                  const EdgeInsets.symmetric(
+                                                      vertical: 10,
+                                                      horizontal: 12),
+                                              elevation:
+                                                  effectiveEnabled ? 2 : 0),
+                                          onPressed: effectiveEnabled ? () => _handleInteraction(LikeInteractionType.standard) : null);
+                                    });
+                              })
+                        ]),
                     ValueListenableBuilder<bool>(
-                      valueListenable: _isDialogInteractionActive,
-                      builder: (context, isInteractionActive, child) {
-                        return TextButton(
-                          child: Text("Cancel",
-                              style: GoogleFonts.poppins(
-                                  color: isInteractionActive
-                                      ? Colors.grey.shade400
-                                      : Colors.grey)),
-                          onPressed: isInteractionActive
-                              ? null // Disable cancel if interaction is active
-                              : () => Navigator.of(dialogContext).pop(),
-                        );
-                      },
-                    ),
+                        valueListenable: _isDialogInteractionActive,
+                        builder: (context, isInteractionActive, child) {
+                          return TextButton(
+                              child: Text("Cancel",
+                                  style: GoogleFonts.poppins(
+                                      color: isInteractionActive
+                                          ? Colors.grey.shade400
+                                          : Colors.grey)),
+                              onPressed: isInteractionActive
+                                  ? null
+                                  : () => Navigator.of(dialogContext).pop());
+                        })
                   ],
                 ),
               ),
@@ -21289,13 +21812,11 @@ class HomeProfileCard extends ConsumerWidget {
           );
         },
       );
-      // --- End Show Dialog ---
     } finally {
-      // Safely clean up listeners and controllers
       if (listenerCallback != null) {
         try {
           commentController.removeListener(listenerCallback);
-          listenerCallback = null; // Help GC
+          listenerCallback = null;
         } catch (e) {
           print(
               "Error removing commentController listener (already removed?): $e");
@@ -21324,21 +21845,16 @@ class HomeProfileCard extends ConsumerWidget {
     }
   }
 
-  // --- Handle Report Action (Shows Reason Dialog) ---
   Future<void> _handleReport(BuildContext context) async {
-    // Show the dialog to get the reason
     final selectedReason = await showReportReasonDialog(context);
     if (selectedReason != null) {
-      // Call the report API function passed from HomeScreen
-      // API call result/error handling is done in HomeScreen
       await performReportApiCall(reason: selectedReason);
-      // Card removal is handled by the callback in HomeScreen if report succeeds
     }
   }
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    // --- Content Block Generation (No Change) ---
+    // --- Content Block Generation ---
     final List<dynamic> contentBlocks = [];
     final mediaUrls = profile.mediaUrls ?? [];
     final prompts = profile.prompts;
@@ -21364,183 +21880,193 @@ class HomeProfileCard extends ConsumerWidget {
     if (profile.audioPrompt != null) contentBlocks.add(profile.audioPrompt!);
     // --- End Content Block Generation ---
 
-    return Container(
-      color: Colors.white, // Background for the entire card area
-      child: Stack(
-        // Use Stack to overlay buttons
-        children: [
-          // Main Scrollable Content
-          ListView.builder(
-            physics: const ClampingScrollPhysics(), // Prevents overscroll glow
-            padding: const EdgeInsets.only(bottom: 80.0), // Space for buttons
-            itemCount: contentBlocks.length,
-            itemBuilder: (context, index) {
-              final item = contentBlocks[index];
-              final double topPadding = (index == 0) ? 16.0 : 0;
-              final double bottomPadding = 20.0;
-              final double horizontalPadding = 12.0;
-              Widget contentWidget;
+    // *** --- START: Wrap with Dismissible --- ***
+    return Dismissible(
+      key: ValueKey('dismissable_card_${profile.id}'), // Use unique key
+      // Define swipe directions and background (optional)
+      background: Container(
+        color: Colors.green.withOpacity(0.1), // Like background
+        alignment: Alignment.centerLeft,
+        padding: const EdgeInsets.symmetric(horizontal: 20),
+        child: Icon(Icons.favorite_rounded,
+            color: Colors.green.shade300, size: 40),
+      ),
+      secondaryBackground: Container(
+        color: Colors.red.withOpacity(0.1), // Dislike background
+        alignment: Alignment.centerRight,
+        padding: const EdgeInsets.symmetric(horizontal: 20),
+        child: Icon(Icons.close_rounded, color: Colors.red.shade300, size: 40),
+      ),
+      // Specify directions to dismiss
+      // You can allow both: direction: DismissDirection.horizontal,
+      // Or restrict to one if needed
+      direction: DismissDirection.horizontal, // Allow both directions
+      // Action to perform when dismissed
+      onDismissed: (direction) {
+        if (kDebugMode)
+          print("[HomeProfileCard Dismissible] Swiped: $direction");
+        // Call the passed callback if it exists
+        onSwiped?.call(direction);
+      },
+      child: Container(
+        // --- START: Original Card Content ---
+        color: Colors.white, // Background for the entire card area
+        child: Stack(
+          // Use Stack to overlay buttons
+          children: [
+            // Main Scrollable Content
+            ListView.builder(
+              physics:
+                  const ClampingScrollPhysics(), // Prevents overscroll glow
+              padding: const EdgeInsets.only(bottom: 80.0), // Space for buttons
+              itemCount: contentBlocks.length,
+              itemBuilder: (context, index) {
+                final item = contentBlocks[index];
+                final double topPadding = (index == 0) ? 16.0 : 0;
+                final double bottomPadding = 20.0;
+                final double horizontalPadding = 12.0;
+                Widget contentWidget;
 
-              // Build content blocks based on type
-              if (item is String && item == "header_section") {
-                contentWidget = _buildHeaderBlock(context, profile);
-              } else if (item is Map && item["type"] == "media") {
-                contentWidget = _buildMediaItem(
-                    context, ref, item["value"] as String, item["index"]);
-              } else if (item is Prompt) {
-                contentWidget = _buildPromptItem(context, ref, item);
-              } else if (item is AudioPromptModel) {
-                contentWidget = _buildAudioItem(context, ref, item);
-              } else if (item is String && item == "vitals_section") {
-                contentWidget = _buildVitalsBlock(profile);
-              } else {
-                contentWidget = const SizedBox.shrink();
-              }
+                // Build content blocks based on type
+                if (item is String && item == "header_section") {
+                  contentWidget = _buildHeaderBlock(context, profile);
+                } else if (item is Map && item["type"] == "media") {
+                  contentWidget = _buildMediaItem(
+                      context, ref, item["value"] as String, item["index"]);
+                } else if (item is Prompt) {
+                  contentWidget = _buildPromptItem(context, ref, item);
+                } else if (item is AudioPromptModel) {
+                  contentWidget = _buildAudioItem(context, ref, item);
+                } else if (item is String && item == "vitals_section") {
+                  contentWidget = _buildVitalsBlock(profile);
+                } else {
+                  contentWidget = const SizedBox.shrink();
+                }
 
-              // Add padding around each block
-              return Padding(
-                padding: EdgeInsets.fromLTRB(horizontalPadding, topPadding,
-                    horizontalPadding, bottomPadding),
-                child: contentWidget,
-              );
-            },
-          ),
-
-          // Action Buttons Row (Dislike Only Now)
-          Positioned(
-            bottom: 15, // Adjust position as needed
-            left: 30,
-            right: 30, // Ensure it takes full width for spaceBetween
-            child: Row(
-              // *** MODIFIED: Use spaceBetween and added Dislike Button back ***
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              // *** END MODIFICATION ***
-              children: [
-                // Dislike Button (Restored)
-                _buildActionButton(
-                  icon: Icons.close_rounded,
-                  color: Colors.redAccent.shade100,
-                  onPressed: () async {
-                    // Call the dislike API function passed from HomeScreen
-                    bool success = await performDislikeApiCall();
-                    if (success) {
-                      onInteractionComplete(); // Trigger card removal in HomeScreen
-                    }
-                  },
-                  tooltip: "Dislike",
-                  size: 55, // Smaller action buttons
-                ),
-                // Add other buttons here if needed in the future, using spaceBetween
-              ],
+                // Add padding around each block
+                return Padding(
+                  padding: EdgeInsets.fromLTRB(horizontalPadding, topPadding,
+                      horizontalPadding, bottomPadding),
+                  child: contentWidget,
+                );
+              },
             ),
-          ),
-        ],
+
+            // Action Buttons Row (Dislike Only Now)
+            Positioned(
+              bottom: 15, // Adjust position as needed
+              left: 30,
+              right: 30, // Ensure it takes full width for spaceBetween
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  // Dislike Button (Restored)
+                  _buildActionButton(
+                    icon: Icons.close_rounded,
+                    color: Colors.redAccent.shade100,
+                    onPressed: () async {
+                      // *** --- Modified onPressed --- ***
+                      bool success = await performDislikeApiCall();
+                      // Optimistic UI is handled by swipe OR button press now
+                      // Redundant check, HomeScreen removes optimistically
+                      // if (success) {
+                      //   onInteractionComplete(); // Trigger card removal in HomeScreen
+                      // }
+                      // *** --- End Modification --- ***
+                    },
+                    tooltip: "Dislike",
+                    size: 55, // Smaller action buttons
+                  ),
+                  // Add other buttons here if needed in the future, using spaceBetween
+                ],
+              ),
+            ),
+          ],
+        ),
+        // --- END: Original Card Content ---
       ),
     );
+    // *** --- END: Wrap with Dismissible --- ***
   }
 
   // --- Header Block Builder ---
   Widget _buildHeaderBlock(BuildContext context, UserModel profile) {
+    // (Implementation remains the same)
     final age = profile.age;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Row(
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Name and Age (Takes available space)
             Flexible(
-              child: Text(
-                '${profile.name ?? 'Name'}${age != null ? ', $age' : ''}',
-                style: GoogleFonts.poppins(
-                  fontSize: 26,
-                  fontWeight: FontWeight.bold,
-                  color: Colors.black87,
-                ),
-                softWrap: true,
-              ),
-            ),
-            // More Options Menu Button
-            _buildHeaderMenuButton(context), // Use the helper
-          ],
-        ),
-        // Location (remains below the Name/Age/Menu row)
-        if (profile.hometown != null && profile.hometown!.isNotEmpty) ...[
-          const SizedBox(height: 4),
-          Row(
-            children: [
-              Icon(Icons.location_on_outlined,
-                  size: 16, color: Colors.grey[600]),
-              const SizedBox(width: 4),
-              Text(
-                profile.hometown!,
-                style:
-                    GoogleFonts.poppins(fontSize: 14, color: Colors.grey[700]),
-              ),
-            ],
-          ),
-        ],
-      ],
-    );
+                child: Text(
+                    '${profile.name ?? 'Name'}${age != null ? ', $age' : ''}',
+                    style: GoogleFonts.poppins(
+                        fontSize: 26,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.black87),
+                    softWrap: true)),
+            _buildHeaderMenuButton(context)
+          ]),
+      if (profile.hometown != null && profile.hometown!.isNotEmpty) ...[
+        const SizedBox(height: 4),
+        Row(children: [
+          Icon(Icons.location_on_outlined, size: 16, color: Colors.grey[600]),
+          const SizedBox(width: 4),
+          Text(profile.hometown!,
+              style: GoogleFonts.poppins(fontSize: 14, color: Colors.grey[700]))
+        ])
+      ]
+    ]);
   }
 
   // --- Header Menu Button Helper ---
   Widget _buildHeaderMenuButton(BuildContext context) {
+    // (Implementation remains the same)
     return PopupMenuButton<String>(
-      tooltip: "More options",
-      icon: Icon(Icons.more_vert_rounded, color: Colors.grey.shade600),
-      padding: EdgeInsets.zero,
-      constraints: const BoxConstraints(),
-      onSelected: (String result) {
-        if (result == 'report') {
-          _handleReport(context);
-        }
-      },
-      itemBuilder: (BuildContext context) => <PopupMenuEntry<String>>[
-        PopupMenuItem<String>(
-          value: 'report',
-          child: ListTile(
-            leading: Icon(Icons.flag_outlined, color: Colors.redAccent),
-            // *** MODIFIED: Simplified Text ***
-            title: Text('Report',
-                style: GoogleFonts.poppins(color: Colors.redAccent)),
-            // *** END MODIFICATION ***
-            dense: true,
-            contentPadding: EdgeInsets.symmetric(horizontal: 8.0),
-          ),
-        ),
-      ],
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(10.0),
-      ),
-    );
+        tooltip: "More options",
+        icon: Icon(Icons.more_vert_rounded, color: Colors.grey.shade600),
+        padding: EdgeInsets.zero,
+        constraints: const BoxConstraints(),
+        onSelected: (String result) {
+          if (result == 'report') {
+            _handleReport(context);
+          }
+        },
+        itemBuilder: (BuildContext context) => <PopupMenuEntry<String>>[
+              PopupMenuItem<String>(
+                  value: 'report',
+                  child: ListTile(
+                      leading:
+                          Icon(Icons.flag_outlined, color: Colors.redAccent),
+                      title: Text('Report',
+                          style: GoogleFonts.poppins(color: Colors.redAccent)),
+                      dense: true,
+                      contentPadding: EdgeInsets.symmetric(horizontal: 8.0)))
+            ],
+        shape:
+            RoundedRectangleBorder(borderRadius: BorderRadius.circular(10.0)));
   }
 
   // --- Other Helper Methods (_buildVitalsBlock, etc. remain unchanged) ---
   Widget _buildVitalsBlock(UserModel profile) {
+    // (Implementation remains the same)
     final List<Widget> vitals = [];
-    if (profile.height != null && profile.height!.isNotEmpty) {
+    if (profile.height != null && profile.height!.isNotEmpty)
       vitals.add(_buildVitalRow(Icons.height, profile.height!));
-    }
-    if (profile.religiousBeliefs != null) {
+    if (profile.religiousBeliefs != null)
       vitals.add(_buildVitalRow(
           Icons.church_outlined, profile.religiousBeliefs!.label));
-    }
-    if (profile.jobTitle != null && profile.jobTitle!.isNotEmpty) {
+    if (profile.jobTitle != null && profile.jobTitle!.isNotEmpty)
       vitals.add(_buildVitalRow(Icons.work_outline, profile.jobTitle!));
-    }
-    if (profile.education != null && profile.education!.isNotEmpty) {
+    if (profile.education != null && profile.education!.isNotEmpty)
       vitals.add(_buildVitalRow(Icons.school_outlined, profile.education!));
-    }
-    if (profile.drinkingHabit != null) {
+    if (profile.drinkingHabit != null)
       vitals.add(_buildVitalRow(
           Icons.local_bar_outlined, "Drinks: ${profile.drinkingHabit!.label}"));
-    }
-    if (profile.smokingHabit != null) {
+    if (profile.smokingHabit != null)
       vitals.add(_buildVitalRow(Icons.smoking_rooms_outlined,
           "Smokes: ${profile.smokingHabit!.label}"));
-    }
     if (vitals.isEmpty) return const SizedBox.shrink();
     return Container(
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
@@ -21565,6 +22091,7 @@ class HomeProfileCard extends ConsumerWidget {
   }
 
   Widget _buildVitalRow(IconData icon, String label) {
+    // (Implementation remains the same)
     return Padding(
         padding: const EdgeInsets.symmetric(vertical: 6.0),
         child: Row(children: [
@@ -21580,6 +22107,7 @@ class HomeProfileCard extends ConsumerWidget {
 
   Widget _buildMediaItem(
       BuildContext context, WidgetRef ref, String url, int index) {
+    // (Implementation remains the same)
     bool isVideo = url.toLowerCase().contains('.mp4') ||
         url.toLowerCase().contains('.mov') ||
         url.toLowerCase().contains('.avi') ||
@@ -21622,6 +22150,7 @@ class HomeProfileCard extends ConsumerWidget {
   }
 
   Widget _buildPromptItem(BuildContext context, WidgetRef ref, Prompt prompt) {
+    // (Implementation remains the same)
     if (prompt.answer.trim().isEmpty) return const SizedBox.shrink();
     return Container(
         width: double.infinity,
@@ -21661,6 +22190,7 @@ class HomeProfileCard extends ConsumerWidget {
 
   Widget _buildAudioItem(
       BuildContext context, WidgetRef ref, AudioPromptModel audio) {
+    // (Implementation remains the same)
     final audioPlayerState = ref.watch(audioPlayerStateProvider);
     final currentPlayingUrl = ref.watch(currentAudioUrlProvider);
     final playerNotifier = ref.read(audioPlayerControllerProvider.notifier);
@@ -21747,6 +22277,7 @@ class HomeProfileCard extends ConsumerWidget {
   }
 
   Widget _buildSmallLikeButton(VoidCallback onPressed) {
+    // (Implementation remains the same)
     return Container(
         width: 40,
         height: 40,
@@ -21771,6 +22302,7 @@ class HomeProfileCard extends ConsumerWidget {
       required String tooltip,
       double size = 60.0,
       double iconSize = 30.0}) {
+    // (Implementation remains the same)
     return Tooltip(
         message: tooltip,
         child: Material(
@@ -21902,15 +22434,15 @@ import 'package:dtx/providers/conversation_provider.dart';
 import 'package:dtx/providers/user_provider.dart';
 import 'package:dtx/providers/service_provider.dart';
 import 'package:dtx/services/chat_service.dart';
-import 'package:dtx/widgets/reaction_emoji_picker.dart'; // Make sure this path is correct
+import 'package:dtx/widgets/reaction_emoji_picker.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_fonts/google_fonts.dart';
-import 'package:audioplayers/audioplayers.dart';
+// Removed unused audioplayers import
 import 'package:path/path.dart' as p;
 import 'package:url_launcher/url_launcher.dart';
-import 'package:intl/intl.dart'; // Import for timestamp formatting
+import 'package:intl/intl.dart';
 
 class MessageBubble extends ConsumerStatefulWidget {
   final ChatMessage message;
@@ -21945,7 +22477,7 @@ class _MessageBubbleState extends ConsumerState<MessageBubble>
     super.dispose();
   }
 
-  // --- Helpers ---
+  // --- Helpers (Keep existing) ---
   String getFilenameFromUrl(String? url) {
     if (url == null || url.isEmpty) return "File";
     try {
@@ -22006,7 +22538,7 @@ class _MessageBubbleState extends ConsumerState<MessageBubble>
       );
   // --- End Helpers ---
 
-  // --- _buildReplySnippet ---
+  // --- _buildReplySnippet (Keep existing) ---
   Widget _buildReplySnippet() {
     final repliedTo = widget.message;
     final textSnippet = repliedTo.repliedMessageTextSnippet;
@@ -22088,7 +22620,7 @@ class _MessageBubbleState extends ConsumerState<MessageBubble>
   }
   // --- End _buildReplySnippet ---
 
-  // --- Reaction Methods ---
+  // --- Reaction Methods (Keep existing) ---
   void _showEmojiPicker(BuildContext context, Offset globalPosition) {
     if (!mounted) return;
     if (kDebugMode)
@@ -22145,7 +22677,6 @@ class _MessageBubbleState extends ConsumerState<MessageBubble>
               top: top,
               left: left,
               child: ReactionEmojiPicker(
-                // Assuming this is in widgets/reaction_emoji_picker.dart
                 onEmojiSelected: (emoji) {
                   _handleReaction(emoji);
                   _removeEmojiPicker();
@@ -22182,6 +22713,7 @@ class _MessageBubbleState extends ConsumerState<MessageBubble>
           print(
               "[MessageBubble _removeEmojiPicker] Error removing overlay (might have already been removed): $e");
       } finally {
+        // Ensure it's always set to null after attempting removal
         if (_emojiPickerOverlay != null) {
           _emojiPickerOverlay = null;
         }
@@ -22289,9 +22821,10 @@ class _MessageBubbleState extends ConsumerState<MessageBubble>
     final isMe = widget.isMe;
     final showTail = widget.showTail;
 
+    // ** Enhanced Logging in Build **
     if (kDebugMode) {
       print(
-          "[MessageBubble build] ID: ${message.messageID}, TempID: ${message.tempId}, isMe: $isMe, Status: ${message.status}, IsRead: ${message.isRead}");
+          "[MessageBubble build START | ID: ${message.messageID}|Temp: ${message.tempId}] isMe: $isMe, Status: ${message.status}, IsRead: ${message.isRead}, MediaType: ${message.mediaType}, HasMediaURL: ${message.mediaUrl != null && message.mediaUrl!.isNotEmpty}, HasLocalPath: ${message.localFilePath != null && message.localFilePath!.isNotEmpty}");
     }
 
     final radius = Radius.circular(18.0);
@@ -22326,7 +22859,7 @@ class _MessageBubbleState extends ConsumerState<MessageBubble>
     }
     // --- End Status Icon Logic ---
 
-    // --- Read Receipt Icon Logic (Phase 3) ---
+    // --- Read Receipt Icon Logic (Keep Existing) ---
     Widget? readReceiptIcon;
     if (isMe && message.status == ChatMessageStatus.sent) {
       readReceiptIcon = Icon(
@@ -22336,15 +22869,103 @@ class _MessageBubbleState extends ConsumerState<MessageBubble>
             ? Colors.blueAccent
             : Colors.white70, // Different color for read
       );
-      if (kDebugMode) {
-        print(
-            "[MessageBubble build] Read Receipt for Msg ID ${message.messageID}: isRead=${message.isRead}, Icon=${message.isRead ? 'done_all' : 'done'}");
-      }
+      // Removed debug print from here, added more comprehensive one at start of build
     }
     // --- End Read Receipt Icon Logic ---
 
-    // --- Content Rendering Logic (Keep Existing) ---
-    if (message.isMedia) {
+    // --- Content Rendering Logic ---
+    // --- START: Phase 4 - Audio Message Handling ---
+    if (message.isMedia && (message.mediaType?.startsWith('audio/') ?? false)) {
+      // --- Audio Message UI ---
+      final audioPlayerState = ref.watch(audioPlayerStateProvider);
+      final currentPlayingUrl = ref.watch(currentAudioUrlProvider);
+      final playerNotifier = ref.read(audioPlayerControllerProvider.notifier);
+
+      // ** Determine the actual source URL for playback **
+      // Use mediaUrl if available and message is sent, otherwise it's not playable yet
+      final String? audioSourceUrl =
+          (message.status == ChatMessageStatus.sent &&
+                  message.mediaUrl != null &&
+                  message.mediaUrl!.isNotEmpty)
+              ? message.mediaUrl
+              : null; // Cannot play local file path directly with URL player
+
+      // ** Check if this specific message's audio can be played **
+      final bool canPlay = audioSourceUrl != null;
+
+      // Determine current playback state *for this specific message's URL*
+      final bool isThisLoading = canPlay &&
+          currentPlayingUrl == audioSourceUrl &&
+          audioPlayerState == AudioPlayerState.loading;
+      final bool isThisPlaying = canPlay &&
+          currentPlayingUrl == audioSourceUrl &&
+          audioPlayerState == AudioPlayerState.playing;
+      final bool isThisPaused = canPlay &&
+          currentPlayingUrl == audioSourceUrl &&
+          audioPlayerState == AudioPlayerState.paused;
+
+      // ** Logging Specific to Audio Bubble Build **
+      if (kDebugMode) {
+        print(
+            "[MessageBubble build AUDIO | ID: ${message.messageID}|Temp: ${message.tempId}] Status=${message.status}, CanPlay=$canPlay (SourceURL: $audioSourceUrl), IsLoading=$isThisLoading, IsPlaying=$isThisPlaying, IsPaused=$isThisPaused, GlobalPlayerURL=$currentPlayingUrl");
+      }
+
+      messageContent = Row(mainAxisSize: MainAxisSize.min, children: [
+        IconButton(
+          icon: isThisLoading
+              ? SizedBox(
+                  width: 24,
+                  height: 24,
+                  child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: isMe ? Colors.white : Color(0xFF8B5CF6)))
+              : Icon(isThisPlaying
+                  ? Icons.pause_circle_filled_rounded
+                  : Icons.play_circle_fill_rounded),
+          color: isMe
+              ? Colors.white
+              : (canPlay ? const Color(0xFF8B5CF6) : Colors.grey[400]),
+          iconSize: 36,
+          padding: EdgeInsets.zero,
+          constraints: const BoxConstraints(),
+          tooltip: canPlay
+              ? (isThisPlaying ? 'Pause' : 'Play')
+              : 'Audio Message (Uploading...)',
+          // ** Disable button if canPlay is false **
+          onPressed: isThisLoading || !canPlay
+              ? null
+              : () {
+                  if (kDebugMode)
+                    print(
+                        "[MessageBubble PlayButton Tap | ID: ${message.messageID}] isPlaying: $isThisPlaying, isPaused: $isThisPaused, URL: $audioSourceUrl");
+                  if (isThisPlaying) {
+                    playerNotifier.pause();
+                  } else if (isThisPaused) {
+                    playerNotifier.resume();
+                  } else {
+                    // Ensured non-null by canPlay check
+                    playerNotifier.play(audioSourceUrl!);
+                  }
+                },
+        ),
+        const SizedBox(width: 8),
+        Expanded(
+          child: Text(
+            "Voice Note", // Simplified label
+            style: GoogleFonts.poppins(
+                fontSize: 13,
+                fontWeight: FontWeight.w500,
+                color: isMe ? Colors.white : Colors.black87),
+            overflow: TextOverflow.ellipsis,
+            maxLines: 2,
+          ),
+        ),
+      ]);
+      // --- End Audio Message UI ---
+    }
+    // --- END: Phase 4 ---
+    else if (message.isMedia) {
+      // --- Existing Media Handling (Images, Video, Files) ---
       final mediaType = message.mediaType?.toLowerCase() ?? '';
       final String? displayPath =
           (message.localFilePath != null && message.localFilePath!.isNotEmpty)
@@ -22426,66 +23047,6 @@ class _MessageBubbleState extends ConsumerState<MessageBubble>
             ),
           ),
         );
-      } else if (mediaType.startsWith('audio/')) {
-        // Audio placeholder/player
-        final audioPlayerState = ref.watch(audioPlayerStateProvider);
-        final currentPlayingUrl = ref.watch(currentAudioUrlProvider);
-        final playerNotifier = ref.read(audioPlayerControllerProvider.notifier);
-        final bool canPlay = isMediaSent && !isUsingLocalFile;
-        final bool isThisLoading = canPlay &&
-            currentPlayingUrl == displayPath &&
-            audioPlayerState == AudioPlayerState.loading;
-        final bool isThisPlaying = canPlay &&
-            currentPlayingUrl == displayPath &&
-            audioPlayerState == AudioPlayerState.playing;
-        final bool isThisPaused = canPlay &&
-            currentPlayingUrl == displayPath &&
-            audioPlayerState == AudioPlayerState.paused;
-        messageContent = Row(
-            /* ... audio player row ... */
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              IconButton(
-                icon: isThisLoading
-                    ? SizedBox(
-                        width: 24,
-                        height: 24,
-                        child: CircularProgressIndicator(
-                            strokeWidth: 2,
-                            color: isMe ? Colors.white : Color(0xFF8B5CF6)))
-                    : Icon(isThisPlaying
-                        ? Icons.pause_circle_filled_rounded
-                        : Icons.play_circle_fill_rounded),
-                color: isMe
-                    ? Colors.white
-                    : (canPlay ? const Color(0xFF8B5CF6) : Colors.grey[400]),
-                iconSize: 36,
-                padding: EdgeInsets.zero,
-                constraints: const BoxConstraints(),
-                tooltip: canPlay ? (isThisPlaying ? 'Pause' : 'Play') : 'Audio',
-                onPressed: isThisLoading || !canPlay
-                    ? null
-                    : () {
-                        if (isThisPlaying)
-                          playerNotifier.pause();
-                        else if (isThisPaused)
-                          playerNotifier.resume();
-                        else
-                          playerNotifier.play(displayPath!);
-                      },
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Text(
-                  getFilenameFromUrl(displayPath),
-                  style: GoogleFonts.poppins(
-                      fontSize: 13,
-                      color: isMe ? Colors.white : Colors.black87),
-                  overflow: TextOverflow.ellipsis,
-                  maxLines: 2,
-                ),
-              ),
-            ]);
       } else {
         // Generic file placeholder
         messageContent = InkWell(
@@ -22512,6 +23073,7 @@ class _MessageBubbleState extends ConsumerState<MessageBubble>
               ]),
         );
       }
+      // --- End Existing Media Handling ---
     } else {
       // Text message content
       messageContent = Text(
@@ -22607,10 +23169,24 @@ class _MessageBubbleState extends ConsumerState<MessageBubble>
                         if (message.isReply) _buildReplySnippet(),
                         // Main Content Padding and Status/Time
                         Padding(
+                          // --- ADJUSTED Padding for media types ---
                           padding: message.isMedia &&
-                                  (message.mediaType?.startsWith('image/') ??
+                                  ((message.mediaType?.startsWith('image/') ??
+                                          false) ||
+                                      // --- Phase 4: Check for audio ---
+                                      (message.mediaType
+                                              ?.startsWith('audio/') ??
+                                          false))
+                              // Use specific padding for audio/image if needed, else default
+                              ? (message.mediaType?.startsWith('audio/') ??
                                       false)
-                              ? EdgeInsets.zero // No padding for image media
+                                  ? const EdgeInsets.only(
+                                      left: 4.0,
+                                      right: 14.0,
+                                      top: 6.0,
+                                      bottom: 4.0) // Padding for audio row
+                                  : EdgeInsets
+                                      .zero // No padding for image media
                               : EdgeInsets.only(
                                   // Padding for text/other media
                                   left: 14.0,
@@ -22619,8 +23195,9 @@ class _MessageBubbleState extends ConsumerState<MessageBubble>
                                   bottom: 10.0 +
                                       (isMe
                                           ? 12.0
-                                          : 0.0), // Add bottom padding only for 'Me' bubbles for status
+                                          : 0.0), // Add bottom padding only for 'Me' bubbles for status/time
                                 ),
+                          // --- END Padding Adjustment ---
                           child: messageContent,
                         ),
                       ],
