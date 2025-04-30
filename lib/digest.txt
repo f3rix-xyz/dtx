@@ -2856,7 +2856,6 @@ File: providers/conversation_provider.dart
 ================================================
 // File: lib/providers/conversation_provider.dart
 import 'dart:async';
-// import 'dart:convert'; // No longer needed directly here
 import 'package:dtx/models/chat_message.dart';
 import 'package:dtx/models/error_model.dart';
 import 'package:dtx/providers/reaction_provider.dart';
@@ -2866,7 +2865,6 @@ import 'package:dtx/providers/user_provider.dart';
 import 'package:dtx/repositories/chat_repository.dart';
 import 'package:dtx/services/api_service.dart';
 import 'package:dtx/services/chat_service.dart';
-// Removed unused chat_service import
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter/foundation.dart';
 
@@ -2992,8 +2990,7 @@ class ConversationNotifier extends StateNotifier<ConversationState> {
     }
   }
 
-  // --- *** SIMPLIFIED fetchMessages *** ---
-  // (No need to fetch current user reactions separately anymore)
+  // --- fetchMessages (Keep as is from previous step) ---
   Future<void> fetchMessages() async {
     if (state.isLoading) {
       if (kDebugMode)
@@ -3046,7 +3043,7 @@ class ConversationNotifier extends StateNotifier<ConversationState> {
       }
     }
   }
-  // --- *** END SIMPLIFIED fetchMessages *** ---
+  // --- End fetchMessages ---
 
   // --- addSentMessage (Keep as is) ---
   void addSentMessage(ChatMessage message) {
@@ -3136,7 +3133,7 @@ class ConversationNotifier extends StateNotifier<ConversationState> {
   }
   // --- End Reply State Methods ---
 
-  // *** --- START: optimisticallyApplyReaction Method ADDED --- ***
+  // --- optimisticallyApplyReaction (Keep as is from previous step) ---
   /// Updates the local state immediately when the current user reacts.
   void optimisticallyApplyReaction(int messageId, String emoji) {
     if (!mounted) return;
@@ -3161,37 +3158,34 @@ class ConversationNotifier extends StateNotifier<ConversationState> {
         Map<String, int>.from(messageToUpdate.reactionsSummary ?? {});
     final String? previousReaction = messageToUpdate.currentUserReaction;
     String? newCurrentUserReaction;
-    bool wasRemoved = false;
 
     // Logic for optimistic update:
     if (previousReaction == emoji) {
       // User tapped the same emoji again - remove reaction
-      updatedSummary[emoji] = (updatedSummary[emoji] ?? 0) - 1;
+      updatedSummary[emoji] = (updatedSummary[emoji] ?? 1) - 1; // Decrement
       if (updatedSummary[emoji]! <= 0) {
-        updatedSummary.remove(emoji);
+        updatedSummary.remove(emoji); // Remove if count is zero or less
       }
       newCurrentUserReaction = null; // Clear current user reaction
-      wasRemoved = true;
       if (kDebugMode)
         print(
             "[Provider OptimisticReact: $_otherUserId] Optimistic REMOVAL of '$emoji'. New count: ${updatedSummary[emoji]}. User reaction cleared.");
     } else {
       // User is adding a new reaction or changing reaction
-      // 1. Decrement previous reaction if exists
+      // 1. Decrement previous reaction if it exists AND is different
       if (previousReaction != null) {
         updatedSummary[previousReaction] =
-            (updatedSummary[previousReaction] ?? 0) - 1;
+            (updatedSummary[previousReaction] ?? 1) - 1; // Decrement
         if (updatedSummary[previousReaction]! <= 0) {
-          updatedSummary.remove(previousReaction);
+          updatedSummary.remove(previousReaction); // Remove if count is zero
         }
         if (kDebugMode)
           print(
               "[Provider OptimisticReact: $_otherUserId] Optimistic decrement of previous '$previousReaction'. New count: ${updatedSummary[previousReaction]}.");
       }
       // 2. Increment new reaction
-      updatedSummary[emoji] = (updatedSummary[emoji] ?? 0) + 1;
+      updatedSummary[emoji] = (updatedSummary[emoji] ?? 0) + 1; // Increment
       newCurrentUserReaction = emoji; // Set new reaction
-      wasRemoved = false;
       if (kDebugMode)
         print(
             "[Provider OptimisticReact: $_otherUserId] Optimistic ADD/UPDATE to '$emoji'. New count: ${updatedSummary[emoji]}. User reaction set.");
@@ -3210,9 +3204,10 @@ class ConversationNotifier extends StateNotifier<ConversationState> {
       print(
           "[Provider OptimisticReact: $_otherUserId] Optimistic update applied for MsgID: $messageId. List hashCode changed: ${state.messages.hashCode != oldMessagesHashCode}");
   }
-  // *** --- END: optimisticallyApplyReaction Method ADDED --- ***
+  // --- End optimisticallyApplyReaction ---
 
-  // --- _applyReactionUpdate Method (Keep as is - Reconciliation) ---
+  // *** --- START: _applyReactionUpdate Method MODIFIED --- ***
+  /// Reconciles the local state with updates received from the server.
   void _applyReactionUpdate(ReactionUpdate update) {
     if (!mounted) return;
     if (kDebugMode)
@@ -3232,52 +3227,81 @@ class ConversationNotifier extends StateNotifier<ConversationState> {
     final currentUserId = _ref.read(currentUserIdProvider);
     final Map<String, int> updatedSummary =
         Map<String, int>.from(messageToUpdate.reactionsSummary ?? {});
-    String? previousEmojiForReactor;
 
-    // Find previous reaction ONLY IF this is an ADD/UPDATE
-    if (!update.isRemoved || (update.isRemoved && update.emoji == null)) {
-      if (update.reactorUserId == currentUserId &&
-          messageToUpdate.currentUserReaction != null) {
-        previousEmojiForReactor = messageToUpdate.currentUserReaction;
-      }
+    // --- Start Reconciliation Logic ---
+
+    // 1. Handle Previous Reaction of the *Reactor* specified in the update
+    //    (Only relevant if the reactor is changing their reaction)
+    String? previousEmojiForReactor = null;
+    if (update.reactorUserId == currentUserId) {
+      previousEmojiForReactor = messageToUpdate.currentUserReaction;
+    } else {
+      // If reactor is the *other* user, we don't store their specific previous
+      // reaction locally, so we infer based on the counts. This is less precise
+      // but necessary without storing other users' reactions explicitly.
+      // Find *an* emoji in the current summary that this other user *might* have had.
+      // This part is tricky and might not be perfectly accurate if multiple users react.
+      // For simplicity, we'll focus on accurate reconciliation for the *current* user.
+      // We'll simply adjust the counts based on the server event below.
     }
 
-    // Update counts based on the incoming SERVER event
+    // 2. Adjust Counts based *solely* on the Server Event
     if (update.isRemoved) {
+      // Server says a reaction was removed
       if (update.emoji != null) {
+        // Server tells us which emoji was removed
         updatedSummary[update.emoji!] =
-            (updatedSummary[update.emoji!] ?? 0) - 1;
-        if (updatedSummary[update.emoji!]! <= 0)
+            (updatedSummary[update.emoji!] ?? 1) - 1;
+        if (updatedSummary[update.emoji!]! <= 0) {
           updatedSummary.remove(update.emoji!);
+        }
         if (kDebugMode)
           print(
               "[Provider ApplyReaction RECONCILE: $_otherUserId] Server removed reaction '${update.emoji}'. New count: ${updatedSummary[update.emoji!]}");
       } else {
         if (kDebugMode)
           print(
-              "[Provider ApplyReaction RECONCILE: $_otherUserId] WARNING: Server removal update without specific emoji for user ${update.reactorUserId}. Summary may be inaccurate.");
+              "[Provider ApplyReaction RECONCILE: $_otherUserId] WARNING: Server removal update without specific emoji for user ${update.reactorUserId}. Assuming removal based on reactor ID if it's current user.");
+        // If it was the current user removing, we handle their state below.
+        // If it was the *other* user, we can't know which emoji to decrement without the server telling us.
       }
     } else if (update.emoji != null) {
-      // Decrement previous user reaction if changing
+      // Server says a reaction was added/updated
+      // If the reactor is the *current user* and they had a *different* previous reaction,
+      // we need to decrement the count for that previous reaction first.
       if (update.reactorUserId == currentUserId &&
           previousEmojiForReactor != null &&
           previousEmojiForReactor != update.emoji) {
         updatedSummary[previousEmojiForReactor] =
-            (updatedSummary[previousEmojiForReactor] ?? 0) - 1;
-        if (updatedSummary[previousEmojiForReactor]! <= 0)
+            (updatedSummary[previousEmojiForReactor] ?? 1) - 1;
+        if (updatedSummary[previousEmojiForReactor]! <= 0) {
           updatedSummary.remove(previousEmojiForReactor);
+        }
         if (kDebugMode)
           print(
-              "[Provider ApplyReaction RECONCILE: $_otherUserId] Server implicitly removed previous reaction '$previousEmojiForReactor' for reactor $currentUserId.");
+              "[Provider ApplyReaction RECONCILE: $_otherUserId] Decremented previous reaction '$previousEmojiForReactor' for current user.");
       }
-      // Increment new/updated reaction
-      updatedSummary[update.emoji!] = (updatedSummary[update.emoji!] ?? 0) + 1;
-      if (kDebugMode)
-        print(
-            "[Provider ApplyReaction RECONCILE: $_otherUserId] Server Added/Updated reaction '${update.emoji}'. New count: ${updatedSummary[update.emoji!]}");
-    }
 
-    // Determine the current user's reaction based on SERVER update
+      // Now, increment the count for the emoji specified in the server update.
+      // *** CRITICAL FIX: Check if this is just confirming our optimistic add ***
+      bool isConfirmingOptimisticAdd = update.reactorUserId == currentUserId &&
+          messageToUpdate.currentUserReaction == update.emoji;
+
+      if (!isConfirmingOptimisticAdd) {
+        updatedSummary[update.emoji!] =
+            (updatedSummary[update.emoji!] ?? 0) + 1;
+        if (kDebugMode)
+          print(
+              "[Provider ApplyReaction RECONCILE: $_otherUserId] Server Added/Updated reaction '${update.emoji}'. New count: ${updatedSummary[update.emoji!]}");
+      } else {
+        if (kDebugMode)
+          print(
+              "[Provider ApplyReaction RECONCILE: $_otherUserId] Server confirmed optimistic add of '${update.emoji}'. Count remains ${updatedSummary[update.emoji!]}.");
+      }
+    }
+    // --- End Reconciliation Logic ---
+
+    // Determine the current user's reaction based solely on SERVER update for *this* user
     String? serverCurrentUserReaction = messageToUpdate.currentUserReaction;
     if (update.reactorUserId == currentUserId) {
       serverCurrentUserReaction = update.isRemoved ? null : update.emoji;
@@ -3286,25 +3310,26 @@ class ConversationNotifier extends StateNotifier<ConversationState> {
             "[Provider ApplyReaction RECONCILE: $_otherUserId] Server state for current user's reaction: ${serverCurrentUserReaction ?? 'null'}");
     }
 
-    // Check if optimistic state matches server state
-    final bool summaryMatches = mapEquals(
+    // --- State Update (if needed) ---
+    // Check if the *final calculated state* differs from the *current UI state*
+    final bool summaryChanged = !mapEquals(
         updatedSummary.isEmpty ? null : updatedSummary,
         messageToUpdate.reactionsSummary);
-    final bool currentUserReactionMatches =
-        serverCurrentUserReaction == messageToUpdate.currentUserReaction;
+    final bool currentUserReactionChanged =
+        serverCurrentUserReaction != messageToUpdate.currentUserReaction;
 
-    if (summaryMatches && currentUserReactionMatches) {
+    if (!summaryChanged && !currentUserReactionChanged) {
       if (kDebugMode)
         print(
-            "[Provider ApplyReaction RECONCILE: $_otherUserId] Server state matches optimistic state for MsgID ${update.messageId}. No UI update needed.");
+            "[Provider ApplyReaction RECONCILE: $_otherUserId] Calculated server state matches UI state for MsgID ${update.messageId}. No UI update needed.");
       return; // No need to update state if it already matches
     }
 
     if (kDebugMode)
       print(
-          "[Provider ApplyReaction RECONCILE: $_otherUserId] Server state MISMATCH for MsgID ${update.messageId}. Updating UI state to match server.");
+          "[Provider ApplyReaction RECONCILE: $_otherUserId] State difference detected for MsgID ${update.messageId}. Updating UI state to match server.");
 
-    // Create the updated message object based on SERVER data
+    // Create the updated message object based on the calculated server state
     final updatedMessage = messageToUpdate.copyWith(
       reactionsSummary: () => updatedSummary.isEmpty ? null : updatedSummary,
       currentUserReaction: () => serverCurrentUserReaction,
@@ -3318,8 +3343,8 @@ class ConversationNotifier extends StateNotifier<ConversationState> {
       print(
           "[Provider ApplyReaction RECONCILE: $_otherUserId] Reconciliation update applied for MsgID: ${update.messageId}. List hashCode changed: ${state.messages.hashCode != oldMessagesHashCode}");
   }
-  // --- END _applyReactionUpdate Method ---
-}
+  // *** --- END: _applyReactionUpdate Method MODIFIED --- ***
+} // End ConversationNotifier
 
 // --- Provider Definition (Keep as is) ---
 final conversationProvider = StateNotifierProvider.family

@@ -9,17 +9,18 @@ import 'package:web_socket_channel/web_socket_channel.dart';
 
 // App-specific Imports
 import 'package:dtx/models/chat_message.dart';
-import 'package:dtx/models/ws_message_model.dart'; // <<<--- ADDED Import for WsMessage model
+import 'package:dtx/models/ws_message_model.dart';
 import 'package:dtx/providers/auth_provider.dart';
 import 'package:dtx/providers/conversation_provider.dart';
-import 'package:dtx/providers/reaction_provider.dart'; // <<<--- ADDED Import for reaction provider
+import 'package:dtx/providers/reaction_provider.dart';
+import 'package:dtx/providers/read_update_provider.dart'; // <-- Phase 2 Provider
 import 'package:dtx/providers/user_provider.dart';
 import 'package:dtx/providers/status_provider.dart';
 import 'package:dtx/utils/token_storage.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-// --- WebSocketConnectionState enum and webSocketStateProvider (Keep as is) ---
+// --- WebSocketConnectionState enum and webSocketStateProvider ---
 enum WebSocketConnectionState { disconnected, connecting, connected, error }
 
 final webSocketStateProvider = StateProvider<WebSocketConnectionState>(
@@ -37,101 +38,125 @@ class ChatService {
   static const int _maxReconnectAttempts = 5;
   static const Duration _initialReconnectDelay = Duration(seconds: 2);
 
+  // Tracks pending text messages sent from this client, mapping tempId to recipientId
+  // Used to update the status upon receiving an ack.
   final Map<String, int> _pendingMessages = {};
 
   ChatService(this._ref, this._wsUrl) {
     print("[ChatService] Initialized with URL: $_wsUrl");
   }
 
-  // --- connect (Keep as is) ---
+  /// Establishes WebSocket connection.
   Future<void> connect() async {
-    _isManualDisconnect = false;
+    _isManualDisconnect =
+        false; // Reset manual disconnect flag on connect attempt
+    // Avoid concurrent connection attempts or connecting if already connected
     if (_channel != null &&
         _ref.read(webSocketStateProvider) ==
             WebSocketConnectionState.connected) {
-      print("[ChatService] Already connected.");
+      print("[ChatService connect] Already connected.");
       return;
     }
     if (_ref.read(webSocketStateProvider) ==
         WebSocketConnectionState.connecting) {
-      print("[ChatService] Connection attempt already in progress.");
+      print("[ChatService connect] Connection attempt already in progress.");
       return;
     }
-    print("[ChatService] Attempting to connect to $_wsUrl...");
-    _updateState(WebSocketConnectionState.connecting);
+
+    print("[ChatService connect] Attempting to connect to $_wsUrl...");
+    _updateState(
+        WebSocketConnectionState.connecting); // Update state to connecting
+
+    // Retrieve authentication token
     String? token =
         _ref.read(authProvider).jwtToken ?? await TokenStorage.getToken();
-    if (token == null) {
-      print("[ChatService] Connection failed: Auth token not found.");
-      _updateState(WebSocketConnectionState.error);
+    if (token == null || token.isEmpty) {
+      print("[ChatService connect] Connection failed: Auth token not found.");
+      _updateState(WebSocketConnectionState.error); // Update state to error
       return;
     }
+
     try {
+      // Set Authorization header
       final headers = {'Authorization': 'Bearer $token'};
+
+      // Establish WebSocket connection
       _channel = IOWebSocketChannel.connect(
         Uri.parse(_wsUrl),
         headers: headers,
-        pingInterval: const Duration(seconds: 15),
+        pingInterval: const Duration(seconds: 15), // Keep connection alive
       );
-      print("[ChatService] WebSocket channel created. Listening...");
+      print("[ChatService connect] WebSocket channel created. Listening...");
+
+      // Listen to incoming messages, completion, and errors
       _streamSubscription = _channel!.stream.listen(
-        _onMessageReceived,
-        onDone: _handleDisconnect,
-        onError: _handleError,
-        cancelOnError: false,
+        _onMessageReceived, // Handler for incoming messages
+        onDone: _handleDisconnect, // Handler for connection closed
+        onError: _handleError, // Handler for connection errors
+        cancelOnError: false, // Keep listening even after an error if possible
       );
+
+      // Update state to connected and reset reconnect attempts
       _updateState(WebSocketConnectionState.connected);
       _reconnectAttempts = 0;
-      print("[ChatService] Connection established successfully.");
+      print("[ChatService connect] Connection established successfully.");
     } catch (e) {
-      print("[ChatService] Connection failed: $e");
-      _handleError(e);
+      // Handle connection errors
+      print("[ChatService connect] Connection failed: $e");
+      _handleError(e); // Trigger error handling and potential reconnect
     }
   }
 
-  // --- *** MODIFIED: _onMessageReceived *** ---
+  /// Handles incoming messages from the WebSocket server.
   void _onMessageReceived(dynamic message) {
-    if (kDebugMode) print("[ChatService] Message received: $message");
+    if (kDebugMode) print("[ChatService _onMessageReceived] Raw: $message");
     try {
+      // Decode JSON message
       final Map<String, dynamic> decodedJson = jsonDecode(message);
-      // Use the WsMessage model to parse *incoming* messages
+      // Parse using the WsMessage model
       final WsMessage msg = WsMessage.fromJson(decodedJson);
 
-      if (kDebugMode) print("[ChatService] Parsed message type: ${msg.type}");
+      if (kDebugMode)
+        print("[ChatService _onMessageReceived] Parsed type: ${msg.type}");
 
+      // Process message based on its type
       switch (msg.type) {
+        // --- Chat Message Handling ---
         case 'chat_message':
-          // --- Existing chat message handling (No changes here) ---
+          // Validate essential fields
           if (msg.id == null ||
               msg.id! <= 0 ||
               msg.senderUserID == null ||
               msg.recipientUserID == null ||
               msg.sentAt == null) {
             print(
-                "[ChatService] Received 'chat_message' with invalid/missing essential fields. Msg: $decodedJson");
+                "[ChatService _onMessageReceived] Received 'chat_message' with invalid/missing essential fields. Msg: $decodedJson");
             return;
           }
           final currentUserId = _ref.read(currentUserIdProvider);
+          // Ignore messages not intended for the current user or self-messages
           if (currentUserId == null || msg.recipientUserID! != currentUserId) {
             if (kDebugMode)
               print(
-                  "[ChatService] Received message not intended for current user ($currentUserId). Recipient was ${msg.recipientUserID}. Ignoring.");
+                  "[ChatService _onMessageReceived] Received message not intended for current user ($currentUserId). Recipient was ${msg.recipientUserID}. Ignoring.");
             return;
           }
           if (msg.senderUserID == currentUserId) {
             if (kDebugMode)
               print(
-                  "[ChatService] Received message loopback from self (ID: ${msg.id}). Ignoring.");
+                  "[ChatService _onMessageReceived] Received message loopback from self (ID: ${msg.id}). Ignoring.");
             return;
           }
+          // Parse timestamp
           DateTime sentAt;
           try {
             sentAt = DateTime.parse(msg.sentAt!).toLocal();
           } catch (e) {
             print(
-                "[ChatService] Error parsing sent_at '${msg.sentAt}': $e. Using local time as fallback.");
+                "[ChatService _onMessageReceived] Error parsing sent_at '${msg.sentAt}': $e. Using local time as fallback.");
             sentAt = DateTime.now();
           }
+          // Create ChatMessage object
           final ChatMessage chatMessage = ChatMessage(
             messageID: msg.id!,
             senderUserID: msg.senderUserID!,
@@ -140,114 +165,157 @@ class ChatService {
             mediaUrl: msg.mediaURL,
             mediaType: msg.mediaType,
             sentAt: sentAt,
-            status: ChatMessageStatus.sent,
-            isRead: false,
+            status: ChatMessageStatus.sent, // WS messages are considered sent
+            isRead: false, // Initially marked as unread by this client
             readAt: null,
             replyToMessageID: msg.replyToMessageID,
-            // Note: The reply preview fields (repliedMessageSenderID etc.)
-            // are populated by the API call, not the basic WebSocket message.
-            // If the backend *did* send them via WS, you'd parse msg.replied... here.
           );
+          // Add message to the relevant conversation provider
           _ref
               .read(conversationProvider(msg.senderUserID!).notifier)
               .addReceivedMessage(chatMessage);
           if (kDebugMode)
             print(
-                "[ChatService] Added received 'chat_message' (ID: ${msg.id}) to conversation with ${msg.senderUserID}. ReplyTo: ${msg.replyToMessageID}");
+                "[ChatService _onMessageReceived] Added received 'chat_message' (ID: ${msg.id}) to conversation with ${msg.senderUserID}. ReplyTo: ${msg.replyToMessageID}");
           break;
-        // --- End existing chat message handling ---
 
+        // --- Message Acknowledgement ---
         case 'message_ack':
           if (kDebugMode)
-            print("[ChatService] Received message_ack: $decodedJson");
+            print(
+                "[ChatService _onMessageReceived] Received message_ack: $decodedJson");
           _handleMessageAck(decodedJson);
           break;
 
+        // --- User Status Update ---
         case 'status_update':
           if (kDebugMode)
-            print("[ChatService] Received status_update: $decodedJson");
-          // --- Existing status update handling (No changes here) ---
+            print(
+                "[ChatService _onMessageReceived] Received status_update: $decodedJson");
           if (msg.userID == null || msg.userID! <= 0 || msg.status == null) {
             print(
-                "[ChatService] Invalid status_update message: Missing user_id or status. Data: $decodedJson");
+                "[ChatService _onMessageReceived] Invalid status_update message: Missing user_id or status. Data: $decodedJson");
             return;
           }
           final bool isOnline = msg.status!.toLowerCase() == 'online';
           if (kDebugMode)
             print(
-                "[ChatService] Parsed status_update: UserID=${msg.userID}, isOnline=$isOnline");
+                "[ChatService _onMessageReceived] Parsed status_update: UserID=${msg.userID}, isOnline=$isOnline");
+          // Notify the status provider
           _ref
               .read(userStatusUpdateProvider.notifier)
               .updateStatus(msg.userID!, isOnline);
           break;
-        // --- End existing status update handling ---
 
-        // *** --- START: Reaction Handling ADDED --- ***
+        // --- Reaction Update ---
         case 'reaction_update':
           if (kDebugMode)
-            print("[ChatService] Received reaction_update: $decodedJson");
-          // Validate necessary fields
+            print(
+                "[ChatService _onMessageReceived] Received reaction_update: $decodedJson");
           if (msg.messageID == null ||
               msg.reactorUserID == null ||
               msg.isRemoved == null ||
               (msg.emoji == null && !msg.isRemoved!)) {
             print(
-                "[ChatService] Invalid reaction_update message: Missing required fields. Data: $decodedJson");
+                "[ChatService _onMessageReceived] Invalid reaction_update message: Missing required fields. Data: $decodedJson");
             return;
           }
-          // Create the update object
           final reactionUpdate = ReactionUpdate(
             messageId: msg.messageID!,
             reactorUserId: msg.reactorUserID!,
-            emoji: msg.emoji, // Can be null if removed
+            emoji: msg.emoji,
             isRemoved: msg.isRemoved!,
           );
           // Notify the reaction provider
           _ref.read(reactionUpdateProvider.notifier).state = reactionUpdate;
           if (kDebugMode)
             print(
-                "[ChatService] Notified reactionUpdateProvider: $reactionUpdate");
+                "[ChatService _onMessageReceived] Notified reactionUpdateProvider: $reactionUpdate");
           break;
 
+        // --- Reaction Acknowledgement ---
         case 'reaction_ack':
-          // This confirms *your* reaction was processed by the server
           if (kDebugMode)
-            print("[ChatService] Received reaction_ack: $decodedJson");
+            print(
+                "[ChatService _onMessageReceived] Received reaction_ack: $decodedJson");
           if (msg.messageID != null && msg.content != null) {
             print(
-                "[ChatService] Reaction ack for message ${msg.messageID}: ${msg.content}");
-            // Optionally show a temporary confirmation (e.g., snackbar),
-            // but the reaction_update provides the actual state change.
+                "[ChatService _onMessageReceived] Reaction ack for message ${msg.messageID}: ${msg.content}");
           } else {
             print(
-                "[ChatService] Received incomplete reaction_ack: $decodedJson");
+                "[ChatService _onMessageReceived] Received incomplete reaction_ack: $decodedJson");
           }
           break;
-        // *** --- END: Reaction Handling ADDED --- ***
 
+        // --- Messages Read Update (Phase 2 Implementation) ---
+        case 'messages_read_update':
+          if (kDebugMode)
+            print(
+                "[ChatService _onMessageReceived] Received messages_read_update: $decodedJson");
+          // Validate necessary fields from the incoming message
+          if (msg.readerUserID == null || msg.messageID == null) {
+            print(
+                "[ChatService _onMessageReceived] Invalid messages_read_update: Missing reader_user_id or message_id. Data: $decodedJson");
+            return; // Stop processing if essential data is missing
+          }
+          // Create the ReadUpdate object
+          final readUpdate = ReadUpdate(
+            readerUserId: msg.readerUserID!,
+            lastReadMessageId: msg.messageID!,
+          );
+          // Update the StateProvider with the new event
+          _ref.read(readUpdateProvider.notifier).state = readUpdate;
+          if (kDebugMode)
+            print(
+                "[ChatService _onMessageReceived] Notified readUpdateProvider: $readUpdate");
+          break;
+        // --- End messages_read_update ---
+
+        // --- Mark Read Acknowledgement (Phase 1/4 Implementation - Corrected) ---
+        case 'mark_read_ack':
+          if (kDebugMode)
+            print(
+                "[ChatService _onMessageReceived] Received mark_read_ack: $decodedJson");
+          // Use the otherUserID field from the parsed WsMessage
+          if (msg.messageID != null && msg.otherUserID != null) {
+            // *** Corrected field access ***
+            print(
+                "[ChatService _onMessageReceived] Mark read ack: Marked messages from user ${msg.otherUserID} up to ID ${msg.messageID} as seen. Count: ${msg.count ?? 'N/A'}. Server says: ${msg.content ?? ''}");
+            // No UI state change needed here, just confirmation.
+          } else {
+            print(
+                "[ChatService _onMessageReceived] Received incomplete mark_read_ack (missing messageID or otherUserID): $decodedJson");
+          }
+          break;
+        // --- End mark_read_ack ---
+
+        // --- Error from Server ---
         case 'error':
           print(
-              "[ChatService] Received error message from server: ${msg.content}");
+              "[ChatService _onMessageReceived] Received error message from server: ${msg.content}");
+          // TODO: Consider showing error to user via a provider/snackbar
           break;
 
+        // --- Info from Server ---
         case 'info':
           print(
-              "[ChatService] Received info message from server: ${msg.content}");
+              "[ChatService _onMessageReceived] Received info message from server: ${msg.content}");
           break;
 
+        // --- Default for Unhandled Types ---
         default:
           print(
-              "[ChatService] Received unhandled message type '${msg.type}': $decodedJson");
+              "[ChatService _onMessageReceived] Received unhandled message type '${msg.type}': $decodedJson");
       }
     } catch (e, stacktrace) {
-      print("[ChatService] Error processing received message: $e");
-      print("[ChatService] Stacktrace: $stacktrace");
-      // Optionally disconnect or try to handle specific parsing errors
+      // Catch JSON decoding errors or other processing errors
+      print(
+          "[ChatService _onMessageReceived] Error processing received message: $e");
+      print("[ChatService _onMessageReceived] Stacktrace: $stacktrace");
     }
   }
-  // --- *** END MODIFIED *** ---
 
-  // --- sendMessage (Keep as previously modified) ---
+  /// Sends a chat message (text or media) via WebSocket.
   void sendMessage(
     int recipientUserId, {
     String? text,
@@ -258,112 +326,141 @@ class ChatService {
     if (_channel == null ||
         _ref.read(webSocketStateProvider) !=
             WebSocketConnectionState.connected) {
-      print("[ChatService] Cannot send message: Not connected.");
+      print("[ChatService sendMessage] Cannot send message: Not connected.");
+      // TODO: Optionally queue the message or show an error
       return;
     }
     final currentUserId = _ref.read(currentUserIdProvider);
     if (currentUserId == null) {
-      print("[ChatService] Cannot send message: Current User ID is null.");
+      print(
+          "[ChatService sendMessage] Cannot send message: Current User ID is null.");
       return;
     }
+
+    // Construct payload
     Map<String, dynamic> payload = {
-      'type': "chat_message",
+      'type': "chat_message", // Set message type for the backend
       'recipient_user_id': recipientUserId,
     };
     bool isMediaMessage = false;
     String? optimisticTempId;
+
+    // Add text or media details
     if (mediaUrl != null &&
         mediaUrl.isNotEmpty &&
         mediaType != null &&
         mediaType.isNotEmpty) {
       payload['media_url'] = mediaUrl;
       payload['media_type'] = mediaType;
-      payload['text'] = null;
+      payload['text'] = null; // Ensure text is null for media messages
       isMediaMessage = true;
-      if (kDebugMode) print("[ChatService] Preparing media message payload.");
+      if (kDebugMode)
+        print("[ChatService sendMessage] Preparing media message payload.");
     } else if (text != null && text.trim().isNotEmpty) {
       payload['text'] = text.trim();
-      payload['media_url'] = null;
+      payload['media_url'] = null; // Ensure media fields are null for text
       payload['media_type'] = null;
       isMediaMessage = false;
-      if (kDebugMode) print("[ChatService] Preparing text message payload.");
+      if (kDebugMode)
+        print("[ChatService sendMessage] Preparing text message payload.");
     } else {
-      print("[ChatService] Cannot send: Message must have text or media.");
-      return;
+      print(
+          "[ChatService sendMessage] Cannot send: Message must have text or media.");
+      return; // Don't send empty messages
     }
+
+    // Add reply info if provided
     if (replyToMessageId != null && replyToMessageId > 0) {
       payload['reply_to_message_id'] = replyToMessageId;
       if (kDebugMode)
         print(
-            "[ChatService] Adding replyToMessageId: $replyToMessageId to payload.");
+            "[ChatService sendMessage] Adding replyToMessageId: $replyToMessageId to payload.");
     }
+
     final messageJson = jsonEncode(payload);
     if (kDebugMode)
-      print("[ChatService] Sending message (Type: chat_message): $messageJson");
+      print(
+          "[ChatService sendMessage] Sending message (Type: chat_message): $messageJson");
+
     try {
+      // --- Optimistic UI Update for TEXT messages ---
+      // Media messages are handled optimistically by ChatDetailScreen during upload
       if (!isMediaMessage) {
         optimisticTempId = DateTime.now().millisecondsSinceEpoch.toString();
         final sentMessage = ChatMessage(
           tempId: optimisticTempId,
-          messageID: 0,
+          messageID: 0, // Real ID will come from ack
           senderUserID: currentUserId,
           recipientUserID: recipientUserId,
           messageText: text!,
-          sentAt: DateTime.now().toLocal(),
-          status: ChatMessageStatus.pending,
-          isRead: false,
+          sentAt: DateTime.now().toLocal(), // Use local time for immediate UI
+          status: ChatMessageStatus.pending, // Initial status
+          isRead: false, // Sent messages start as unread by recipient
           readAt: null,
           mediaUrl: null,
           mediaType: null,
+          replyToMessageID: replyToMessageId, // Include reply info
+          // Note: Reply preview info needs to be fetched/passed if needed here
         );
+        // Track pending message and update conversation provider
         addPendingMessage(optimisticTempId, recipientUserId);
         _ref
             .read(conversationProvider(recipientUserId).notifier)
             .addSentMessage(sentMessage);
         if (kDebugMode)
           print(
-              "[ChatService] Added optimistic TEXT message (TempID: $optimisticTempId) to conversation with $recipientUserId");
+              "[ChatService sendMessage] Added optimistic TEXT message (TempID: $optimisticTempId) to conversation with $recipientUserId");
       } else {
         if (kDebugMode)
           print(
-              "[ChatService] Media message payload prepared. Optimistic message added by ChatDetailScreen.");
+              "[ChatService sendMessage] Media message payload prepared. Optimistic message added by ChatDetailScreen.");
       }
+      // --- End Optimistic UI ---
+
+      // Send the message through the WebSocket channel
       _channel!.sink.add(messageJson);
-      if (kDebugMode) print("[ChatService] Message added to WebSocket sink.");
+      if (kDebugMode)
+        print("[ChatService sendMessage] Message added to WebSocket sink.");
     } catch (e) {
-      print("[ChatService] Error adding message to WebSocket sink: $e");
+      // Handle errors during sending
+      print(
+          "[ChatService sendMessage] Error adding message to WebSocket sink: $e");
       if (optimisticTempId != null) {
+        // If it was an optimistic text message, mark it as failed
         print(
-            "[ChatService] Marking optimistic message $optimisticTempId as failed due to sink error.");
+            "[ChatService sendMessage] Marking optimistic message $optimisticTempId as failed due to sink error.");
         removePendingMessage(optimisticTempId);
         _ref
             .read(conversationProvider(recipientUserId).notifier)
             .updateMessageStatus(optimisticTempId, ChatMessageStatus.failed,
                 errorMessage: "Failed to send message.");
       }
+      // Trigger general error handling (e.g., reconnect)
       _handleError(e);
     }
   }
 
-  // --- *** START: sendReaction Method ADDED *** ---
+  /// Sends a reaction to a specific message.
   void sendReaction(int messageId, String emoji) {
     if (_channel == null ||
         _ref.read(webSocketStateProvider) !=
             WebSocketConnectionState.connected) {
-      print("[ChatService] Cannot send reaction: Not connected.");
-      // Optionally: Show a snackbar to the user
+      print("[ChatService sendReaction] Cannot send reaction: Not connected.");
+      // TODO: Optionally queue or show error
       return;
     }
+    // Validate input
     if (messageId <= 0) {
       print(
-          "[ChatService] Cannot send reaction: Invalid messageId ($messageId).");
+          "[ChatService sendReaction] Cannot send reaction: Invalid messageId ($messageId).");
       return;
     }
     if (emoji.isEmpty) {
-      print("[ChatService] Cannot send reaction: Emoji is empty.");
+      print("[ChatService sendReaction] Cannot send reaction: Emoji is empty.");
       return;
     }
 
+    // Construct payload
     final payload = {
       'type': 'react_to_message',
       'message_id': messageId,
@@ -371,21 +468,59 @@ class ChatService {
     };
     final messageJson = jsonEncode(payload);
     print(
-        "[ChatService] Sending reaction (Type: react_to_message): $messageJson");
+        "[ChatService sendReaction] Sending reaction (Type: react_to_message): $messageJson");
 
     try {
+      // Send via WebSocket
       _channel!.sink.add(messageJson);
-      print("[ChatService] Reaction message added to WebSocket sink.");
-    } catch (e) {
       print(
-          "[ChatService] Error adding reaction message to WebSocket sink: $e");
-      _handleError(e); // Trigger reconnect or error state
-      // Optionally: Show a snackbar to the user that reaction failed
+          "[ChatService sendReaction] Reaction message added to WebSocket sink.");
+    } catch (e) {
+      // Handle send errors
+      print(
+          "[ChatService sendReaction] Error adding reaction message to WebSocket sink: $e");
+      _handleError(e); // Trigger general error handling
+      // TODO: Optionally show specific feedback to user
     }
   }
-  // --- *** END: sendReaction Method ADDED *** ---
 
-  // --- _handleMessageAck (Keep as is) ---
+  /// Sends a 'mark_read' message to the server (Phase 1).
+  void sendMarkRead(int otherUserId, int lastMessageId) {
+    if (_channel == null ||
+        _ref.read(webSocketStateProvider) !=
+            WebSocketConnectionState.connected) {
+      print("[ChatService sendMarkRead] Cannot send: Not connected.");
+      return;
+    }
+    if (otherUserId <= 0 || lastMessageId <= 0) {
+      print(
+          "[ChatService sendMarkRead] Invalid parameters: otherUserId=$otherUserId, lastMessageId=$lastMessageId");
+      return;
+    }
+
+    // Construct payload
+    final payload = {
+      'type': 'mark_read',
+      'other_user_id': otherUserId,
+      'message_id': lastMessageId,
+    };
+    final messageJson = jsonEncode(payload);
+    print("[ChatService sendMarkRead] Sending (Type: mark_read): $messageJson");
+
+    try {
+      // Send via WebSocket
+      _channel!.sink.add(messageJson);
+      print(
+          "[ChatService sendMarkRead] Mark read message added to WebSocket sink.");
+    } catch (e) {
+      // Handle send errors
+      print(
+          "[ChatService sendMarkRead] Error adding mark_read message to WebSocket sink: $e");
+      _handleError(e); // Trigger general error handling
+    }
+  }
+
+  /// Handles message acknowledgement from the server.
   void _handleMessageAck(Map<String, dynamic> ackData) {
     final realMessageId = ackData['id'] as int?;
     final ackContent = ackData['content'] as String?;
@@ -393,6 +528,7 @@ class ChatService {
     if (kDebugMode)
       print(
           "[ChatService _handleMessageAck] Received: RealID=$realMessageId, Content='$ackContent', MediaURL='$mediaUrlAck'");
+
     if (realMessageId == null) {
       print("[ChatService _handleMessageAck] Invalid ack: Missing real ID.");
       return;
@@ -403,17 +539,13 @@ class ChatService {
           "[ChatService _handleMessageAck] Cannot process ack: Current User ID is null.");
       return;
     }
+
+    // Find and remove the corresponding pending message (simplistic FIFO)
     String? foundTempId;
     int? foundRecipientId;
-    // Find the *first* matching tempId (assuming FIFO for acks)
-    // This is a simplification; a more robust system might use message UUIDs
     if (_pendingMessages.isNotEmpty) {
-      // Find *a* pending message for the recipient associated with the ack.
-      // Since we don't get recipient ID in ack, we find the *oldest* pending msg.
-      // THIS IS A LIMITATION. A better ACK would include tempId or recipientId.
       foundTempId = _pendingMessages.keys.first;
-      foundRecipientId =
-          _pendingMessages.remove(foundTempId); // Remove it once processed
+      foundRecipientId = _pendingMessages.remove(foundTempId);
       if (kDebugMode)
         print(
             "[ChatService _handleMessageAck] Found oldest pending message via map: TempID=$foundTempId for Recipient=$foundRecipientId");
@@ -422,27 +554,33 @@ class ChatService {
           "[ChatService _handleMessageAck] No pending messages found in tracking map.");
     }
 
+    // Update the message status in the conversation provider
     if (foundTempId != null && foundRecipientId != null) {
       if (kDebugMode)
         print(
             "[ChatService _handleMessageAck] Updating message (TempID: $foundTempId) for ack (Real ID: $realMessageId). Status -> Sent.");
       final conversationNotifier =
           _ref.read(conversationProvider(foundRecipientId).notifier);
+      String? finalMediaUrl =
+          (mediaUrlAck != null && mediaUrlAck.isNotEmpty) ? mediaUrlAck : null;
       conversationNotifier.updateMessageStatus(
-          foundTempId, ChatMessageStatus.sent,
-          finalMessageId: realMessageId,
-          finalMediaUrl: mediaUrlAck // Pass media URL from ack if present
-          );
+        foundTempId,
+        ChatMessageStatus.sent,
+        finalMessageId: realMessageId,
+        finalMediaUrl: finalMediaUrl, // Pass URL from ack if present
+      );
       if (kDebugMode)
         print(
             "[ChatService _handleMessageAck] Message status updated successfully.");
     } else {
+      // Log warning if no matching pending message was found
       print(
           "[ChatService _handleMessageAck] WARNING: Received message_ack for Real ID $realMessageId, but couldn't find/remove a matching tracked pending message.");
+      // Media messages rely on background task success for URL update
     }
   }
 
-  // --- Public Helper methods for tracking pending messages (Keep as is) ---
+  // --- Helper methods for tracking pending messages ---
   void addPendingMessage(String tempId, int recipientId) {
     _pendingMessages[tempId] = recipientId;
     print(
@@ -456,89 +594,96 @@ class ChatService {
           "[ChatService removePendingMessage] Removed TempID: $tempId. Count: ${_pendingMessages.length}");
     }
   }
-  // --- End Public Helpers ---
 
-  // --- WebSocket Lifecycle Handlers (Keep as is) ---
+  // --- WebSocket Lifecycle Handlers ---
   void _handleDisconnect() {
-    print("[ChatService] WebSocket disconnected.");
+    print("[ChatService _handleDisconnect] WebSocket disconnected.");
     _channel = null;
     _streamSubscription?.cancel();
     _streamSubscription = null;
-    _pendingMessages.clear();
+    _pendingMessages.clear(); // Clear pending messages on disconnect
     print("[ChatService _handleDisconnect] Cleared pending messages map.");
     _updateState(WebSocketConnectionState.disconnected);
     if (!_isManualDisconnect) {
-      _scheduleReconnect();
+      _scheduleReconnect(); // Attempt to reconnect if not manual
     }
   }
 
   void _handleError(dynamic error) {
-    print("[ChatService] WebSocket error: $error");
+    print("[ChatService _handleError] WebSocket error: $error");
     _channel = null;
     _streamSubscription?.cancel();
     _streamSubscription = null;
-    _pendingMessages.clear();
+    _pendingMessages.clear(); // Clear pending messages on error
     print("[ChatService _handleError] Cleared pending messages map.");
     _updateState(WebSocketConnectionState.error);
     if (!_isManualDisconnect) {
-      _scheduleReconnect();
+      _scheduleReconnect(); // Attempt to reconnect if not manual
     }
   }
 
+  /// Schedules reconnection attempts with exponential backoff.
   void _scheduleReconnect() {
-    if (_reconnectTimer?.isActive ?? false) return;
+    if (_reconnectTimer?.isActive ?? false)
+      return; // Don't schedule if already scheduled
     if (_reconnectAttempts >= _maxReconnectAttempts) {
-      print("[ChatService] Max reconnect attempts reached.");
-      _updateState(WebSocketConnectionState.disconnected);
+      print("[ChatService _scheduleReconnect] Max reconnect attempts reached.");
+      _updateState(WebSocketConnectionState.disconnected); // Stay disconnected
       return;
     }
     _reconnectAttempts++;
+    // Exponential backoff calculation
     final delayMilliseconds =
         _initialReconnectDelay.inMilliseconds * (1 << (_reconnectAttempts - 1));
     final delay = Duration(milliseconds: delayMilliseconds);
     print(
-        "[ChatService] Scheduling reconnect attempt $_reconnectAttempts/$_maxReconnectAttempts in $delay...");
+        "[ChatService _scheduleReconnect] Scheduling reconnect attempt $_reconnectAttempts/$_maxReconnectAttempts in $delay...");
     _reconnectTimer = Timer(delay, () {
-      print("[ChatService] Attempting reconnect...");
-      connect();
+      print(
+          "[ChatService _scheduleReconnect] Timer fired. Attempting reconnect...");
+      connect(); // Attempt to connect again
     });
   }
 
+  /// Manually disconnects the WebSocket.
   void disconnect() {
-    print("[ChatService] Manual disconnect initiated.");
+    print("[ChatService disconnect] Manual disconnect initiated.");
     _isManualDisconnect = true;
-    _reconnectTimer?.cancel();
-    _reconnectAttempts = 0;
-    _streamSubscription?.cancel();
-    _pendingMessages.clear();
+    _reconnectTimer?.cancel(); // Cancel any pending reconnect timers
+    _reconnectAttempts = 0; // Reset attempts on manual disconnect
+    _streamSubscription?.cancel(); // Cancel the stream listener
+    _pendingMessages.clear(); // Clear pending messages
     print("[ChatService disconnect] Cleared pending messages map.");
-    _channel?.sink.close(WebSocketStatus.normalClosure);
-    _channel = null;
-    _streamSubscription = null;
-    _updateState(WebSocketConnectionState.disconnected);
-    print("[ChatService] Disconnected.");
+    _channel?.sink
+        .close(WebSocketStatus.normalClosure); // Close the channel sink
+    _channel = null; // Nullify the channel
+    _streamSubscription = null; // Nullify the subscription
+    _updateState(WebSocketConnectionState.disconnected); // Update state
+    print("[ChatService disconnect] Disconnected.");
   }
 
+  /// Updates the global WebSocket connection state provider.
   void _updateState(WebSocketConnectionState newState) {
+    // Use microtask to ensure updates happen after the current event loop
     Future.microtask(() {
-      // Check if provider is still alive before updating
       try {
+        // Check if the state actually needs changing
         if (_ref.read(webSocketStateProvider) != newState) {
           _ref.read(webSocketStateProvider.notifier).state = newState;
-          print("[ChatService] WebSocket state updated to: $newState");
+          print(
+              "[ChatService _updateState] WebSocket state updated to: $newState");
         }
       } catch (e) {
+        // Catch errors if the provider is accessed after disposal
         print(
             "[ChatService _updateState] Error accessing provider (likely disposed): $e");
       }
     });
   }
-  // --- End Lifecycle Handlers ---
-}
+} // End ChatService
 
-// --- currentUserIdProvider (Keep as is) ---
+// --- currentUserIdProvider ---
 final currentUserIdProvider = Provider<int?>((ref) {
-  // Ensure userProvider is watched correctly
   final user = ref.watch(userProvider);
   return user.id;
 });

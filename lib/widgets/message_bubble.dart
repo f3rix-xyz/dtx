@@ -1,14 +1,13 @@
 // lib/widgets/message_bubble.dart
-// import 'dart:convert'; // Keep if needed elsewhere, not strictly for this file now
 import 'dart:io';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:dtx/models/chat_message.dart';
 import 'package:dtx/providers/audio_player_provider.dart';
-import 'package:dtx/providers/conversation_provider.dart'; // <<<--- ADDED for optimistic update call
-import 'package:dtx/providers/user_provider.dart'; // <<<--- ADDED for current user ID
+import 'package:dtx/providers/conversation_provider.dart';
+import 'package:dtx/providers/user_provider.dart';
 import 'package:dtx/providers/service_provider.dart';
 import 'package:dtx/services/chat_service.dart';
-import 'package:dtx/widgets/reaction_emoji_picker.dart';
+import 'package:dtx/widgets/reaction_emoji_picker.dart'; // Make sure this path is correct
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -16,55 +15,7 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:audioplayers/audioplayers.dart';
 import 'package:path/path.dart' as p;
 import 'package:url_launcher/url_launcher.dart';
-
-// --- Simple Emoji Picker (Keep as is) ---
-class SimpleEmojiPicker extends StatelessWidget {
-  final Function(String) onEmojiSelected;
-  final List<String> reactionEmojis = const [
-    '👍',
-    '❤️',
-    '😂',
-    '😮',
-    '😢',
-    '😠'
-  ];
-
-  const SimpleEmojiPicker({Key? key, required this.onEmojiSelected})
-      : super(key: key);
-
-  @override
-  Widget build(BuildContext context) {
-    if (kDebugMode) print("[ReactionEmojiPicker] Building picker widget.");
-    return Material(
-      elevation: 6.0,
-      borderRadius: BorderRadius.circular(25.0),
-      color: Colors.white,
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 10.0, vertical: 6.0),
-        child: Wrap(
-          spacing: 6.0,
-          runSpacing: 0.0,
-          alignment: WrapAlignment.center,
-          children: reactionEmojis.map((emoji) {
-            return InkWell(
-              onTap: () {
-                if (kDebugMode)
-                  print("[ReactionEmojiPicker] Emoji selected: $emoji");
-                onEmojiSelected(emoji);
-              },
-              borderRadius: BorderRadius.circular(20),
-              child: Padding(
-                padding: const EdgeInsets.all(7.0),
-                child: Text(emoji, style: const TextStyle(fontSize: 25)),
-              ),
-            );
-          }).toList(),
-        ),
-      ),
-    );
-  }
-}
-// --- End Simple Emoji Picker ---
+import 'package:intl/intl.dart'; // Import for timestamp formatting
 
 class MessageBubble extends ConsumerStatefulWidget {
   final ChatMessage message;
@@ -99,9 +50,8 @@ class _MessageBubbleState extends ConsumerState<MessageBubble>
     super.dispose();
   }
 
-  // --- Helpers (Keep as is) ---
+  // --- Helpers ---
   String getFilenameFromUrl(String? url) {
-    /* ... no changes ... */
     if (url == null || url.isEmpty) return "File";
     try {
       final uri = Uri.parse(url);
@@ -123,7 +73,6 @@ class _MessageBubbleState extends ConsumerState<MessageBubble>
   }
 
   Future<void> _openMedia(BuildContext context, String url) async {
-    /* ... no changes ... */
     final Uri uri = Uri.parse(url);
     if (!await canLaunchUrl(uri)) {
       if (context.mounted)
@@ -153,6 +102,7 @@ class _MessageBubbleState extends ConsumerState<MessageBubble>
               strokeWidth: 2, color: Color(0xFF8B5CF6)),
         ),
       );
+
   Widget _buildMediaErrorPlaceholder({required bool isMe}) => Container(
         color: Colors.grey[isMe ? 700 : 200]?.withOpacity(0.3),
         child: Center(
@@ -161,9 +111,8 @@ class _MessageBubbleState extends ConsumerState<MessageBubble>
       );
   // --- End Helpers ---
 
-  // --- _buildReplySnippet (Keep as is) ---
+  // --- _buildReplySnippet ---
   Widget _buildReplySnippet() {
-    /* ... no changes ... */
     final repliedTo = widget.message;
     final textSnippet = repliedTo.repliedMessageTextSnippet;
     final mediaType = repliedTo.repliedMessageMediaType;
@@ -245,9 +194,7 @@ class _MessageBubbleState extends ConsumerState<MessageBubble>
   // --- End _buildReplySnippet ---
 
   // --- Reaction Methods ---
-
   void _showEmojiPicker(BuildContext context, Offset globalPosition) {
-    /* ... keep previous implementation ... */
     if (!mounted) return;
     if (kDebugMode)
       print(
@@ -303,6 +250,7 @@ class _MessageBubbleState extends ConsumerState<MessageBubble>
               top: top,
               left: left,
               child: ReactionEmojiPicker(
+                // Assuming this is in widgets/reaction_emoji_picker.dart
                 onEmojiSelected: (emoji) {
                   _handleReaction(emoji);
                   _removeEmojiPicker();
@@ -328,7 +276,6 @@ class _MessageBubbleState extends ConsumerState<MessageBubble>
   }
 
   void _removeEmojiPicker() {
-    /* ... keep previous implementation ... */
     if (_emojiPickerOverlay != null) {
       try {
         _emojiPickerOverlay!.remove();
@@ -347,36 +294,30 @@ class _MessageBubbleState extends ConsumerState<MessageBubble>
     }
   }
 
-  // *** --- START: MODIFIED _handleReaction --- ***
   void _handleReaction(String emoji) {
-    // Basic validation
     if (widget.message.messageID <= 0) {
       if (kDebugMode)
         print(
             "[MessageBubble _handleReaction] Error: Cannot react to unsaved message ID: ${widget.message.messageID}.");
       return;
     }
-    if (!mounted) return; // Check if widget is still mounted
+    if (!mounted) return;
 
     if (kDebugMode)
       print(
           "[MessageBubble _handleReaction] Optimistically applying & sending reaction: MsgID=${widget.message.messageID}, Emoji=$emoji");
 
-    // --- 1. Apply Optimistically ---
-    // Find the other user's ID to get the correct provider instance
     final currentUserId = ref.read(currentUserIdProvider);
     if (currentUserId == null) {
       if (kDebugMode)
         print(
             "[MessageBubble _handleReaction] Error: Could not get current user ID for optimistic update.");
-      return; // Should not happen if user is in chat
+      return;
     }
     final otherUserId = widget.message.senderUserID == currentUserId
         ? widget.message.recipientUserID
         : widget.message.senderUserID;
 
-    // Call the new optimistic method on the correct ConversationNotifier
-    // IMPORTANT: Ensure ConversationNotifier has the optimisticApplyReaction method
     ref
         .read(conversationProvider(otherUserId).notifier)
         .optimisticallyApplyReaction(widget.message.messageID, emoji);
@@ -384,17 +325,13 @@ class _MessageBubbleState extends ConsumerState<MessageBubble>
       print(
           "[MessageBubble _handleReaction] Optimistic update called for ConversationNotifier($otherUserId).");
 
-    // --- 2. Send to Backend ---
     ref.read(chatServiceProvider).sendReaction(widget.message.messageID, emoji);
     if (kDebugMode)
       print(
           "[MessageBubble _handleReaction] Reaction sent to backend via ChatService.");
   }
-  // *** --- END: MODIFIED _handleReaction --- ***
 
-  // _buildReactionsDisplay (Keep as is)
   Widget _buildReactionsDisplay() {
-    /* ... keep previous implementation ... */
     final reactions = widget.message.reactionsSummary;
     final currentUserReaction = widget.message.currentUserReaction;
     if (reactions == null || reactions.isEmpty) return const SizedBox.shrink();
@@ -451,13 +388,16 @@ class _MessageBubbleState extends ConsumerState<MessageBubble>
 
   @override
   Widget build(BuildContext context) {
-    super.build(context);
+    super.build(context); // Keep the mixin happy
 
     final message = widget.message;
     final isMe = widget.isMe;
     final showTail = widget.showTail;
 
-    // Logging kept as is
+    if (kDebugMode) {
+      print(
+          "[MessageBubble build] ID: ${message.messageID}, TempID: ${message.tempId}, isMe: $isMe, Status: ${message.status}, IsRead: ${message.isRead}");
+    }
 
     final radius = Radius.circular(18.0);
     final borderRadius = BorderRadius.only(
@@ -470,7 +410,7 @@ class _MessageBubbleState extends ConsumerState<MessageBubble>
     Widget messageContent;
     Widget? statusIcon;
 
-    // Status Icon Logic (Keep as is)
+    // --- Status Icon Logic (Keep Existing) ---
     if (isMe && message.status != ChatMessageStatus.sent) {
       switch (message.status) {
         case ChatMessageStatus.pending:
@@ -486,13 +426,30 @@ class _MessageBubbleState extends ConsumerState<MessageBubble>
           );
           break;
         case ChatMessageStatus.sent:
-          break;
+          break; // Will be handled by read receipt logic below
       }
     }
+    // --- End Status Icon Logic ---
 
-    // Content Rendering Logic (Keep as is)
+    // --- Read Receipt Icon Logic (Phase 3) ---
+    Widget? readReceiptIcon;
+    if (isMe && message.status == ChatMessageStatus.sent) {
+      readReceiptIcon = Icon(
+        message.isRead ? Icons.done_all : Icons.done, // Double tick if read
+        size: 16,
+        color: message.isRead
+            ? Colors.blueAccent
+            : Colors.white70, // Different color for read
+      );
+      if (kDebugMode) {
+        print(
+            "[MessageBubble build] Read Receipt for Msg ID ${message.messageID}: isRead=${message.isRead}, Icon=${message.isRead ? 'done_all' : 'done'}");
+      }
+    }
+    // --- End Read Receipt Icon Logic ---
+
+    // --- Content Rendering Logic (Keep Existing) ---
     if (message.isMedia) {
-      // ... (existing media rendering logic) ...
       final mediaType = message.mediaType?.toLowerCase() ?? '';
       final String? displayPath =
           (message.localFilePath != null && message.localFilePath!.isNotEmpty)
@@ -501,13 +458,15 @@ class _MessageBubbleState extends ConsumerState<MessageBubble>
       final bool isUsingLocalFile =
           displayPath == message.localFilePath && message.localFilePath != null;
       final bool isMediaSent = message.status == ChatMessageStatus.sent;
+
       if (displayPath == null || displayPath.isEmpty) {
         messageContent = Text(
           "[Media Error]",
           style: GoogleFonts.poppins(color: Colors.red, fontSize: 14),
         );
       } else if (mediaType.startsWith('image/')) {
-        /* ... image rendering ... */ Widget imageToShow;
+        // Image rendering
+        Widget imageToShow;
         if (isUsingLocalFile) {
           imageToShow = Image.file(File(displayPath),
               key: ValueKey(displayPath),
@@ -530,11 +489,13 @@ class _MessageBubbleState extends ConsumerState<MessageBubble>
           child: imageToShow,
         );
       } else if (mediaType.startsWith('video/')) {
-        /* ... video rendering ... */ messageContent = InkWell(
+        // Video placeholder
+        messageContent = InkWell(
           onTap: isMediaSent && !isUsingLocalFile
               ? () => _openMedia(context, displayPath)
               : null,
           child: Container(
+            /* ... video placeholder container ... */
             padding: const EdgeInsets.all(10),
             constraints: BoxConstraints(
                 maxWidth: MediaQuery.of(context).size.width * 0.65,
@@ -543,6 +504,7 @@ class _MessageBubbleState extends ConsumerState<MessageBubble>
                 color: Colors.grey[isMe ? 700 : 300],
                 borderRadius: BorderRadius.circular(8)),
             child: Column(
+              /* ... video details ... */
               mainAxisSize: MainAxisSize.min,
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
@@ -570,8 +532,8 @@ class _MessageBubbleState extends ConsumerState<MessageBubble>
           ),
         );
       } else if (mediaType.startsWith('audio/')) {
-        /* ... audio rendering ... */ final audioPlayerState =
-            ref.watch(audioPlayerStateProvider);
+        // Audio placeholder/player
+        final audioPlayerState = ref.watch(audioPlayerStateProvider);
         final currentPlayingUrl = ref.watch(currentAudioUrlProvider);
         final playerNotifier = ref.read(audioPlayerControllerProvider.notifier);
         final bool canPlay = isMediaSent && !isUsingLocalFile;
@@ -584,102 +546,117 @@ class _MessageBubbleState extends ConsumerState<MessageBubble>
         final bool isThisPaused = canPlay &&
             currentPlayingUrl == displayPath &&
             audioPlayerState == AudioPlayerState.paused;
-        messageContent = Row(mainAxisSize: MainAxisSize.min, children: [
-          IconButton(
-            icon: isThisLoading
-                ? SizedBox(
-                    width: 24,
-                    height: 24,
-                    child: CircularProgressIndicator(
-                        strokeWidth: 2,
-                        color: isMe ? Colors.white : Color(0xFF8B5CF6)))
-                : Icon(isThisPlaying
-                    ? Icons.pause_circle_filled_rounded
-                    : Icons.play_circle_fill_rounded),
-            color: isMe
-                ? Colors.white
-                : (canPlay ? const Color(0xFF8B5CF6) : Colors.grey[400]),
-            iconSize: 36,
-            padding: EdgeInsets.zero,
-            constraints: const BoxConstraints(),
-            tooltip: canPlay ? (isThisPlaying ? 'Pause' : 'Play') : 'Audio',
-            onPressed: isThisLoading || !canPlay
-                ? null
-                : () {
-                    if (isThisPlaying)
-                      playerNotifier.pause();
-                    else if (isThisPaused)
-                      playerNotifier.resume();
-                    else
-                      playerNotifier.play(displayPath!);
-                  },
-          ),
-          const SizedBox(width: 8),
-          Expanded(
-            child: Text(
-              getFilenameFromUrl(displayPath),
-              style: GoogleFonts.poppins(
-                  fontSize: 13, color: isMe ? Colors.white : Colors.black87),
-              overflow: TextOverflow.ellipsis,
-              maxLines: 2,
-            ),
-          ),
-        ]);
+        messageContent = Row(
+            /* ... audio player row ... */
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              IconButton(
+                icon: isThisLoading
+                    ? SizedBox(
+                        width: 24,
+                        height: 24,
+                        child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: isMe ? Colors.white : Color(0xFF8B5CF6)))
+                    : Icon(isThisPlaying
+                        ? Icons.pause_circle_filled_rounded
+                        : Icons.play_circle_fill_rounded),
+                color: isMe
+                    ? Colors.white
+                    : (canPlay ? const Color(0xFF8B5CF6) : Colors.grey[400]),
+                iconSize: 36,
+                padding: EdgeInsets.zero,
+                constraints: const BoxConstraints(),
+                tooltip: canPlay ? (isThisPlaying ? 'Pause' : 'Play') : 'Audio',
+                onPressed: isThisLoading || !canPlay
+                    ? null
+                    : () {
+                        if (isThisPlaying)
+                          playerNotifier.pause();
+                        else if (isThisPaused)
+                          playerNotifier.resume();
+                        else
+                          playerNotifier.play(displayPath!);
+                      },
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  getFilenameFromUrl(displayPath),
+                  style: GoogleFonts.poppins(
+                      fontSize: 13,
+                      color: isMe ? Colors.white : Colors.black87),
+                  overflow: TextOverflow.ellipsis,
+                  maxLines: 2,
+                ),
+              ),
+            ]);
       } else {
-        /* ... generic file rendering ... */ messageContent = InkWell(
+        // Generic file placeholder
+        messageContent = InkWell(
           onTap: isMediaSent && !isUsingLocalFile
               ? () => _openMedia(context, displayPath)
               : null,
-          child: Row(mainAxisSize: MainAxisSize.min, children: [
-            Icon(Icons.insert_drive_file_outlined,
-                color: isMe ? Colors.white70 : Colors.grey[600], size: 30),
-            const SizedBox(width: 10),
-            Expanded(
-              child: Text(
-                getFilenameFromUrl(displayPath),
-                style: GoogleFonts.poppins(
-                    fontSize: 13, color: isMe ? Colors.white : Colors.black87),
-                overflow: TextOverflow.ellipsis,
-                maxLines: 2,
-              ),
-            ),
-          ]),
+          child: Row(
+              /* ... generic file row ... */
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(Icons.insert_drive_file_outlined,
+                    color: isMe ? Colors.white70 : Colors.grey[600], size: 30),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    getFilenameFromUrl(displayPath),
+                    style: GoogleFonts.poppins(
+                        fontSize: 13,
+                        color: isMe ? Colors.white : Colors.black87),
+                    overflow: TextOverflow.ellipsis,
+                    maxLines: 2,
+                  ),
+                ),
+              ]),
         );
       }
     } else {
+      // Text message content
       messageContent = Text(
         message.messageText,
         style: GoogleFonts.poppins(
           color: isMe ? Colors.white : Colors.black87,
           fontSize: 15,
+          height: 1.4, // Add line height for better readability
         ),
       );
     }
+    // --- End Content Rendering ---
 
-    // Final Bubble Structure (Keep as is, uses modified _handleReaction)
+    // --- Main Bubble Structure ---
     return Align(
       alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
       child: Padding(
         padding: EdgeInsets.only(
-            bottom:
-                (message.reactionsSummary?.isNotEmpty ?? false) ? 18.0 : 0.0),
+            bottom: (message.reactionsSummary?.isNotEmpty ?? false)
+                ? 18.0
+                : 0.0), // Adjust bottom padding for reactions
         child: Stack(
           clipBehavior: Clip.none,
           children: [
+            // Dismissible for Reply Swipe
             Dismissible(
               key: Key(message.messageID.toString() +
                   (message.tempId ?? '') +
                   '_dismissible'),
-              direction: DismissDirection.startToEnd,
+              direction: DismissDirection.startToEnd, // Swipe right to reply
               confirmDismiss: (direction) async {
                 if (!mounted) return false;
                 if (kDebugMode)
                   print(
                       "[MessageBubble] Swiped message ID: ${message.messageID}");
                 widget.onReplyInitiated(message);
-                return false;
+                return false; // Don't actually dismiss the widget
               },
               background: Container(
+                /* ... Reply background ... */
                 decoration: BoxDecoration(
                     color: Colors.blue.withOpacity(0.1),
                     borderRadius: borderRadius),
@@ -689,19 +666,10 @@ class _MessageBubbleState extends ConsumerState<MessageBubble>
               ),
               child: GestureDetector(
                 onLongPressStart: (LongPressStartDetails details) {
-                  if (!widget.isMe) {
-                    if (message.status != ChatMessageStatus.sent) {
-                      if (kDebugMode)
-                        print(
-                            "[MessageBubble onLongPressStart] Ignoring long press for non-sent message (status: ${message.status})");
-                      return;
-                    }
-                    if (message.messageID <= 0) {
-                      if (kDebugMode)
-                        print(
-                            "[MessageBubble onLongPressStart] Ignoring long press for message with invalid ID: ${message.messageID}.");
-                      return;
-                    }
+                  // Enable reactions only for received messages that are sent
+                  if (!widget.isMe &&
+                      message.status == ChatMessageStatus.sent &&
+                      message.messageID > 0) {
                     if (kDebugMode)
                       print(
                           "[MessageBubble onLongPressStart] Long press detected on message ID: ${message.messageID}");
@@ -709,10 +677,11 @@ class _MessageBubbleState extends ConsumerState<MessageBubble>
                   } else {
                     if (kDebugMode)
                       print(
-                          "[MessageBubble onLongPressStart] Ignoring long press on own message.");
+                          "[MessageBubble onLongPressStart] Ignoring long press. isMe=${widget.isMe}, status=${message.status}, id=${message.messageID}");
                   }
                 },
                 child: Container(
+                  // Bubble Container
                   constraints: BoxConstraints(
                     maxWidth: MediaQuery.of(context).size.width * 0.75,
                   ),
@@ -726,6 +695,7 @@ class _MessageBubbleState extends ConsumerState<MessageBubble>
                     color: isMe ? const Color(0xFF8B5CF6) : Colors.white,
                     borderRadius: borderRadius,
                     boxShadow: [
+                      /* ... Shadow ... */
                       BoxShadow(
                         color: Colors.black.withOpacity(0.05),
                         blurRadius: 3,
@@ -738,31 +708,25 @@ class _MessageBubbleState extends ConsumerState<MessageBubble>
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
+                        // Show Reply Snippet if it's a reply
                         if (message.isReply) _buildReplySnippet(),
-                        Stack(
-                          children: [
-                            Padding(
-                              padding: message.isMedia &&
-                                      (message.mediaType
-                                              ?.startsWith('image/') ??
-                                          false)
-                                  ? EdgeInsets.zero
-                                  : EdgeInsets.only(
-                                      left: 14.0,
-                                      right: 14.0,
-                                      top: message.isReply ? 6.0 : 10.0,
-                                      bottom: 10.0,
-                                    ),
-                              child: messageContent,
-                            ),
-                            if (statusIcon != null)
-                              Positioned(
-                                bottom: 4,
-                                right: isMe ? 4 : null,
-                                left: isMe ? null : 4,
-                                child: statusIcon,
-                              ),
-                          ],
+                        // Main Content Padding and Status/Time
+                        Padding(
+                          padding: message.isMedia &&
+                                  (message.mediaType?.startsWith('image/') ??
+                                      false)
+                              ? EdgeInsets.zero // No padding for image media
+                              : EdgeInsets.only(
+                                  // Padding for text/other media
+                                  left: 14.0,
+                                  right: 14.0,
+                                  top: message.isReply ? 6.0 : 10.0,
+                                  bottom: 10.0 +
+                                      (isMe
+                                          ? 12.0
+                                          : 0.0), // Add bottom padding only for 'Me' bubbles for status
+                                ),
+                          child: messageContent,
                         ),
                       ],
                     ),
@@ -770,6 +734,41 @@ class _MessageBubbleState extends ConsumerState<MessageBubble>
                 ),
               ),
             ),
+
+            // --- START: Timestamp and Status Icons Positioned ---
+            Positioned(
+              bottom: 4, // Adjust vertical position as needed
+              right: isMe
+                  ? (showTail ? 12 : 22)
+                  : null, // Position based on tail & isMe
+              left: !isMe ? (showTail ? 12 : 22) : null,
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  // Timestamp
+                  Text(
+                    DateFormat.jm().format(message.sentAt), // Format time
+                    style: GoogleFonts.poppins(
+                      fontSize: 11,
+                      color: isMe
+                          ? Colors.white.withOpacity(0.7)
+                          : Colors.grey[500],
+                    ),
+                  ),
+                  // Space before status icon (only for 'Me' messages)
+                  if (isMe) const SizedBox(width: 4),
+                  // Status Icon OR Read Receipt Icon (only for 'Me' messages)
+                  if (isMe)
+                    statusIcon ??
+                        readReceiptIcon ??
+                        const SizedBox
+                            .shrink(), // Show status, then read, then nothing
+                ],
+              ),
+            ),
+            // --- END: Timestamp and Status Icons ---
+
+            // Reactions Display (Keep as is)
             _buildReactionsDisplay(),
           ],
         ),
