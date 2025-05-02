@@ -4,14 +4,14 @@ import '../models/error_model.dart';
 import '../services/api_service.dart';
 import '../utils/token_storage.dart';
 import '../utils/app_enums.dart';
+import 'package:flutter/foundation.dart'; // For kDebugMode
 
 class LikeRepository {
   final ApiService _apiService;
 
   LikeRepository(this._apiService);
 
-  // --- Existing methods (likeContent, dislikeUser, likeBackUserProfile, etc.) ---
-  // ... (keep existing methods as they are) ...
+  // --- Methods unchanged ---
   Future<bool> likeContent({
     required int likedUserId,
     required ContentLikeType contentType,
@@ -109,6 +109,7 @@ class LikeRepository {
     }
   }
 
+  // --- fetchReceivedLikes - Ensure `like_id` is parsed ---
   Future<Map<String, List<dynamic>>> fetchReceivedLikes() async {
     final String methodName = 'fetchReceivedLikes';
     print('[LikeRepository $methodName] Fetching received likes...');
@@ -124,38 +125,61 @@ class LikeRepository {
           '[LikeRepository $methodName] Making GET request to /api/likes/received...');
       final response =
           await _apiService.get('/api/likes/received', headers: headers);
-      print('[LikeRepository $methodName] API Response received: $response');
+      // Add more detailed logging of the raw response
+      if (kDebugMode) {
+        print(
+            '[LikeRepository $methodName] Raw API Response: ${response.toString()}');
+      }
 
       if (response['success'] == true) {
         print('[LikeRepository $methodName] Parsing successful response...');
-        final List<FullProfileLiker> fullProfiles =
-            (response['full_profiles'] as List? ?? [])
-                .map((data) {
-                  try {
-                    return FullProfileLiker.fromJson(
-                        data as Map<String, dynamic>);
-                  } catch (e) {
-                    print(
-                        "[LikeRepository $methodName] Error parsing FullProfileLiker: $e, Data: $data");
-                    return null;
-                  }
-                })
-                .whereType<FullProfileLiker>()
-                .toList();
+        final List<FullProfileLiker> fullProfiles = (response['full_profiles']
+                    as List? ??
+                [])
+            .map((data) {
+              try {
+                // Log the raw data item before parsing
+                if (kDebugMode) {
+                  print(
+                      "[LikeRepository $methodName - full] Parsing Item: $data");
+                }
+                return FullProfileLiker.fromJson(data as Map<String, dynamic>);
+              } catch (e, stacktrace) {
+                // Add stacktrace
+                print(
+                    "[LikeRepository $methodName - full] Error parsing FullProfileLiker: $e, Data: $data");
+                print(
+                    "[LikeRepository $methodName - full] Stacktrace: $stacktrace"); // Log stacktrace
+                return null;
+              }
+            })
+            .whereType<
+                FullProfileLiker>() // Filter out nulls from parsing errors
+            .toList();
+
         final List<BasicProfileLiker> otherLikers =
             (response['other_likers'] as List? ?? [])
                 .map((data) {
                   try {
+                    // Log the raw data item before parsing
+                    if (kDebugMode) {
+                      print(
+                          "[LikeRepository $methodName - other] Parsing Item: $data");
+                    }
                     return BasicProfileLiker.fromJson(
                         data as Map<String, dynamic>);
-                  } catch (e) {
+                  } catch (e, stacktrace) {
+                    // Add stacktrace
                     print(
-                        "[LikeRepository $methodName] Error parsing BasicProfileLiker: $e, Data: $data");
+                        "[LikeRepository $methodName - other] Error parsing BasicProfileLiker: $e, Data: $data");
+                    print(
+                        "[LikeRepository $methodName - other] Stacktrace: $stacktrace"); // Log stacktrace
                     return null;
                   }
                 })
-                .whereType<BasicProfileLiker>()
+                .whereType<BasicProfileLiker>() // Filter out nulls
                 .toList();
+
         print(
             '[LikeRepository $methodName] Parsed ${fullProfiles.length} full, ${otherLikers.length} basic profiles.');
         return {'full': fullProfiles, 'other': otherLikers};
@@ -178,6 +202,7 @@ class LikeRepository {
     }
   }
 
+  // --- fetchLikerProfile - No changes needed ---
   Future<Map<String, dynamic>> fetchLikerProfile(int likerUserId) async {
     final String methodName = 'fetchLikerProfile';
     print(
@@ -218,15 +243,17 @@ class LikeRepository {
       print(
           '[LikeRepository $methodName] API Exception: ${e.message}, Status: ${e.statusCode}');
       rethrow;
-    } catch (e) {
+    } catch (e, stacktrace) {
+      // Added stacktrace
       print('[LikeRepository $methodName] Unexpected Error: $e');
+      print(
+          '[LikeRepository $methodName] Stacktrace: $stacktrace'); // Log stacktrace
       throw ApiException(
           'An unexpected error occurred while fetching the liker profile: ${e.toString()}');
     }
   }
-  // --- END Existing Methods ---
 
-  // --- ADDED: Unmatch User Method ---
+  // --- unmatchUser - No changes needed ---
   Future<bool> unmatchUser({required int targetUserId}) async {
     final String methodName = 'unmatchUser';
     print('[LikeRepository $methodName] Unmatching UserID: $targetUserId');
@@ -234,29 +261,24 @@ class LikeRepository {
       final token = await TokenStorage.getToken();
       if (token == null) throw ApiException('Authentication token missing');
       final headers = {'Authorization': 'Bearer $token'};
-      final body = {
-        'target_user_id': targetUserId
-      }; // Match backend Go struct field name
+      final body = {'target_user_id': targetUserId};
       print('[LikeRepository $methodName] Request Body: $body');
-
-      final response = await _apiService.post('/api/unmatch',
-          body: body, headers: headers); // Use POST
-
+      final response =
+          await _apiService.post('/api/unmatch', body: body, headers: headers);
       print('[LikeRepository $methodName] API Response: $response');
       return response['success'] == true;
     } on ApiException catch (e) {
       print(
           '[LikeRepository $methodName] API Exception: ${e.message}, Status: ${e.statusCode}');
-      rethrow; // Let the provider/UI handle specific errors if needed
+      rethrow;
     } catch (e) {
       print('[LikeRepository $methodName] Unexpected Error: $e');
       throw ApiException(
           'An unexpected error occurred while unmatching user: ${e.toString()}');
     }
   }
-  // --- END ADDED ---
 
-  // --- ADDED: Report User Method ---
+  // --- reportUser - No changes needed ---
   Future<bool> reportUser(
       {required int targetUserId, required ReportReason reason}) async {
     final String methodName = 'reportUser';
@@ -266,15 +288,10 @@ class LikeRepository {
       final token = await TokenStorage.getToken();
       if (token == null) throw ApiException('Authentication token missing');
       final headers = {'Authorization': 'Bearer $token'};
-      final body = {
-        'reported_user_id': targetUserId, // Match backend Go struct field name
-        'reason': reason.value // Send the enum value string
-      };
+      final body = {'reported_user_id': targetUserId, 'reason': reason.value};
       print('[LikeRepository $methodName] Request Body: $body');
-
-      final response = await _apiService.post('/api/report',
-          body: body, headers: headers); // Use POST
-
+      final response =
+          await _apiService.post('/api/report', body: body, headers: headers);
       print('[LikeRepository $methodName] API Response: $response');
       return response['success'] == true;
     } on ApiException catch (e) {
@@ -285,6 +302,50 @@ class LikeRepository {
       print('[LikeRepository $methodName] Unexpected Error: $e');
       throw ApiException(
           'An unexpected error occurred while reporting user: ${e.toString()}');
+    }
+  }
+
+  // --- START: ADDED logLikerProfileView ---
+  Future<void> logLikerProfileView(int likerUserId, int likeId) async {
+    final String methodName = 'logLikerProfileView';
+    print(
+        '[LikeRepository $methodName] Logging view: Liker=$likerUserId, Like=$likeId');
+    try {
+      final token = await TokenStorage.getToken();
+      if (token == null) {
+        print('[LikeRepository $methodName] Error: Auth token missing.');
+        // Don't throw, just log and return as this is non-critical
+        return;
+      }
+      final headers = {'Authorization': 'Bearer $token'};
+      final body = {
+        'liker_user_id': likerUserId,
+        'like_id': likeId,
+      };
+      print('[LikeRepository $methodName] Request Body: $body');
+
+      final response = await _apiService.post(
+        '/api/analytics/log-like-profile-view', // Analytics endpoint
+        body: body,
+        headers: headers,
+      );
+
+      print('[LikeRepository $methodName] API Response: $response');
+      if (response['success'] != true) {
+        print(
+            '[LikeRepository $methodName] Warning: API call failed or returned success=false. Message: ${response['message']}');
+        // Log warning but don't throw an error to the UI
+      } else {
+        print('[LikeRepository $methodName] View logged successfully.');
+      }
+    } on ApiException catch (e) {
+      // Log API errors but don't throw
+      print(
+          '[LikeRepository $methodName] API Exception during logging: ${e.message}, Status: ${e.statusCode}');
+    } catch (e, stacktrace) {
+      // Log other errors but don't throw
+      print('[LikeRepository $methodName] Unexpected Error during logging: $e');
+      print('[LikeRepository $methodName] Stacktrace: $stacktrace');
     }
   }
   // --- END ADDED ---

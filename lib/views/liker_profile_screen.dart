@@ -1,33 +1,84 @@
 // File: lib/views/liker_profile_screen.dart
-import 'dart:math'; // Import math for max function
+import 'dart:async'; // Import async
+import 'dart:math';
 import 'package:dtx/models/error_model.dart';
 import 'package:dtx/models/like_models.dart';
 import 'package:dtx/providers/liker_profile_provider.dart';
+import 'package:dtx/providers/matches_provider.dart';
 import 'package:dtx/providers/recieved_likes_provider.dart';
-import 'package:dtx/repositories/like_repository.dart';
+import 'package:dtx/repositories/like_repository.dart'; // Import LikeRepository
 import 'package:dtx/providers/service_provider.dart';
 import 'package:dtx/providers/error_provider.dart';
 import 'package:dtx/services/api_service.dart';
-import 'package:dtx/providers/audio_player_provider.dart'; // Import for audio player state
+import 'package:dtx/providers/audio_player_provider.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:dtx/models/user_model.dart';
 import 'package:dtx/utils/app_enums.dart';
+import 'package:flutter/foundation.dart'; // For kDebugMode
 
 class LikerProfileScreen extends ConsumerStatefulWidget {
   final int likerUserId;
+  final int likeId; // <<<--- ADDED likeId field
 
-  const LikerProfileScreen({super.key, required this.likerUserId});
+  const LikerProfileScreen({
+    super.key,
+    required this.likerUserId,
+    required this.likeId, // <<<--- ADDED likeId to constructor
+  });
 
   @override
   ConsumerState<LikerProfileScreen> createState() => _LikerProfileScreenState();
 }
 
 class _LikerProfileScreenState extends ConsumerState<LikerProfileScreen> {
-  bool _isInteracting = false; // Local state for loading indicator
+  bool _isInteracting = false;
 
-  // --- Dislike Handler (Keep as is) ---
+  // --- ADDED: initState to trigger analytic call ---
+  @override
+  void initState() {
+    super.initState();
+    // Call the analytic logging function after the first frame is built
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _logProfileView();
+    });
+  }
+
+  // --- ADDED: Function to call the repository method ---
+  Future<void> _logProfileView() async {
+    if (!mounted) return; // Check if the widget is still in the tree
+    // Check if likeId is valid before logging
+    if (widget.likeId <= 0) {
+      if (kDebugMode) {
+        print(
+            "[LikerProfileScreen _logProfileView] Invalid likeId (${widget.likeId}). Skipping analytics call.");
+      }
+      return;
+    }
+
+    if (kDebugMode) {
+      print(
+          "[LikerProfileScreen _logProfileView] Logging profile view for Liker ID: ${widget.likerUserId}, Like ID: ${widget.likeId}");
+    }
+    try {
+      await ref
+          .read(likeRepositoryProvider)
+          .logLikerProfileView(widget.likerUserId, widget.likeId);
+      if (kDebugMode) {
+        print("[LikerProfileScreen _logProfileView] View logged successfully.");
+      }
+    } catch (e) {
+      // Log the error, but don't show it to the user or block the UI
+      if (kDebugMode) {
+        print(
+            "[LikerProfileScreen _logProfileView] ERROR logging profile view: $e");
+      }
+    }
+  }
+  // --- END ADDED ---
+
+  // --- Dislike/Like Back/Error/FAB Helpers (No changes needed) ---
   Future<void> _handleDislike() async {
     final confirm = await showDialog<bool>(
       context: context,
@@ -87,7 +138,6 @@ class _LikerProfileScreenState extends ConsumerState<LikerProfileScreen> {
     }
   }
 
-  // --- Like Back Handler (Keep as is) ---
   Future<void> _handleLikeBack() async {
     if (_isInteracting) return;
     if (!mounted) return;
@@ -100,7 +150,8 @@ class _LikerProfileScreenState extends ConsumerState<LikerProfileScreen> {
           .likeBackUserProfile(likedUserId: widget.likerUserId);
 
       if (success && mounted) {
-        ref.invalidate(receivedLikesProvider);
+        ref.invalidate(receivedLikesProvider); // Invalidate likes list
+        ref.invalidate(matchesProvider); // <<< Invalidate matches list
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
               content: Text("It's a Match! 🎉", style: GoogleFonts.poppins()),
@@ -131,7 +182,6 @@ class _LikerProfileScreenState extends ConsumerState<LikerProfileScreen> {
     }
   }
 
-  // --- Error Snackbar Helper (Keep as is) ---
   void _showErrorSnackbar(String message) {
     if (!mounted) return;
     ScaffoldMessenger.of(context).removeCurrentSnackBar();
@@ -144,7 +194,6 @@ class _LikerProfileScreenState extends ConsumerState<LikerProfileScreen> {
     );
   }
 
-  // --- Helper for FAB-style buttons (Keep as is) ---
   Widget _buildLikerActionButton({
     required IconData icon,
     required Color color,
@@ -157,7 +206,7 @@ class _LikerProfileScreenState extends ConsumerState<LikerProfileScreen> {
     return Tooltip(
       message: tooltip,
       child: FloatingActionButton(
-        heroTag: tooltip,
+        heroTag: tooltip, // Use tooltip as heroTag (needs to be unique)
         onPressed: onPressed,
         backgroundColor:
             onPressed != null ? backgroundColor : Colors.grey.shade400,
@@ -173,20 +222,19 @@ class _LikerProfileScreenState extends ConsumerState<LikerProfileScreen> {
 
   @override
   Widget build(BuildContext context) {
+    // Pass the likeId to the provider family
     final state = ref.watch(likerProfileProvider(widget.likerUserId));
     final profile = state.profile;
     final likeDetails = state.likeDetails;
 
     return Scaffold(
       backgroundColor: Colors.white,
-      // --- Floating Action Buttons Row (Keep as is) ---
       floatingActionButtonLocation: FloatingActionButtonLocation.centerFloat,
       floatingActionButton: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 32.0),
         child: Row(
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
-            // Dislike Button (Left)
             _buildLikerActionButton(
               icon: Icons.close_rounded,
               color: Colors.red,
@@ -194,7 +242,6 @@ class _LikerProfileScreenState extends ConsumerState<LikerProfileScreen> {
               onPressed: _isInteracting ? null : _handleDislike,
               tooltip: "Dislike",
             ),
-            // Like Back Button (Right)
             _buildLikerActionButton(
               icon: Icons.favorite_rounded,
               color: Colors.white,
@@ -205,38 +252,47 @@ class _LikerProfileScreenState extends ConsumerState<LikerProfileScreen> {
           ],
         ),
       ),
-      body: _buildBody(context, state, profile, likeDetails, ref),
+      // Use a Builder to get a context below the Scaffold for snackbars if needed
+      body: Builder(
+        builder: (builderContext) =>
+            _buildBody(builderContext, state, profile, likeDetails, ref),
+      ),
     );
   }
 
+  // _buildBody, _buildErrorState, and helper widgets remain the same
+  // Make sure they use the passed 'context' and 'ref' appropriately
   Widget _buildBody(
       BuildContext context,
       LikerProfileState state,
       UserProfileData? profile,
       LikeInteractionDetails? likeDetails,
       WidgetRef ref) {
+    // Accept ref
     if (state.isLoading) {
       return const Center(
           child: CircularProgressIndicator(color: Color(0xFF8B5CF6)));
     }
 
     if (state.error != null) {
-      return _buildErrorState(context, state.error!, ref);
+      return _buildErrorState(context, state.error!, ref); // Pass ref
     }
 
     if (profile == null || likeDetails == null) {
       return _buildErrorState(
-          context, AppError.generic("Profile data could not be loaded."), ref);
+          context,
+          AppError.generic("Profile data could not be loaded."),
+          ref); // Pass ref
     }
 
-    // --- START: Content Block Generation (Adapted from HomeProfileCard) ---
     final List<dynamic> contentBlocks = [];
     final mediaUrls = profile.mediaUrls ?? [];
     final prompts = profile.prompts;
 
     contentBlocks.add("header_section");
     contentBlocks.add("like_details_banner");
-    if (mediaUrls.isNotEmpty) contentBlocks.add(mediaUrls[0]);
+    if (mediaUrls.isNotEmpty)
+      contentBlocks.add({"type": "media", "value": mediaUrls[0], "index": 0});
     if (prompts.isNotEmpty) contentBlocks.add(prompts[0]);
     contentBlocks.add("vitals_section");
 
@@ -246,7 +302,11 @@ class _LikerProfileScreenState extends ConsumerState<LikerProfileScreen> {
 
     for (int i = 1; i < maxRemaining; i++) {
       if (mediaIndex < mediaUrls.length) {
-        contentBlocks.add(mediaUrls[mediaIndex]);
+        contentBlocks.add({
+          "type": "media",
+          "value": mediaUrls[mediaIndex],
+          "index": mediaIndex
+        });
         mediaIndex++;
       }
       if (promptIndex < prompts.length) {
@@ -257,7 +317,6 @@ class _LikerProfileScreenState extends ConsumerState<LikerProfileScreen> {
     if (profile.audioPrompt != null) {
       contentBlocks.add(profile.audioPrompt!);
     }
-    // --- END: Content Block Generation ---
 
     return CustomScrollView(
       slivers: [
@@ -271,15 +330,7 @@ class _LikerProfileScreenState extends ConsumerState<LikerProfileScreen> {
                 color: Colors.grey[700], size: 20),
             onPressed: () => Navigator.of(context).pop(),
           ),
-          // --- REMOVED title property ---
-          // title: Text(
-          //   profile.name ?? 'Profile',
-          //   style:
-          //       GoogleFonts.poppins(fontWeight: FontWeight.w600, fontSize: 18),
-          // ),
-          // --- END REMOVED ---
         ),
-
         SliverPadding(
           padding: const EdgeInsets.symmetric(vertical: 8.0),
           sliver: SliverList(
@@ -294,22 +345,16 @@ class _LikerProfileScreenState extends ConsumerState<LikerProfileScreen> {
                 if (item is String && item == "header_section") {
                   contentWidget = _buildHeaderBlock(profile);
                 } else if (item is String && item == "like_details_banner") {
-                  if (likeDetails != null) {
-                    contentWidget =
-                        _buildLikeDetailsBanner(likeDetails, profile);
-                  } else {
-                    contentWidget = const SizedBox.shrink();
-                  }
-                } else if (item is String && item.startsWith('http')) {
-                  int originalMediaIndex =
-                      (profile.mediaUrls ?? []).indexOf(item);
-                  if (originalMediaIndex == -1) originalMediaIndex = 0;
-                  contentWidget =
-                      _buildMediaItem(context, ref, item, originalMediaIndex);
+                  contentWidget = _buildLikeDetailsBanner(likeDetails, profile);
+                } else if (item is Map && item["type"] == "media") {
+                  contentWidget = _buildMediaItem(context, ref,
+                      item["value"] as String, item["index"]); // Pass ref
                 } else if (item is Prompt) {
-                  contentWidget = _buildPromptItem(context, ref, item);
+                  contentWidget =
+                      _buildPromptItem(context, ref, item); // Pass ref
                 } else if (item is AudioPromptModel) {
-                  contentWidget = _buildAudioItem(context, ref, item);
+                  contentWidget =
+                      _buildAudioItem(context, ref, item); // Pass ref
                 } else if (item is String && item == "vitals_section") {
                   contentWidget = _buildVitalsBlock(profile);
                 } else {
@@ -332,8 +377,8 @@ class _LikerProfileScreenState extends ConsumerState<LikerProfileScreen> {
     );
   }
 
-  // --- Error State Widget (unchanged) ---
   Widget _buildErrorState(BuildContext context, AppError error, WidgetRef ref) {
+    // Accept ref
     return Center(
       child: Padding(
         padding: const EdgeInsets.all(30.0),
@@ -368,6 +413,7 @@ class _LikerProfileScreenState extends ConsumerState<LikerProfileScreen> {
                 padding:
                     const EdgeInsets.symmetric(horizontal: 30, vertical: 12),
               ),
+              // Use the correct provider family syntax to refetch
               onPressed: () => ref
                   .read(likerProfileProvider(widget.likerUserId).notifier)
                   .fetchProfile(),
@@ -384,7 +430,8 @@ class _LikerProfileScreenState extends ConsumerState<LikerProfileScreen> {
     );
   }
 
-  // --- START: Copied & Adapted Helper Widgets from HomeProfileCard ---
+  // --- Widget Builders (_buildHeaderBlock, _buildVitalsBlock, _buildMediaItem, _buildPromptItem, _buildAudioItem, _buildLikeDetailsBanner) need ref passed ---
+  // (Ensure ref is passed down to these methods from _buildBody)
 
   Widget _buildHeaderBlock(UserModel profile) {
     final age = profile.age;
@@ -485,7 +532,7 @@ class _LikerProfileScreenState extends ConsumerState<LikerProfileScreen> {
   Widget _buildMediaItem(
       BuildContext context, WidgetRef ref, String url, int index) {
     bool isVideo = url.toLowerCase().contains('.mp4') ||
-        url.toLowerCase().contains('.mov');
+        url.toLowerCase().contains('.mov'); // Simplified check
 
     return ClipRRect(
       borderRadius: BorderRadius.circular(10),
@@ -496,6 +543,7 @@ class _LikerProfileScreenState extends ConsumerState<LikerProfileScreen> {
           child: Stack(
             fit: StackFit.expand,
             children: [
+              // Use CachedNetworkImage for network images
               Image.network(url,
                   fit: BoxFit.cover,
                   loadingBuilder: (ctx, child, prog) => prog == null
@@ -531,7 +579,6 @@ class _LikerProfileScreenState extends ConsumerState<LikerProfileScreen> {
 
   Widget _buildPromptItem(BuildContext context, WidgetRef ref, Prompt prompt) {
     if (prompt.answer.trim().isEmpty) return const SizedBox.shrink();
-
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.all(20),
@@ -567,6 +614,7 @@ class _LikerProfileScreenState extends ConsumerState<LikerProfileScreen> {
 
   Widget _buildAudioItem(
       BuildContext context, WidgetRef ref, AudioPromptModel audio) {
+    // Watch the *global* audio player state
     final audioPlayerState = ref.watch(audioPlayerStateProvider);
     final currentPlayingUrl = ref.watch(currentAudioUrlProvider);
     final playerNotifier = ref.read(audioPlayerControllerProvider.notifier);
@@ -660,46 +708,6 @@ class _LikerProfileScreenState extends ConsumerState<LikerProfileScreen> {
     );
   }
 
-  Widget _buildDetailChip(IconData icon, String label, {bool subtle = false}) {
-    if (label.isEmpty) return const SizedBox.shrink();
-    return Container(
-      padding: EdgeInsets.symmetric(
-          horizontal: subtle ? 10 : 12, vertical: subtle ? 6 : 8),
-      decoration: BoxDecoration(
-        color: subtle ? Colors.transparent : Colors.grey[100],
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(
-            color: subtle ? Colors.grey.shade400 : Colors.grey.shade200),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(
-            icon,
-            size: subtle ? 16 : 18,
-            color: subtle ? Colors.grey.shade600 : const Color(0xFF8B5CF6),
-          ),
-          const SizedBox(width: 6),
-          Flexible(
-            child: Text(
-              label,
-              style: GoogleFonts.poppins(
-                fontSize: subtle ? 13 : 14,
-                fontWeight: FontWeight.w500,
-                color: subtle ? Colors.grey.shade700 : Colors.grey[800],
-              ),
-              overflow: TextOverflow.ellipsis,
-              maxLines: 2,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  // --- END: Copied & Adapted Helper Widgets ---
-
-  // --- Like Details Banner (Corrected Signature and Call) ---
   Widget _buildLikeDetailsBanner(
       LikeInteractionDetails likeDetails, UserProfileData? profile) {
     return Container(
@@ -747,5 +755,4 @@ class _LikerProfileScreenState extends ConsumerState<LikerProfileScreen> {
       ),
     );
   }
-  // --- END Like Details Banner ---
-} // End of State class
+}

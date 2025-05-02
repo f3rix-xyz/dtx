@@ -1,13 +1,15 @@
+// File: lib/views/who_liked_you_screen.dart
 import 'package:dtx/models/error_model.dart';
 import 'package:dtx/models/like_models.dart';
 import 'package:dtx/providers/error_provider.dart';
 import 'package:dtx/providers/recieved_likes_provider.dart';
-import 'package:dtx/views/liker_profile_screen.dart';
+import 'package:dtx/views/liker_profile_screen.dart'; // Import LikerProfileScreen
 import 'package:dtx/widgets/basic_liker_profile_card.dart';
 import 'package:dtx/widgets/full_liker_profile_card.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:flutter/foundation.dart'; // For kDebugMode
 
 class WhoLikedYouScreen extends ConsumerStatefulWidget {
   const WhoLikedYouScreen({super.key});
@@ -23,23 +25,37 @@ class _WhoLikedYouScreenState extends ConsumerState<WhoLikedYouScreen> {
     // Fetching is initiated in MainNavigationScreen initState now
   }
 
-  // _navigateToLikerProfile remains the same...
-  void _navigateToLikerProfile(int likerUserId) {
-    print(
-        "[WhoLikedYouScreen] Navigating to profile for liker ID: $likerUserId");
+  // *** MODIFIED: _navigateToLikerProfile - Now accepts likeId ***
+  void _navigateToLikerProfile(int likerUserId, int likeId) {
+    if (kDebugMode) {
+      print(
+          "[WhoLikedYouScreen] Navigating to profile for liker ID: $likerUserId, Like ID: $likeId");
+    }
+    if (likeId <= 0) {
+      if (kDebugMode) {
+        print(
+            "[WhoLikedYouScreen] ERROR: Invalid Like ID ($likeId) passed for navigation. Cannot log analytic event.");
+      }
+      // Optionally show a snackbar or just proceed without logging
+      // ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Error: Invalid like data.")));
+      // return; // Or decide to navigate anyway without the analytic call? Let's navigate.
+    }
     ref.read(errorProvider.notifier).clearError();
     Navigator.push(
       context,
       MaterialPageRoute(
-        builder: (context) => LikerProfileScreen(likerUserId: likerUserId),
+        builder: (context) => LikerProfileScreen(
+          likerUserId: likerUserId,
+          likeId: likeId, // <<<--- PASS likeId
+        ),
       ),
     );
   }
+  // *** END MODIFICATION ***
 
   @override
   Widget build(BuildContext context) {
     final state = ref.watch(receivedLikesProvider);
-    // Error watching remains the same
     final generalError = ref.watch(errorProvider);
     final displayError = state.error ?? generalError;
 
@@ -56,20 +72,17 @@ class _WhoLikedYouScreenState extends ConsumerState<WhoLikedYouScreen> {
       body: RefreshIndicator(
         color: const Color(0xFF8B5CF6),
         onRefresh: () async {
-          // Clear previous error before refresh if needed
           ref.read(errorProvider.notifier).clearError();
           await ref.read(receivedLikesProvider.notifier).fetchLikes();
         },
-        // *** Check isLoading state from the provider ***
-        child: state.isLoading // Check the provider's loading state directly
+        child: state.isLoading
             ? const Center(
                 child: CircularProgressIndicator(color: Color(0xFF8B5CF6)))
-            : _buildBody(state, displayError), // Pass state and combined error
+            : _buildBody(state, displayError),
       ),
     );
   }
 
-  // _buildBody should now assume isLoading is false when called
   Widget _buildBody(ReceivedLikesState state, AppError? error) {
     if (error != null) {
       return _buildErrorState(error.message);
@@ -79,7 +92,6 @@ class _WhoLikedYouScreenState extends ConsumerState<WhoLikedYouScreen> {
       return _buildEmptyState();
     }
 
-    // CustomScrollView structure remains the same
     return CustomScrollView(
       slivers: [
         if (state.fullProfiles.isNotEmpty)
@@ -109,10 +121,13 @@ class _WhoLikedYouScreenState extends ConsumerState<WhoLikedYouScreen> {
               delegate: SliverChildBuilderDelegate(
                 (context, index) {
                   final liker = state.fullProfiles[index];
+                  // *** PASS liker.likeId ***
                   return FullLikerProfileCard(
                     liker: liker,
-                    onTap: () => _navigateToLikerProfile(liker.likerUserId),
+                    onTap: () => _navigateToLikerProfile(
+                        liker.likerUserId, liker.likeId),
                   );
+                  // *** END PASS ***
                 },
                 childCount: state.fullProfiles.length,
               ),
@@ -140,13 +155,16 @@ class _WhoLikedYouScreenState extends ConsumerState<WhoLikedYouScreen> {
               delegate: SliverChildBuilderDelegate(
                 (context, index) {
                   final liker = state.otherLikers[index];
+                  // *** PASS liker.likeId ***
                   return Padding(
                     padding: const EdgeInsets.only(bottom: 10.0),
                     child: BasicLikerProfileCard(
                       liker: liker,
-                      onTap: () => _navigateToLikerProfile(liker.likerUserId),
+                      onTap: () => _navigateToLikerProfile(
+                          liker.likerUserId, liker.likeId),
                     ),
                   );
+                  // *** END PASS ***
                 },
                 childCount: state.otherLikers.length,
               ),
@@ -157,10 +175,9 @@ class _WhoLikedYouScreenState extends ConsumerState<WhoLikedYouScreen> {
     );
   }
 
-  // _buildEmptyState and _buildErrorState remain the same
+  // No changes needed for _buildEmptyState or _buildErrorState
   Widget _buildEmptyState() {
     return LayoutBuilder(
-      // Use LayoutBuilder to ensure Center takes full space for scrollable refresh
       builder: (context, constraints) => SingleChildScrollView(
         physics: const AlwaysScrollableScrollPhysics(),
         child: ConstrainedBox(
@@ -195,7 +212,6 @@ class _WhoLikedYouScreenState extends ConsumerState<WhoLikedYouScreen> {
 
   Widget _buildErrorState(String message) {
     return LayoutBuilder(
-      // Use LayoutBuilder for scrollable refresh
       builder: (context, constraints) => SingleChildScrollView(
         physics: const AlwaysScrollableScrollPhysics(),
         child: ConstrainedBox(
